@@ -17,7 +17,7 @@ type Props = {
   onChange: (route: Route) => void;
 };
 
-/** プロバイダーとモデルの手動選択。 */
+/** プロバイダーとモデルの手動選択。左メニューの下部に縦に並べる。 */
 export default function ModelSelector({ route, models, keyStatus, onChange }: Props) {
   const t = useT();
   const usable = models.filter((m) => keyStatus[m.provider]);
@@ -29,7 +29,7 @@ export default function ModelSelector({ route, models, keyStatus, onChange }: Pr
     .map((m) => ({ value: m.id, label: m.label }));
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-col gap-2">
       {current && (
         <>
           <Select
@@ -41,7 +41,7 @@ export default function ModelSelector({ route, models, keyStatus, onChange }: Pr
               if (m) onChange({ provider, model: m.id });
             }}
           >
-            <SelectTrigger className="w-44" aria-label={t("プロバイダー")}>
+            <SelectTrigger className="w-full" aria-label={t("プロバイダー")}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -57,7 +57,7 @@ export default function ModelSelector({ route, models, keyStatus, onChange }: Pr
               v && onChange({ provider: current.provider, model: v as string })
             }
           >
-            <SelectTrigger className="w-48" aria-label={t("モデル")}>
+            <SelectTrigger className="w-full" aria-label={t("モデル")}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
