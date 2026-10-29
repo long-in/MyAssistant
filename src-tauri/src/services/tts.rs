@@ -1,4 +1,4 @@
-//! Google Cloud Text-to-Speech(REST)。音声はbase64のMP3として返す。
+//! 音声合成。Google Cloud Text-to-Speech(REST)はbase64のMP3、VOICEVOX CORE([`super::voicevox`])はWAVで返す。
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -8,6 +8,37 @@ use crate::utils::error::AppError;
 
 /// TTS APIの入力上限は5000バイト。
 const MAX_INPUT_BYTES: usize = 4500;
+
+/// 読み上げに使うエンジン。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Voice {
+    Google,
+    /// VOICEVOXのスタイルID。
+    Voicevox(u32),
+}
+
+impl Voice {
+    /// 定型音声のファイル名に使う識別子。声か文言が変わると別の音声として扱う。
+    pub fn id(&self, text: &str) -> String {
+        match self {
+            Self::Google => voice_for(text).1.to_owned(),
+            Self::Voicevox(style) => format!("voicevox-{style}"),
+        }
+    }
+
+    /// 保存する音声ファイルの拡張子。
+    pub fn ext(&self) -> &'static str {
+        match self {
+            Self::Google => "mp3",
+            Self::Voicevox(_) => "wav",
+        }
+    }
+}
+
+/// 読み上げる本文。長文はGoogleの入力上限に合わせて切る(VOICEVOXも同じ長さに揃え、字幕の同期範囲を変えない)。
+pub fn spoken_text(text: &str) -> &str {
+    truncate_utf8(text, MAX_INPUT_BYTES)
+}
 
 fn truncate_utf8(text: &str, max: usize) -> &str {
     if text.len() <= max {
@@ -95,6 +126,13 @@ mod tests {
         let t = truncate_utf8(&s, MAX_INPUT_BYTES);
         assert!(t.len() <= MAX_INPUT_BYTES);
         assert_eq!(t.len() % 3, 0);
+    }
+
+    #[test]
+    fn voice_id_follows_engine() {
+        assert_eq!(Voice::Google.id("こんにちは"), "ja-JP-Neural2-B");
+        assert_eq!(Voice::Voicevox(3).id("こんにちは"), "voicevox-3");
+        assert_eq!((Voice::Google.ext(), Voice::Voicevox(3).ext()), ("mp3", "wav"));
     }
 
     #[test]

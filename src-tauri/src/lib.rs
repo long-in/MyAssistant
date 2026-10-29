@@ -75,6 +75,16 @@ pub fn run() {
       commands::voice::generate_voice_phrases,
       commands::voice::voice_phrase_audio,
       commands::voice::synthesize_speech,
+      commands::voice::get_tts_dictionary,
+      commands::voice::set_tts_dictionary,
+      commands::voice::get_tts_engine,
+      commands::voice::set_tts_engine,
+      commands::voice::get_voicevox_style,
+      commands::voice::set_voicevox_style,
+      commands::voice::tts_ready,
+      commands::voice::voicevox_installed,
+      commands::voice::install_voicevox,
+      commands::voice::voicevox_speakers,
       commands::voice::tts_key_registered,
       commands::voice::save_tts_key,
       commands::voice::delete_tts_key,
@@ -104,6 +114,7 @@ pub fn run() {
       app.manage(services::audio::Recorder::default());
       app.manage(services::stt::SttEngine::default());
       app.manage(services::vad::VadEngine::default());
+      app.manage(services::voicevox::VoicevoxEngine::default());
       app.manage(services::batch::BatchGuard::default());
       if let Err(e) = services::debug_log::refresh(app.handle()) {
         log::warn!("debug log init failed: {e}");

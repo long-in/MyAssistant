@@ -56,6 +56,10 @@ pub enum AppError {
     Stt(String),
     #[error("text is empty")]
     EmptyText,
+    #[error("VOICEVOX CORE failed: {0}")]
+    Voicevox(String),
+    #[error("VOICEVOX CORE is not installed")]
+    VoicevoxMissing,
     #[error("path is outside the knowledge directory")]
     PathNotAllowed,
     /// プロバイダーが理由付きで拒否した場合(原因特定用。本文にキーは含まれない)。
@@ -112,6 +116,8 @@ impl AppError {
             Self::SttModelMissing => "stt_model_missing",
             Self::Stt(_) => "stt_error",
             Self::EmptyText => "empty_text",
+            Self::Voicevox(_) => "voicevox_error",
+            Self::VoicevoxMissing => "voicevox_missing",
             Self::PathNotAllowed => "path_not_allowed",
             Self::Io(_) => "io_error",
             Self::InvalidSettings(_) => "invalid_settings",
@@ -128,7 +134,7 @@ impl AppError {
 struct ErrorPayload<'a> {
     code: &'a str,
     message: String,
-    /// 発生元API("anthropic" | "openai" | "google_tts" | "google_stt" | "aqua_stt")。不明な場合はnull。
+    /// 発生元API("anthropic" | "openai" | "google_tts" | "google_stt" | "aqua_stt" | "voicevox")。不明な場合はnull。
     source: Option<&'static str>,
 }
 

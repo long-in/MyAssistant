@@ -42,6 +42,8 @@ const ENTRIES: &[(&str, Kind)] = &[
     (chat::SHELL_ACCESS_KEY, Kind::Flag),
     (voice::STT_ENGINE_KEY, Kind::OneOf(&["local", "google", "aqua"])),
     (voice::STT_LANGUAGE_KEY, Kind::Text),
+    (voice::TTS_ENGINE_KEY, Kind::OneOf(&["google", "voicevox"])),
+    (voice::VOICEVOX_STYLE_KEY, Kind::Text),
     (proofread::ROUTE_KEY, Kind::Json),
     (wake::ENABLED_KEY, Kind::Flag),
     (wake::WORDS_KEY, Kind::Json),
