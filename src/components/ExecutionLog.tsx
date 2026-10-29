@@ -71,7 +71,56 @@ export function applyAgentEvent(log: LogState, e: AgentEvent): LogState {
   return log;
 }
 
-/** 直前のやり取り(ExchangeLog)と同じターミナル風の表示で、実行の経過の下に並べて表示する。実行中は中断できる。 */
+type NodeState = "pending" | "running" | "done" | "error";
+
+/** タイムラインの節点。実行中は脈打つ輪、完了は光る点、失敗は赤、未着手は中空。 */
+function Node({ state }: { state: NodeState }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "absolute top-[0.35rem] -left-[0.3125rem] size-2.5 rounded-full border bg-background",
+        state === "pending" && "border-muted-foreground/50",
+        state === "running" && "border-primary bg-primary/30 shadow-[0_0_10px_var(--primary)] animate-hud-blink-slow",
+        state === "done" && "border-primary bg-primary shadow-[0_0_6px_var(--primary)]",
+        state === "error" && "border-destructive bg-destructive shadow-[0_0_6px_var(--destructive)]",
+      )}
+    />
+  );
+}
+
+function Entry({ x }: { x: LogEntry }) {
+  const label = x.isCommand ? "EXEC" : "FILE";
+  const head = (
+    <span className="break-all">
+      <span className="text-muted-foreground">[{clock(x.at)}]</span>{" "}
+      <span className={x.status === "error" ? "text-destructive" : "text-primary"}>&gt; {label}</span>
+      <span className="text-foreground/90"> :: {x.title}</span>
+      {x.status === "running" && <span className="animate-hud-blink text-muted-foreground"> …</span>}
+      {x.status === "error" && <span className="text-destructive"> &lt; FAILED</span>}
+    </span>
+  );
+  if (!x.output) return <p>{head}</p>;
+  const pre = (
+    <pre className="my-0.5 max-h-28 overflow-auto border-l border-primary/30 pl-2 whitespace-pre-wrap break-all text-foreground/80">
+      {x.output}
+    </pre>
+  );
+  // 実行中と失敗は出力を開いたまま、成功したものは畳んで経過を見やすくする
+  return x.status === "ok" ? (
+    <details>
+      <summary className="cursor-pointer list-none">{head}</summary>
+      {pre}
+    </details>
+  ) : (
+    <div>
+      {head}
+      {pre}
+    </div>
+  );
+}
+
+/** 依頼の進行を縦のタイムラインで見せる。作業計画があれば手順ごとの節点に実行内容をぶら下げ、無ければ操作を時系列に並べる。実行中は中断できる。 */
 export default function ExecutionLog({
   log,
   busy,
@@ -90,16 +139,35 @@ export default function ExecutionLog({
   }, [log]);
 
   if (!log.plan && log.entries.length === 0) return null;
-  const done = new Set(log.entries.filter((x) => x.step && x.status !== "running").map((x) => x.step));
-  const running = log.entries.find((x) => x.status === "running")?.step;
+
+  const total = log.plan?.length ?? 0;
+  const stepState = (n: number): NodeState => {
+    const mine = log.entries.filter((x) => x.step === n);
+    if (mine.some((x) => x.status === "running")) return "running";
+    if (mine.some((x) => x.status === "error")) return "error";
+    if (mine.length === 0) return "pending";
+    // 次の手順へ進んだか、依頼が終わっていれば完了
+    return !busy || log.entries.some((x) => x.step !== undefined && x.step > n) ? "done" : "running";
+  };
+  const states = Array.from({ length: total }, (_, i) => stepState(i + 1));
+  const finished = states.filter((x) => x === "done").length;
+  const current = Math.min(states.findIndex((x) => x === "running" || x === "pending") + 1 || total, total);
+  const loose = log.plan ? log.entries.filter((x) => x.step === undefined || x.step > total || x.step < 1) : log.entries;
 
   return (
     <aside
       aria-label={t("実行ログ")}
       className="hud-panel pointer-events-auto px-3 py-2 font-mono text-xs leading-relaxed"
     >
-      <div className="mb-2 flex items-center justify-between">
-        <span className="hud-label text-[0.6rem]">{t("Execution log / 実行")}</span>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <span className="hud-label text-[0.6rem]">
+          {t("Timeline / 進行")}
+          {total > 0 && (
+            <span className="ml-2 text-foreground/80 tabular-nums">
+              {busy ? `STEP ${String(current).padStart(2, "0")}` : "DONE"} / {String(total).padStart(2, "0")}
+            </span>
+          )}
+        </span>
         {busy ? (
           <Button size="xs" variant="destructive" onClick={onCancel}>
             <Square /> {t("中断")}
@@ -110,58 +178,54 @@ export default function ExecutionLog({
           </Button>
         )}
       </div>
-      <div ref={scroller} className="flex max-h-[30vh] flex-col gap-2 overflow-y-auto pr-1">
-        {log.plan && (
-          <div>
-            <p>
-              <span className="text-primary">&gt; PLAN</span>
-              <span className="text-foreground/90"> :: {log.plan.length} steps</span>
-            </p>
-            <ol className="mt-0.5">
-              {log.plan.map((s, i) => (
-                <li
-                  key={i}
+      {total > 0 && (
+        <div
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={total}
+          aria-valuenow={finished}
+          className="mb-2 h-0.5 overflow-hidden bg-primary/15"
+        >
+          <div
+            className="h-full bg-primary shadow-[0_0_8px_var(--primary)] transition-[width] duration-500"
+            style={{ width: `${(finished / total) * 100}%` }}
+          />
+        </div>
+      )}
+      <div ref={scroller} className="max-h-[30vh] overflow-y-auto pr-1 pl-1.5">
+        <ol className="relative ml-[0.3125rem] border-l border-primary/30">
+          {log.plan?.map((step, i) => {
+            const state = states[i];
+            return (
+              <li key={i} className="relative pb-2 pl-4 last:pb-0">
+                <Node state={state} />
+                <p
                   className={cn(
-                    "flex gap-2 pl-2",
-                    done.has(i + 1) ? "text-muted-foreground line-through" : "text-foreground/90",
-                    running === i + 1 && "text-primary",
+                    "flex gap-2",
+                    state === "pending" && "text-muted-foreground",
+                    state === "running" && "text-primary",
+                    state === "done" && "text-foreground/90",
+                    state === "error" && "text-destructive",
                   )}
                 >
                   <span className="shrink-0 tabular-nums">{String(i + 1).padStart(2, "0")}</span>
-                  <span className="min-w-0 break-words">{s}</span>
-                </li>
-              ))}
-            </ol>
-          </div>
-        )}
-        {log.entries.map((x) => (
-          <div key={x.id}>
-            <p className="break-all">
-              <span className="text-muted-foreground">[{clock(x.at)}]</span>{" "}
-              <span className="text-primary">&gt; {x.isCommand ? "EXEC" : "FILE"}</span>
-              <span className="text-foreground/90"> :: {x.title}</span>
-            </p>
-            {x.output && (
-              <pre className="my-0.5 max-h-28 overflow-auto border-l border-primary/30 pl-2 whitespace-pre-wrap break-all text-foreground/80">
-                {x.output}
-              </pre>
-            )}
-            {x.status === "running" ? (
-              <p className="text-muted-foreground">
-                &lt; RUNNING<span className="animate-hud-blink">…</span>
-              </p>
-            ) : (
-              <p>
-                <span className="text-muted-foreground">[{x.endedAt && clock(x.endedAt)}]</span>{" "}
-                {x.status === "ok" ? (
-                  <span className="text-chart-2">&lt; DONE</span>
-                ) : (
-                  <span className="text-destructive">&lt; FAILED</span>
-                )}
-              </p>
-            )}
-          </div>
-        ))}
+                  <span className="min-w-0 break-words">{step}</span>
+                </p>
+                <div className="mt-0.5 flex flex-col gap-1 pl-6 text-[0.7rem]">
+                  {log.entries.filter((x) => x.step === i + 1).map((x) => (
+                    <Entry key={x.id} x={x} />
+                  ))}
+                </div>
+              </li>
+            );
+          })}
+          {loose.map((x) => (
+            <li key={x.id} className="relative pb-2 pl-4 last:pb-0">
+              <Node state={x.status === "running" ? "running" : x.status === "ok" ? "done" : "error"} />
+              <Entry x={x} />
+            </li>
+          ))}
+        </ol>
       </div>
     </aside>
   );

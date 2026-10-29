@@ -184,3 +184,18 @@ body::after {
 @utility animate-hud-blink-slow {
   animation: hud-blink-slow 1.6s ease-in-out infinite;
 }
+
+/* 強制中断ボタン: 斜線の警告帯が流れ、走査線が上から下へ抜ける */
+@keyframes hud-hazard {
+  to { background-position: 28px 0; }
+}
+@utility animate-hud-hazard {
+  animation: hud-hazard 1.2s linear infinite;
+}
+@keyframes hud-scan {
+  0% { transform: translateY(-120%); }
+  100% { transform: translateY(520%); }
+}
+@utility animate-hud-scan {
+  animation: hud-scan 2.4s linear infinite;
+}
