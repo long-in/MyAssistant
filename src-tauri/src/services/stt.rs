@@ -7,7 +7,25 @@ use std::{
 use tokio::io::AsyncWriteExt;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-use crate::{services::vad, utils::error::AppError};
+use crate::{
+    db::Db,
+    services::vad,
+    utils::{error::AppError, version},
+};
+
+/// モデルを取得するHugging Faceのリビジョン(ブランチ・タグ・コミット)の設定キー。
+pub const REVISION_KEY: &str = "whisper_revision";
+pub const DEFAULT_REVISION: &str = "main";
+
+/// 設定のリビジョン。未設定・不正な値は既定値(壊れた設定で取得先を変えさせない)。
+pub fn revision(db: &Db) -> Result<String, AppError> {
+    Ok(db.get_setting(REVISION_KEY)?.filter(|r| version::validate(r).is_ok()).unwrap_or_else(|| DEFAULT_REVISION.into()))
+}
+
+pub fn set_revision(db: &Db, revision: &str) -> Result<(), AppError> {
+    version::validate(revision)?;
+    db.set_setting(REVISION_KEY, revision)
+}
 
 /// 使えるモデル。先頭ほど優先する(日本語の精度が高い量子化版large-v3-turbo、次にsmall)。
 /// 最小サイズは破損・途中切れの検出用(実サイズはそれぞれ約574MB、約466MB)。
@@ -22,8 +40,8 @@ struct Model {
 }
 
 impl Model {
-    fn url(&self) -> String {
-        format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{}", self.file)
+    fn url(&self, revision: &str) -> String {
+        format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/{revision}/{}", self.file)
     }
 
     fn path(&self, app_data_dir: &Path) -> PathBuf {
@@ -57,14 +75,15 @@ pub fn model_upgradable(app_data_dir: &Path) -> bool {
 }
 
 /// 一時ファイルへ書き出してからリネームする(中断時に壊れたモデルを残さない)。
-pub async fn download_model(path: &Path) -> Result<(), AppError> {
+pub async fn download_model(path: &Path, revision: &str) -> Result<(), AppError> {
+    version::validate(revision)?;
     let model = MODELS
         .iter()
         .find(|m| path.file_name().is_some_and(|f| f == m.file))
         .ok_or_else(|| AppError::Stt("unknown model file".into()))?;
     let dir = path.parent().ok_or_else(|| AppError::Stt("invalid model path".into()))?;
     tokio::fs::create_dir_all(dir).await.map_err(|e| AppError::Stt(e.to_string()))?;
-    let mut res = reqwest::get(model.url()).await.map_err(AppError::from_reqwest)?;
+    let mut res = reqwest::get(model.url(revision)).await.map_err(AppError::from_reqwest)?;
     if !res.status().is_success() {
         return Err(AppError::from_status(res.status().as_u16()));
     }
@@ -207,6 +226,11 @@ impl SttEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_url_uses_the_revision() {
+        assert_eq!(MODELS[1].url("v1.8.0"), "https://huggingface.co/ggerganov/whisper.cpp/resolve/v1.8.0/ggml-small.bin");
+    }
 
     #[test]
     fn strips_non_speech_annotations() {

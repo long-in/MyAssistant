@@ -60,6 +60,8 @@ pub enum AppError {
     Voicevox(String),
     #[error("VOICEVOX CORE is not installed")]
     VoicevoxMissing,
+    #[error("invalid version: {0}")]
+    InvalidVersion(String),
     #[error("path is outside the knowledge directory")]
     PathNotAllowed,
     /// プロバイダーが理由付きで拒否した場合(原因特定用。本文にキーは含まれない)。
@@ -118,6 +120,7 @@ impl AppError {
             Self::EmptyText => "empty_text",
             Self::Voicevox(_) => "voicevox_error",
             Self::VoicevoxMissing => "voicevox_missing",
+            Self::InvalidVersion(_) => "invalid_version",
             Self::PathNotAllowed => "path_not_allowed",
             Self::Io(_) => "io_error",
             Self::InvalidSettings(_) => "invalid_settings",

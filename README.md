@@ -91,7 +91,7 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
   - 制限:
     - `rm`・`sudo`・OS に影響するコマンドは常に拒否します。
     - 読み取り系以外のコマンドは、ナレッジのディレクトリ内でしか実行できません。
-  - 許可・拒否・都度承認のコマンドは、設定画面の Command Policy で編集できます(実体はナレッジ内の `.tachicoma/command-policy.json`)。
+  - 許可・拒否・都度承認のコマンドは、設定画面の Command Policy で編集できます(実体はナレッジ内の `.my-assistant/command-policy.json`)。
 
 ### その他
 
@@ -178,9 +178,9 @@ npm run tauri build
 
 すべてアプリデータディレクトリに保存され、リポジトリには含まれません。
 
-- 識別子: `dev.longin.tachicoma-agent`
-- macOS のパス: `~/Library/Application Support/dev.longin.tachicoma-agent/`
-- 識別子は保存先を変えないため、アプリ名の変更後も旧名のままにしています。
+- 識別子: `MyAssistant`
+- macOS のパス: `~/Library/Application Support/MyAssistant/`
+- 旧識別子(`dev.longin.tachicoma-agent`)のフォルダがあれば、初回起動時に自動で引き継ぎます。
 
 | パス | 内容 |
 | --- | --- |
