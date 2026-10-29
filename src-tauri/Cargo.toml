@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.0"
+version = "0.1.1"
 description = "MyAssistant: 音声で対話できるデスクトップ AI エージェント"
 license = "MIT"
 repository = ""
@@ -33,6 +33,7 @@ base64 = "0.23"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 tauri-plugin-dialog = "2"
 libc = "0.2"
+libloading = "0.9"
 
 [dev-dependencies]
 hound = "3.5.1"

@@ -34,3 +34,8 @@ SOFTWARE.
 ## 実行時にダウンロードするモデル
 
 Whisper のモデル(`ggml-large-v3-turbo-q5_0.bin`、`ggml-small.bin`)はリポジトリに含まれず、アプリが初回にダウンロードします。Whisper は OpenAI による MIT License のモデルです。
+
+VOICEVOX CORE(読み上げの選択肢)もリポジトリに含まれず、ユーザーが設定画面で取得したときだけ、公式の配布物をアプリデータへダウンロードします。
+
+- [VOICEVOX CORE](https://github.com/VOICEVOX/voicevox_core)(MIT License)、[VOICEVOX ONNX Runtime](https://github.com/VOICEVOX/onnxruntime-builder)(同梱の `TERMS.txt` に従う)、[Open JTalk 辞書](https://github.com/r9y9/open_jtalk)、[VOICEVOX 音声モデル](https://github.com/VOICEVOX/voicevox_vvm)(音声モデル利用規約と各音声ライブラリの規約に従う)。
+- 生成した音声を公開・配布する場合は、「VOICEVOX:ずんだもん」のように利用した音声ライブラリのクレジット表記が必要です。

@@ -14,6 +14,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   google_tts: "Google Cloud Text-to-Speech",
   google_stt: "Google Cloud Speech-to-Text",
   aqua_stt: "Aqua Voice",
+  voicevox: "VOICEVOX",
 };
 
 export const PROVIDER_LABELS: Record<Provider, string> = {
@@ -47,6 +48,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   stt_error: "音声認識に失敗しました。",
   too_long: "録音が長すぎます(Google音声認識は約1分まで)。短く区切って話してください。",
   empty_text: "読み上げるテキストがありません。",
+  voicevox_error: "VOICEVOXでの音声合成に失敗しました。設定でVOICEVOX COREを取得し直してください。",
+  voicevox_missing: "VOICEVOX COREが未取得です。設定の「Voice Link」で取得してください。",
   playback_error: "音声を再生できませんでした。メッセージ横のスピーカーボタンから再生してください。",
   api_disabled: "このキーのプロジェクトで対象のAPIが有効化されていません。Google Cloud Consoleで「Cloud Text-to-Speech API」または「Cloud Speech-to-Text API」を有効にしてください。",
   key_restricted: "APIキーの制限(API制限・アプリケーション制限)によりブロックされました。キーの制限設定を確認してください。",
@@ -263,9 +266,9 @@ export const setWakeConfig = (config: WakeConfig) => invoke<WakeConfig>("set_wak
 /** 繰り返し使う定型音声の作成状況。 */
 export type VoicePhrase = { id: string; text: string; ready: boolean };
 export const voicePhrasesStatus = () => invoke<VoicePhrase[]>("voice_phrases_status");
-/** 未作成の定型音声をGoogle Cloud TTSで合成して保存する(作成済みは送らない)。 */
+/** 未作成の定型音声を現在の読み上げエンジンで合成して保存する(作成済みは送らない)。 */
 export const generateVoicePhrases = () => invoke<VoicePhrase[]>("generate_voice_phrases");
-/** 作成済みの定型音声(base64のMP3)。未作成ならnullで、TTSへは送らない。`wake_ack`=起動後の応答、`switch_confirm`=会話切り替えの確認。 */
+/** 作成済みの定型音声(base64のMP3またはWAV)。未作成ならnullで、TTSへは送らない。`wake_ack`=起動後の応答、`switch_confirm`=会話切り替えの確認。 */
 export const voicePhraseAudio = (id: "wake_ack" | "switch_confirm") =>
   invoke<string | null>("voice_phrase_audio", { id });
 
@@ -273,8 +276,31 @@ export const voicePhraseAudio = (id: "wake_ack" | "switch_confirm") =>
 export const loadProofreadRoute = () => invoke<Route | null>("load_proofread_route");
 /** 校正モデルを登録する。nullで校正をオフにする。 */
 export const saveProofreadRoute = (route: Route | null) => invoke<void>("save_proofread_route", { route });
-/** base64(MP3)を返す。 */
+/** 現在の読み上げエンジンで音声化し、base64(Google CloudはMP3、VOICEVOXはWAV)を返す。 */
 export const synthesizeSpeech = (text: string) => invoke<string>("synthesize_speech", { text });
+
+/** 読み上げエンジン。VOICEVOXはローカルのVOICEVOX CORE(キー不要・無料)。 */
+export type TtsEngine = "google" | "voicevox";
+export const getTtsEngine = () => invoke<TtsEngine>("get_tts_engine");
+export const setTtsEngine = (engine: TtsEngine) => invoke<void>("set_tts_engine", { engine });
+/** 選んだエンジンで読み上げられる状態か(Google Cloudはキー登録済み、VOICEVOXはCOREを取得済み)。 */
+export const ttsReady = () => invoke<boolean>("tts_ready");
+
+export type VoicevoxSpeaker = { name: string; styles: { id: number; name: string }[] };
+export const voicevoxInstalled = () => invoke<boolean>("voicevox_installed");
+/** VOICEVOX COREと辞書・音声モデルを取得する(約90MB)。取得済みでも取得し直す。 */
+export const installVoicevox = () => invoke<void>("install_voicevox");
+/** 取得済みの音声モデルの話者とスタイル。 */
+export const voicevoxSpeakers = () => invoke<VoicevoxSpeaker[]>("voicevox_speakers");
+export const getVoicevoxStyle = () => invoke<number>("get_voicevox_style");
+export const setVoicevoxStyle = (style: number) => invoke<void>("set_voicevox_style", { style });
+
+/** 読み上げ前に置き換える語と読み。組み込み(読み取り専用)と、ユーザーが登録した分。 */
+export type DictionaryEntry = { word: string; reading: string };
+export type TtsDictionary = { builtin: DictionaryEntry[]; user: DictionaryEntry[] };
+export const getTtsDictionary = () => invoke<TtsDictionary>("get_tts_dictionary");
+/** ユーザー辞書を丸ごと保存し、整形後(空欄・大文字小文字違いの重複を除いた)の内容を返す。 */
+export const setTtsDictionary = (entries: DictionaryEntry[]) => invoke<DictionaryEntry[]>("set_tts_dictionary", { entries });
 
 export const ttsKeyRegistered = () => invoke<boolean>("tts_key_registered");
 export const saveTtsKey = (key: string) => invoke<void>("save_tts_key", { key });
