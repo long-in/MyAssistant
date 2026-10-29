@@ -75,7 +75,7 @@ flowchart TD
 
 ## ポリシーファイル
 
-`<ナレッジ>/.tachicoma/command-policy.json`。`run_command` のたびに読み直し、初回に既定値を書き出す。
+`<ナレッジ>/.my-assistant/command-policy.json`。`run_command` のたびに読み直し、初回に既定値を書き出す。
 
 ```json
 {

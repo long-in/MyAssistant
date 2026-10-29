@@ -54,6 +54,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   api_disabled: "このキーのプロジェクトで対象のAPIが有効化されていません。Google Cloud Consoleで「Cloud Text-to-Speech API」または「Cloud Speech-to-Text API」を有効にしてください。",
   key_restricted: "APIキーの制限(API制限・アプリケーション制限)によりブロックされました。キーの制限設定を確認してください。",
   billing_disabled: "プロジェクトの課金(請求先アカウント)が有効になっていません。",
+  invalid_version: "バージョンには英数字と . _ - のみ使えます(64文字まで)。",
   path_not_allowed: "ナレッジディレクトリ外のパスにはアクセスできません。",
   io_error: "ファイルの読み書きに失敗しました。",
   invalid_settings: "設定ファイルの形式が正しくありません。このアプリが書き出したファイルを選んでください。",
@@ -294,6 +295,22 @@ export const installVoicevox = () => invoke<void>("install_voicevox");
 export const voicevoxSpeakers = () => invoke<VoicevoxSpeaker[]>("voicevox_speakers");
 export const getVoicevoxStyle = () => invoke<number>("get_voicevox_style");
 export const setVoicevoxStyle = (style: number) => invoke<void>("set_voicevox_style", { style });
+
+/** VOICEVOXの配布物のバージョン。取得元のホストは固定で、識別子だけを変えられる。 */
+export type VoicevoxVersions = { core: string; onnxruntime: string; models: string; dict_release: string; dict: string };
+/** ローカル音声(WhisperとVOICEVOX)の取得バージョン。`*_installed`は取得済みのもの。 */
+export type ModelSources = {
+  whisper_revision: string;
+  whisper_default: string;
+  voicevox: VoicevoxVersions;
+  voicevox_installed: VoicevoxVersions | null;
+  voicevox_default: VoicevoxVersions;
+};
+export const getModelSources = () => invoke<ModelSources>("get_model_sources");
+/** 次回の取得に使うWhisperモデルのリビジョン(ブランチ・タグ・コミット)を保存する。 */
+export const setWhisperRevision = (revision: string) => invoke<void>("set_whisper_revision", { revision });
+/** 次回の取得に使うVOICEVOXのバージョンを保存する。取得済みのものは取得し直すまで変わらない。 */
+export const setVoicevoxVersions = (versions: VoicevoxVersions) => invoke<void>("set_voicevox_versions", { versions });
 
 /** 読み上げ前に置き換える語と読み。組み込み(読み取り専用)と、ユーザーが登録した分。 */
 export type DictionaryEntry = { word: string; reading: string };

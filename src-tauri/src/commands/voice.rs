@@ -91,11 +91,52 @@ pub fn stt_model_upgradable(app: AppHandle) -> Result<bool, AppError> {
     Ok(stt::model_upgradable(&dir))
 }
 
-/// 優先モデルをダウンロードする(インストール済みなら再取得する)。
+/// 優先モデルをダウンロードする(インストール済みなら再取得する)。設定のリビジョンから取得する。
 #[tauri::command]
-pub async fn download_stt_model(app: AppHandle) -> Result<(), AppError> {
+pub async fn download_stt_model(app: AppHandle, db: State<'_, Db>) -> Result<(), AppError> {
     let dir = app.path().app_data_dir().map_err(|e| AppError::Stt(e.to_string()))?;
-    stt::download_model(&stt::preferred_model_path(&dir)).await
+    let revision = stt::revision(&db)?;
+    stt::download_model(&stt::preferred_model_path(&dir), &revision).await
+}
+
+/// ローカル音声の取得元バージョン。`installed`は取得済みのもの(未取得・記録なしは`None`)。
+#[derive(Serialize)]
+pub struct ModelSources {
+    whisper_revision: String,
+    whisper_default: &'static str,
+    voicevox: voicevox::Versions,
+    voicevox_installed: Option<voicevox::Versions>,
+    voicevox_default: voicevox::Versions,
+}
+
+#[tauri::command]
+pub fn get_model_sources(app: AppHandle, db: State<'_, Db>) -> Result<ModelSources, AppError> {
+    Ok(ModelSources {
+        whisper_revision: stt::revision(&db)?,
+        whisper_default: stt::DEFAULT_REVISION,
+        voicevox: voicevox::Versions::load(&db)?,
+        voicevox_installed: voicevox::installed_versions(&app_data(&app)?),
+        voicevox_default: voicevox::Versions::default(),
+    })
+}
+
+/// 取得するバージョンを保存する(取得は別途行う)。取得先のホストは変えられず、識別子だけを検証して受け付ける。
+#[tauri::command]
+pub fn set_whisper_revision(db: State<'_, Db>, revision: String) -> Result<(), AppError> {
+    stt::set_revision(&db, revision.trim())
+}
+
+#[tauri::command]
+pub fn set_voicevox_versions(db: State<'_, Db>, versions: voicevox::Versions) -> Result<(), AppError> {
+    let trim = |s: String| s.trim().to_owned();
+    voicevox::Versions {
+        core: trim(versions.core),
+        onnxruntime: trim(versions.onnxruntime),
+        models: trim(versions.models),
+        dict_release: trim(versions.dict_release),
+        dict: trim(versions.dict),
+    }
+    .save(&db)
 }
 
 /// 認識の手がかりとして渡す語彙の上限(文字数)。長いと無音で語彙を復唱する幻聴を招く。
@@ -390,8 +431,9 @@ pub fn voicevox_installed(app: AppHandle) -> Result<bool, AppError> {
 
 /// VOICEVOX COREと辞書・音声モデルを取得する(取得済みでも再取得する)。利用規約への同意はフロントエンドで取る。
 #[tauri::command]
-pub async fn install_voicevox(app: AppHandle) -> Result<(), AppError> {
-    voicevox::install(&app_data(&app)?).await?;
+pub async fn install_voicevox(app: AppHandle, db: State<'_, Db>) -> Result<(), AppError> {
+    let versions = voicevox::Versions::load(&db)?;
+    voicevox::install(&app_data(&app)?, &versions).await?;
     // 差し替えたファイルを次の合成で読み直す
     app.state::<VoicevoxEngine>().reset();
     Ok(())

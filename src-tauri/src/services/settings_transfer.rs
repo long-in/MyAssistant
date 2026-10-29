@@ -14,7 +14,9 @@ use crate::{
 };
 
 /// ファイルの形式を識別する値と版。
-const APP_ID: &str = "tachicoma-agent";
+const APP_ID: &str = "MyAssistant";
+/// 改名前のアプリ名で書き出されたファイルも取り込めるようにする。
+const LEGACY_APP_ID: &str = "tachicoma-agent";
 const FORMAT_VERSION: u32 = 1;
 /// 取り込むファイルの大きさの上限(バイト)。
 pub const MAX_FILE_BYTES: u64 = 1_000_000;
@@ -106,7 +108,7 @@ impl SettingsFile {
 /// 文字列からファイルの内容を読み、形式を確認する。
 pub fn parse(text: &str) -> Result<SettingsFile, AppError> {
     let file: SettingsFile = serde_json::from_str(text).map_err(|e| AppError::InvalidSettings(e.to_string()))?;
-    if file.app != APP_ID {
+    if file.app != APP_ID && file.app != LEGACY_APP_ID {
         return Err(AppError::InvalidSettings("このアプリの設定ファイルではありません".into()));
     }
     if file.version != FORMAT_VERSION {

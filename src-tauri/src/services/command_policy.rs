@@ -1,5 +1,5 @@
 //! `run_command`で実行するシェルコマンドの可否判定。
-//! 許可・ask・拒否・機密・システム領域などの規則はすべてナレッジの`.tachicoma/command-policy.json`で管理し、コマンドごとに読み直す。
+//! 許可・ask・拒否・機密・システム領域などの規則はすべてナレッジの`.my-assistant/command-policy.json`で管理し、コマンドごとに読み直す。
 //! `rm`系・OSに影響するコマンド・機密ファイルの拒否も初期値としてファイルに書き出すだけで、ユーザーが編集できる。
 //! 既定では、読み取り系(承認不要のもの)を除き、作業ディレクトリとパス引数はナレッジ配下に限る(`Scope`)。
 use std::{
@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils::path::ensure_dir;
 
-const POLICY_DIR: &str = ".tachicoma";
+const POLICY_DIR: &str = ".my-assistant";
+/// 改名前のフォルダ名。見つかれば`POLICY_DIR`へ移す。
+const LEGACY_POLICY_DIR: &str = ".tachicoma";
 const POLICY_FILE: &str = "command-policy.json";
 /// 再帰的に解析する入れ子(`sh -c`、`$(...)`など)の深さの上限。超えたら個別承認にする。
 const MAX_DEPTH: usize = 4;
@@ -282,8 +284,20 @@ impl Verdict {
     }
 }
 
+/// 旧名のフォルダだけがあれば、新名へ改名する。両方ある場合は新名を優先して触らない。
+fn migrate_legacy_dir(knowledge_root: &Path) {
+    let (old, new) = (knowledge_root.join(LEGACY_POLICY_DIR), knowledge_root.join(POLICY_DIR));
+    if old.is_dir()
+        && !new.exists()
+        && let Err(e) = fs::rename(&old, &new)
+    {
+        log::warn!("command policy dir migration failed: {e}");
+    }
+}
+
 /// ナレッジのポリシーを読む。無ければ初期値を書き出す。読めない・壊れている場合は許可リストが空になる(拒否などは初期値のまま)。
 pub fn load(knowledge_root: &Path) -> Policy {
+    migrate_legacy_dir(knowledge_root);
     let Ok(dir) = ensure_dir(knowledge_root, &[POLICY_DIR.to_owned()]) else {
         return Policy::fallback();
     };
@@ -366,6 +380,7 @@ pub fn add_allow(knowledge_root: &Path, patterns: &[String]) -> Result<Policy, S
 /// ポリシーを検証して保存し、保存した内容を返す。次のコマンドから有効になる。
 pub fn save(knowledge_root: &Path, policy: &Policy) -> Result<Policy, String> {
     let policy = policy.cleaned()?;
+    migrate_legacy_dir(knowledge_root);
     let dir = ensure_dir(knowledge_root, &[POLICY_DIR.to_owned()]).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(&policy).map_err(|e| e.to_string())?;
     fs::write(dir.join(POLICY_FILE), json + "\n").map_err(|e| e.to_string())?;
@@ -745,7 +760,7 @@ fn classify_segment(seg: &Segment, policy: &Policy, scope: Option<&Scope>, depth
         return deny("システム領域への書き込みは実行できません。");
     }
     if policy.deny.iter().any(|d| matches_pattern(&words, p, d, true)) {
-        return deny("コマンド権限(.tachicoma/command-policy.json)で拒否されています。");
+        return deny("コマンド権限(.my-assistant/command-policy.json)で拒否されています。");
     }
 
     // 中身を別のコマンドとして判定する形

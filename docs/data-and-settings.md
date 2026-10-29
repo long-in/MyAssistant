@@ -2,7 +2,7 @@
 
 ## 保存場所
 
-すべてアプリデータディレクトリ(識別子 `dev.longin.tachicoma-agent`)に保存され、リポジトリには含まれない。macOS では `~/Library/Application Support/dev.longin.tachicoma-agent/`。
+すべてアプリデータディレクトリ(識別子 `MyAssistant`)に保存され、リポジトリには含まれない。macOS では `~/Library/Application Support/MyAssistant/`。
 
 | パス | 内容 |
 | --- | --- |
@@ -13,7 +13,7 @@
 | `voicevox/` | VOICEVOX CORE・ONNX Runtime・OpenJTalk 辞書・音声モデル(設定画面から取得) |
 | ナレッジ | 既定ではアプリデータ配下。設定で任意のフォルダへ変更できる([knowledge.md](knowledge.md)) |
 
-識別子は、保存先を変えないためあえて旧名のまま。`.tachicoma/`(コマンド権限)や設定ファイルの内部 ID(`tachicoma-agent`)、エクスポートのフォルダ名も同じ理由で変えていない。
+旧名(識別子 `dev.longin.tachicoma-agent`)のフォルダがあり新しいフォルダが無ければ、起動時に丸ごと改名して引き継ぐ(`services/legacy_data.rs`)。ナレッジ内の旧 `.tachicoma/` もコマンド権限の読み書き時に `.my-assistant/` へ改名する。旧名の設定ファイルも取り込める。
 
 ## SQLite スキーマ(`db/mod.rs`)
 
@@ -65,6 +65,8 @@ erDiagram
 | `stt_language` | `auto` / `ja` / `en` / `zh` / `ko` | `auto` | Voice Link |
 | `tts_engine` | `google` / `voicevox` | `google` | Voice Link |
 | `voicevox_style` | VOICEVOX のスタイル ID(数値の文字列) | `3`(ずんだもん ノーマル) | Voice Link |
+| `whisper_revision` | Hugging Face のリビジョン(ブランチ・タグ・コミット) | `main` | Voice Link(取得バージョン) |
+| `voicevox_versions` | 取得する配布物のバージョン(JSON: `core` / `onnxruntime` / `models` / `dict_release` / `dict`。未指定の項目は既定値) | CORE `0.17.1`、ONNX Runtime `1.23.2`、音声モデル `0.17.0`、辞書 `v1.11.1` / `1.11` | Voice Link(取得バージョン) |
 | `proofread_route` | `Route`(JSON)。空ならオフ | オフ | Proofread |
 | `wake_enabled` / `wake_words` | `0` / `1`、JSON 配列 | 無効 | Wake Words |
 | `tuning` | 調整項目(JSON) | 下表 | Voice Timing / Limits |
@@ -109,7 +111,7 @@ erDiagram
 
 ```json
 {
-  "app": "tachicoma-agent",
+  "app": "MyAssistant",
   "version": 1,
   "exported_at": "2026-10-29T03:00:00Z",
   "settings": { "routing": "{...}", "shell_access": "1" },

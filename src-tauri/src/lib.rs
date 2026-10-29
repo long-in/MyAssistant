@@ -84,6 +84,9 @@ pub fn run() {
       commands::voice::tts_ready,
       commands::voice::voicevox_installed,
       commands::voice::install_voicevox,
+      commands::voice::get_model_sources,
+      commands::voice::set_whisper_revision,
+      commands::voice::set_voicevox_versions,
       commands::voice::voicevox_speakers,
       commands::voice::tts_key_registered,
       commands::voice::save_tts_key,
@@ -105,6 +108,7 @@ pub fn run() {
     .setup(|app| {
       use tauri::Manager;
       let dir = app.path().app_data_dir()?;
+      services::legacy_data::migrate(&dir);
       std::fs::create_dir_all(&dir)?;
       services::secrets::init(&dir)?;
       app.manage(db::Db::open(&dir.join("timeline.db"))?);

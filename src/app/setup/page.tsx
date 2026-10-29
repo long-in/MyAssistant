@@ -54,7 +54,12 @@ import {
   getWebAccess,
   getSttEngine,
   getTtsEngine,
+  getModelSources,
   getVoicevoxStyle,
+  setVoicevoxVersions,
+  setWhisperRevision,
+  type ModelSources,
+  type VoicevoxVersions,
   installVoicevox,
   getBatchInterval,
   setBatchInterval,
@@ -437,7 +442,7 @@ function CommandPolicyEditor() {
           <li><strong>*</strong> {t("が使えます。")}<strong>aws s3 *</strong> {t("は aws s3 以下すべて、")}<strong>aws * delete-*</strong> {t("は語の中や途中の指定です。")}</li>
           <li>{t("rm・sudo・OSの設定に影響するコマンド、APIキーのファイルの拒否なども、初期値として入っているだけで、すべて編集できます。消すとその保護は無くなります。")}</li>
           <li>{t("「初期値に戻す」で初期値に戻せます。")}</li>
-          <li>{t("ナレッジ内の")} <strong>.tachicoma/command-policy.json</strong> {t("に保存されます。")}</li>
+          <li>{t("ナレッジ内の")} <strong>.my-assistant/command-policy.json</strong> {t("に保存されます。")}</li>
         </ul>
       </Heading>
       <div className="grid gap-3 md:grid-cols-3">
@@ -1280,6 +1285,121 @@ function VoicevoxPanel({ installed, style, onChanged, onStyle }: { installed: bo
   );
 }
 
+const VERSION_FIELDS: { key: keyof VoicevoxVersions; label: string }[] = [
+  { key: "core", label: "CORE" },
+  { key: "onnxruntime", label: "ONNX Runtime" },
+  { key: "models", label: "音声モデル" },
+  { key: "dict_release", label: "辞書のリリース" },
+  { key: "dict", label: "辞書" },
+];
+
+/** 取得するWhisperモデル・VOICEVOXのバージョン。保存は次回の取得から効き、取得済みのものは取得し直すまで変わらない。 */
+function ModelSourcesPanel({ onChanged }: { onChanged: () => void }) {
+  const t = useT();
+  const [src, setSrc] = useState<ModelSources | null>(null);
+  const [revision, setRevision] = useState("");
+  const [versions, setVersions] = useState<VoicevoxVersions | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(
+    () =>
+      getModelSources()
+        .then((s) => {
+          setSrc(s);
+          setRevision(s.whisper_revision);
+          setVersions(s.voicevox);
+        })
+        .catch((e) => toast.error(reportError(e))),
+    [],
+  );
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const run = async (id: string, fn: () => Promise<void>, ok: string) => {
+    setBusy(id);
+    try {
+      await fn();
+      toast.success(ok);
+      await load();
+      onChanged();
+    } catch (e) {
+      toast.error(reportError(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (!src || !versions) return null;
+  const installed = src.voicevox_installed;
+  const changed = installed !== null && VERSION_FIELDS.some(({ key }) => installed[key] !== src.voicevox[key]);
+  const edited = revision !== src.whisper_revision || VERSION_FIELDS.some(({ key }) => versions[key] !== src.voicevox[key]);
+  const save = () =>
+    run(
+      "save",
+      async () => {
+        await setWhisperRevision(revision);
+        await setVoicevoxVersions(versions);
+      },
+      t("取得バージョンを保存しました。"),
+    );
+
+  return (
+    <details className="border-t py-3">
+      <summary className="cursor-pointer text-sm font-medium">{t("取得バージョン(上級者向け)")}</summary>
+      <p className="mt-2 text-xs text-muted-foreground">
+        {t("モデルや音声ライブラリの更新に合わせて、取得するバージョンを変えられます。取得元(GitHub・Hugging Face)は変えられません。保存後に各項目の取得ボタンを押すと反映されます。")}
+      </p>
+      <div className="mt-3 grid grid-cols-[8rem_1fr] items-center gap-x-3 gap-y-2 text-sm">
+        <label htmlFor="ms-whisper">{t("Whisperモデル")}</label>
+        <Input id="ms-whisper" maxLength={64} placeholder={src.whisper_default} value={revision} onChange={(e) => setRevision(e.target.value)} />
+        {VERSION_FIELDS.map(({ key, label }) => (
+          <div key={key} className="contents">
+            <label htmlFor={`ms-${key}`}>{key === "core" || key === "onnxruntime" ? `VOICEVOX ${label}` : `VOICEVOX ${t(label)}`}</label>
+            <Input
+              id={`ms-${key}`}
+              maxLength={64}
+              placeholder={src.voicevox_default[key]}
+              value={versions[key]}
+              onChange={(e) => setVersions({ ...versions, [key]: e.target.value })}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button size="sm" disabled={busy !== null || !edited} onClick={save}>
+          {busy === "save" && <Loader2 className="animate-spin" />} {t("保存")}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy !== null}
+          onClick={() => {
+            setRevision(src.whisper_default);
+            setVersions(src.voicevox_default);
+          }}
+        >
+          {t("既定値に戻す")}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy !== null}
+          onClick={() => run("whisper", downloadSttModel, t("Whisperモデルを取得しました。"))}
+        >
+          {busy === "whisper" ? <Loader2 className="animate-spin" /> : <Download />} {t("Whisperモデルを取得し直す(約550MB)")}
+        </Button>
+      </div>
+      {installed && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {t("取得済みのVOICEVOX: CORE {core} / ONNX Runtime {onnxruntime} / 音声モデル {models}", installed)}
+          {changed && <Badge variant="outline" className="ml-2">{t("設定と異なります")}</Badge>}
+        </p>
+      )}
+    </details>
+  );
+}
+
 export default function Setup() {
   const t = useT();
   const router = useRouter();
@@ -1409,6 +1529,7 @@ export default function Setup() {
               onChanged={refresh}
               onStyle={(id) => run("vv-style", () => setVoicevoxStyle(id))}
             />
+            <ModelSourcesPanel onChanged={refresh} />
             <div className="flex items-center gap-3 border-t py-3">
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">{t("読み上げエンジン")}</div>

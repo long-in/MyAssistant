@@ -12,16 +12,58 @@ use libloading::Library;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
-use crate::utils::error::AppError;
+use crate::{db::Db, utils::{error::AppError, version}};
 
-const CORE_VERSION: &str = "0.17.1";
-const ONNXRUNTIME_VERSION: &str = "1.23.2";
-const MODELS_VERSION: &str = "0.17.0";
-const DICT_FILE: &str = "open_jtalk_dic_utf_8-1.11";
+/// 取得バージョンの設定キー(JSON)。未設定の項目は`Versions::default()`の値。
+pub const VERSIONS_KEY: &str = "voicevox_versions";
 /// 取得する音声モデル。`0.vvm`には四国めたん・ずんだもん・春日部つむぎ・雨晴はうが入っている。
 const MODEL_FILES: [&str; 1] = ["0.vvm"];
 /// 既定の声(ずんだもん ノーマル)。
 pub const DEFAULT_STYLE: u32 = 3;
+
+/// 取得する配布物のバージョン。取得元のホストとURLの形はコードに固定し、ここでは識別子だけを差し替えられる。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Versions {
+    /// `VOICEVOX/voicevox_core`のリリース。
+    pub core: String,
+    /// `VOICEVOX/onnxruntime-builder`のリリース(`voicevox_onnxruntime-<この値>`)。
+    pub onnxruntime: String,
+    /// `VOICEVOX/voicevox_vvm`のリリース。
+    pub models: String,
+    /// `r9y9/open_jtalk`のリリースタグ。
+    pub dict_release: String,
+    /// 辞書のバージョン(ファイル名`open_jtalk_dic_utf_8-<この値>`)。
+    pub dict: String,
+}
+
+impl Default for Versions {
+    fn default() -> Self {
+        Self { core: "0.17.1".into(), onnxruntime: "1.23.2".into(), models: "0.17.0".into(), dict_release: "v1.11.1".into(), dict: "1.11".into() }
+    }
+}
+
+impl Versions {
+    /// URLやパスへ埋め込める識別子だけか。
+    pub fn validate(&self) -> Result<(), AppError> {
+        [&self.core, &self.onnxruntime, &self.models, &self.dict_release, &self.dict].into_iter().try_for_each(|v| version::validate(v))
+    }
+
+    /// 設定から読む。未設定・壊れた値・不正な識別子は既定値に戻す(壊れた設定で取得先を変えさせない)。
+    pub fn load(db: &Db) -> Result<Self, AppError> {
+        let saved = db.get_setting(VERSIONS_KEY)?.and_then(|v| serde_json::from_str::<Self>(&v).ok());
+        Ok(saved.filter(|v| v.validate().is_ok()).unwrap_or_default())
+    }
+
+    pub fn save(&self, db: &Db) -> Result<(), AppError> {
+        self.validate()?;
+        db.set_setting(VERSIONS_KEY, &serde_json::to_string(self).map_err(|e| AppError::Voicevox(e.to_string()))?)
+    }
+
+    fn dict_name(&self) -> String {
+        format!("open_jtalk_dic_utf_8-{}", self.dict)
+    }
+}
 
 /// アーキテクチャごとの配布物名。対応外なら`None`。
 fn archs() -> Option<(&'static str, &'static str)> {
@@ -37,11 +79,13 @@ fn archs() -> Option<(&'static str, &'static str)> {
 /// 取得物の置き場所。
 struct Layout {
     root: PathBuf,
+    onnxruntime_file: String,
+    dict_name: String,
 }
 
 impl Layout {
-    fn new(app_data: &Path) -> Self {
-        Self { root: app_data.join("voicevox") }
+    fn new(app_data: &Path, v: &Versions) -> Self {
+        Self { root: app_data.join("voicevox"), onnxruntime_file: format!("libvoicevox_onnxruntime.{}.dylib", v.onnxruntime), dict_name: v.dict_name() }
     }
 
     fn core(&self) -> PathBuf {
@@ -49,11 +93,11 @@ impl Layout {
     }
 
     fn onnxruntime(&self) -> PathBuf {
-        self.root.join("onnxruntime").join(format!("libvoicevox_onnxruntime.{ONNXRUNTIME_VERSION}.dylib"))
+        self.root.join("onnxruntime").join(&self.onnxruntime_file)
     }
 
     fn dict(&self) -> PathBuf {
-        self.root.join("dict").join(DICT_FILE)
+        self.root.join("dict").join(&self.dict_name)
     }
 
     fn models(&self) -> PathBuf {
@@ -61,13 +105,44 @@ impl Layout {
     }
 }
 
+/// 取得済みのバージョンの記録。取得の途中(`complete`が偽)で失敗した状態も区別する。
+#[derive(Serialize, Deserialize)]
+struct Record {
+    complete: bool,
+    versions: Versions,
+}
+
+fn record_path(app_data: &Path) -> PathBuf {
+    app_data.join("voicevox").join("installed.json")
+}
+
+fn read_record(app_data: &Path) -> Option<Record> {
+    serde_json::from_slice(&std::fs::read(record_path(app_data)).ok()?).ok()
+}
+
+fn write_record(app_data: &Path, record: &Record) -> Result<(), AppError> {
+    let io = |e: std::io::Error| AppError::Io(e.to_string());
+    std::fs::create_dir_all(app_data.join("voicevox")).map_err(io)?;
+    std::fs::write(record_path(app_data), serde_json::to_vec(record).map_err(|e| AppError::Io(e.to_string()))?).map_err(io)
+}
+
+fn files_exist(l: &Layout) -> bool {
+    l.core().is_file() && l.onnxruntime().is_file() && l.dict().is_dir() && MODEL_FILES.iter().all(|m| l.models().join(m).is_file())
+}
+
+/// 取得済みで使えるもののバージョン。記録がない取得物(記録を付ける前に取得したもの)は既定値のものとして扱う。
+pub fn installed_versions(app_data: &Path) -> Option<Versions> {
+    let versions = match read_record(app_data) {
+        Some(r) if r.complete => r.versions,
+        Some(_) => return None,
+        None => Versions::default(),
+    };
+    files_exist(&Layout::new(app_data, &versions)).then_some(versions)
+}
+
 /// 必要なファイルがすべて揃っているか。
 pub fn installed(app_data: &Path) -> bool {
-    let l = Layout::new(app_data);
-    l.core().is_file()
-        && l.onnxruntime().is_file()
-        && l.dict().is_dir()
-        && MODEL_FILES.iter().all(|m| l.models().join(m).is_file())
+    installed_versions(app_data).is_some()
 }
 
 /// `url`を`dest`へ保存する。一時ファイル経由で置き、`min_bytes`未満(途中切れ)は失敗にする。
@@ -118,52 +193,56 @@ fn place(from: &Path, to: &Path) -> Result<(), AppError> {
     std::fs::rename(from, to).map_err(io)
 }
 
-/// COREと、ONNX Runtime・辞書・音声モデルを取得して配置する。取得済みでも再取得する。
-pub async fn install(app_data: &Path) -> Result<(), AppError> {
-    install_inner(app_data).await.map_err(|e| e.with_source("voicevox"))
+/// `versions`のCOREと、ONNX Runtime・辞書・音声モデルを取得して配置する。取得済みでも再取得する。
+pub async fn install(app_data: &Path, versions: &Versions) -> Result<(), AppError> {
+    install_inner(app_data, versions).await.map_err(|e| e.with_source("voicevox"))
 }
 
-async fn install_inner(app_data: &Path) -> Result<(), AppError> {
+async fn install_inner(app_data: &Path, v: &Versions) -> Result<(), AppError> {
+    v.validate()?;
     let (core_arch, onnx_arch) = archs().ok_or_else(|| AppError::Voicevox("unsupported platform".into()))?;
-    let l = Layout::new(app_data);
+    let l = Layout::new(app_data, v);
     let work = l.root.join("tmp");
     let _ = tokio::fs::remove_dir_all(&work).await;
     tokio::fs::create_dir_all(&work).await.map_err(|e| AppError::Io(e.to_string()))?;
-    let result = fetch_all(&l, &work, core_arch, onnx_arch).await;
+    // 置き換えの途中で失敗したときに、新旧が混ざったものを取得済みとして扱わない
+    write_record(app_data, &Record { complete: false, versions: v.clone() })?;
+    let result = fetch_all(&l, &work, core_arch, onnx_arch, v).await;
     let _ = tokio::fs::remove_dir_all(&work).await;
-    result
+    result?;
+    write_record(app_data, &Record { complete: true, versions: v.clone() })
 }
 
-async fn fetch_all(l: &Layout, work: &Path, core_arch: &str, onnx_arch: &str) -> Result<(), AppError> {
+async fn fetch_all(l: &Layout, work: &Path, core_arch: &str, onnx_arch: &str, v: &Versions) -> Result<(), AppError> {
     let gh = "https://github.com";
 
     let zip = work.join("core.zip");
-    download(&format!("{gh}/VOICEVOX/voicevox_core/releases/download/{CORE_VERSION}/voicevox_core-{core_arch}-{CORE_VERSION}.zip"), &zip, 1 << 20).await?;
+    download(&format!("{gh}/VOICEVOX/voicevox_core/releases/download/{core}/voicevox_core-{core_arch}-{core}.zip", core = v.core), &zip, 1 << 20).await?;
     let out = work.join("core");
     extract("unzip", &["-q", "-o"], &zip, &out).await?;
-    place(&out.join(format!("voicevox_core-{core_arch}-{CORE_VERSION}/lib/libvoicevox_core.dylib")), &l.core())?;
+    place(&out.join(format!("voicevox_core-{core_arch}-{}/lib/libvoicevox_core.dylib", v.core)), &l.core())?;
 
     let tgz = work.join("onnxruntime.tgz");
-    download(&format!("{gh}/VOICEVOX/onnxruntime-builder/releases/download/voicevox_onnxruntime-{ONNXRUNTIME_VERSION}/voicevox_onnxruntime-{onnx_arch}-{ONNXRUNTIME_VERSION}.tgz"), &tgz, 1 << 20).await?;
+    download(&format!("{gh}/VOICEVOX/onnxruntime-builder/releases/download/voicevox_onnxruntime-{ort}/voicevox_onnxruntime-{onnx_arch}-{ort}.tgz", ort = v.onnxruntime), &tgz, 1 << 20).await?;
     let out = work.join("onnxruntime");
     tokio::fs::create_dir_all(&out).await.map_err(|e| AppError::Io(e.to_string()))?;
     extract("tar", &["-xzf"], &tgz, &out).await?;
     place(
-        &out.join(format!("voicevox_onnxruntime-{onnx_arch}-{ONNXRUNTIME_VERSION}/lib/libvoicevox_onnxruntime.{ONNXRUNTIME_VERSION}.dylib")),
+        &out.join(format!("voicevox_onnxruntime-{onnx_arch}-{ort}/lib/libvoicevox_onnxruntime.{ort}.dylib", ort = v.onnxruntime)),
         &l.onnxruntime(),
     )?;
 
     let tgz = work.join("dict.tgz");
-    download(&format!("{gh}/r9y9/open_jtalk/releases/download/v1.11.1/{DICT_FILE}.tar.gz"), &tgz, 1 << 20).await?;
+    download(&format!("{gh}/r9y9/open_jtalk/releases/download/{}/{}.tar.gz", v.dict_release, v.dict_name()), &tgz, 1 << 20).await?;
     let out = work.join("dict");
     tokio::fs::create_dir_all(&out).await.map_err(|e| AppError::Io(e.to_string()))?;
     extract("tar", &["-xzf"], &tgz, &out).await?;
-    place(&out.join(DICT_FILE), &l.dict())?;
+    place(&out.join(v.dict_name()), &l.dict())?;
 
     // 音声モデルは最後に置く(`installed`の判定に使うため、これが揃えば完了)
     for model in MODEL_FILES {
         let tmp = work.join(model);
-        download(&format!("{gh}/VOICEVOX/voicevox_vvm/releases/download/{MODELS_VERSION}/{model}"), &tmp, 1 << 20).await?;
+        download(&format!("{gh}/VOICEVOX/voicevox_vvm/releases/download/{}/{model}", v.models), &tmp, 1 << 20).await?;
         place(&tmp, &l.models().join(model))?;
     }
     Ok(())
@@ -239,7 +318,8 @@ impl Loaded {
 
     /// COREを読み込み、ONNX Runtime・辞書・音声モデルでシンセサイザを作る。数秒かかる。
     fn load(app_data: &Path) -> Result<Self, AppError> {
-        let l = Layout::new(app_data);
+        let versions = installed_versions(app_data).ok_or(AppError::VoicevoxMissing)?;
+        let l = Layout::new(app_data, &versions);
         unsafe {
             let lib = Library::new(l.core()).map_err(|e| voicevox_err(format!("load core: {e}")))?;
             macro_rules! sym {
@@ -439,7 +519,7 @@ mod tests {
     #[test]
     fn installed_needs_every_file() {
         let dir = tempfile::tempdir().unwrap();
-        let l = Layout::new(dir.path());
+        let l = Layout::new(dir.path(), &Versions::default());
         for p in [l.core(), l.onnxruntime(), l.models().join(MODEL_FILES[0])] {
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, b"x").unwrap();
@@ -447,6 +527,49 @@ mod tests {
         assert!(!installed(dir.path()));
         std::fs::create_dir_all(l.dict()).unwrap();
         assert!(installed(dir.path()));
+    }
+
+    /// 全ファイルを`versions`のレイアウトで置く。
+    fn put_files(dir: &Path, versions: &Versions) {
+        let l = Layout::new(dir, versions);
+        for p in [l.core(), l.onnxruntime(), l.models().join(MODEL_FILES[0])] {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, b"x").unwrap();
+        }
+        std::fs::create_dir_all(l.dict()).unwrap();
+    }
+
+    #[test]
+    fn installed_versions_follow_the_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let custom = Versions { onnxruntime: "9.9.9".into(), dict: "2.0".into(), ..Versions::default() };
+        put_files(dir.path(), &custom);
+        // 記録がなければ既定値のレイアウトを探すので、別バージョンのファイルは見つからない
+        assert_eq!(installed_versions(dir.path()), None);
+        write_record(dir.path(), &Record { complete: false, versions: custom.clone() }).unwrap();
+        assert_eq!(installed_versions(dir.path()), None);
+        write_record(dir.path(), &Record { complete: true, versions: custom.clone() }).unwrap();
+        assert_eq!(installed_versions(dir.path()), Some(custom));
+    }
+
+    #[test]
+    fn legacy_install_without_record_counts_as_default_versions() {
+        let dir = tempfile::tempdir().unwrap();
+        put_files(dir.path(), &Versions::default());
+        assert_eq!(installed_versions(dir.path()), Some(Versions::default()));
+    }
+
+    #[test]
+    fn versions_reject_unsafe_values() {
+        assert!(Versions::default().validate().is_ok());
+        assert!(Versions { core: "../evil".into(), ..Versions::default() }.validate().is_err());
+        assert!(Versions { dict: String::new(), ..Versions::default() }.validate().is_err());
+    }
+
+    #[test]
+    fn partial_json_fills_defaults() {
+        let v: Versions = serde_json::from_str(r#"{"core":"0.18.0"}"#).unwrap();
+        assert_eq!(v, Versions { core: "0.18.0".into(), ..Versions::default() });
     }
 
     #[test]
@@ -475,7 +598,7 @@ mod tests {
     #[ignore]
     async fn installs_and_synthesizes_real_wav() {
         let dir = std::path::PathBuf::from(std::env::var("VOICEVOX_TEST_DIR").unwrap());
-        install(&dir).await.unwrap();
+        install(&dir, &Versions::default()).await.unwrap();
         assert!(installed(&dir));
         let engine = VoicevoxEngine::default();
         let wav = tokio::task::spawn_blocking({
