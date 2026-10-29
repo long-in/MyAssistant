@@ -57,7 +57,7 @@ source_log_ids: ["<会話ログID>", "…"]
 | --- | --- |
 | `Captures/` | 会話のキャプチャ(`日付_セッションID先頭8文字.md`)。整理後に削除される。整理の追記先候補・グラフ索引には含めない |
 | `Preferences/stt_corrections.md` | 聞き取りの訂正履歴([voice-input.md](voice-input.md))。グラフ索引には含めず、専用の節として渡す |
-| `.tachicoma/command-policy.json` | コマンドの権限([command-policy.md](command-policy.md))。隠しフォルダのため LLM のファイルツールから見えない |
+| `.my-assistant/command-policy.json` | コマンドの権限([command-policy.md](command-policy.md))。隠しフォルダのため LLM のファイルツールから見えない |
 | `debug-logs/` | デバッグモードのログ([debug-log.md](debug-log.md)) |
 
 ## キャプチャ
@@ -107,11 +107,10 @@ flowchart TD
 
 | 操作 | 動作 |
 | --- | --- |
-| エクスポート | ナレッジ全体を、選んだフォルダ直下の新しいフォルダ(`tachicoma-knowledge-<日時>`)へコピー。元は変更しない |
+| エクスポート | ナレッジ全体を、選んだフォルダ直下の新しいフォルダ(`MyAssistant-knowledge-<日時>`)へコピー。元は変更しない |
 | インポート | 選んだフォルダ内の Markdown を取り込む。既存ファイルは上書きしない。書き込み先は `resolve_new_file` を通し、安全でない名前は飛ばす。1 ファイル 5MB まで |
 | 初期化 | ナレッジ内の Markdown をすべて削除し、空になったフォルダを片付ける。Markdown 以外のファイルや設定(Obsidian の vault 設定など)には触れない。元に戻せないため、確認ダイアログでエクスポートを促す |
 
-エクスポート先のフォルダ名の接頭辞 `tachicoma-knowledge-` は、既存のバックアップとの連続性のためあえて変えていない。
 
 ## 画面
 

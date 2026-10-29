@@ -241,7 +241,7 @@ const MAX_IMPORT_BYTES: u64 = 5 * 1024 * 1024;
 
 /// ナレッジ全体を`dest`直下の新しいフォルダへコピーする。元のファイルは変更しない。
 pub fn export(root: &Path, dest: &Path, stamp: &str) -> Result<TransferReport, AppError> {
-    let out = dest.join(format!("tachicoma-knowledge-{stamp}"));
+    let out = dest.join(format!("MyAssistant-knowledge-{stamp}"));
     fs::create_dir_all(&out).map_err(io)?;
     let mut report = TransferReport { dest: Some(out.to_string_lossy().into_owned()), ..Default::default() };
     for f in list(root)? {
@@ -617,7 +617,7 @@ mod tests {
         let dest = dir.path().join("out");
         let r = export(&root, &dest, "t").unwrap();
         assert_eq!(r.files, 2);
-        let exported = dest.join("tachicoma-knowledge-t");
+        let exported = dest.join("MyAssistant-knowledge-t");
         assert!(exported.join("Dev/Rust/b.md").exists());
 
         let r = reset(&root).unwrap();

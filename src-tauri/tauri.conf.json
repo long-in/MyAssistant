@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "MyAssistant",
   "version": "../package.json",
-  "identifier": "dev.longin.tachicoma-agent",
+  "identifier": "MyAssistant",
   "build": {
     "frontendDist": "../out",
     "devUrl": "http://localhost:3000",

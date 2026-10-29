@@ -1203,7 +1203,7 @@ mod tests {
         let env = Env::new(&root).with_shell(true);
         // 初回の実行でポリシーが書き出される。以後の編集は次のコマンドから効く
         let (_, _, _) = shell_session(vec![cmd_call("c1", "echo 1", d.path(), None), done()], &env, |_| true).await;
-        let file = root.join(".tachicoma/command-policy.json");
+        let file = root.join(".my-assistant/command-policy.json");
         assert!(file.is_file());
         fs::write(&file, r#"{ "allow": ["touch"], "deny": ["echo"] }"#).unwrap();
         let script = vec![cmd_call("c1", "touch ok.txt", d.path(), None), cmd_call("c2", "echo 2", d.path(), None), done()];
@@ -1217,10 +1217,10 @@ mod tests {
         let (_d, root) = knowledge();
         let env = Env::new(&root).with_shell(true);
         shell_session(vec![cmd_call("c1", "pwd", &root, None), done()], &env, |_| true).await;
-        assert!(root.join(".tachicoma/command-policy.json").is_file());
-        assert!(execute_tool(&root, "read_file", &json!({ "path": ".tachicoma/command-policy.json" })).is_err());
-        assert!(!execute_tool(&root, "list_files", &json!({})).unwrap().contains("tachicoma"));
-        let create = json!({ "path": ".tachicoma/command-policy.json", "content": "{}" });
+        assert!(root.join(".my-assistant/command-policy.json").is_file());
+        assert!(execute_tool(&root, "read_file", &json!({ "path": ".my-assistant/command-policy.json" })).is_err());
+        assert!(!execute_tool(&root, "list_files", &json!({})).unwrap().contains("my-assistant"));
+        let create = json!({ "path": ".my-assistant/command-policy.json", "content": "{}" });
         assert!(execute_tool(&root, "create_file", &create).is_err());
     }
 
@@ -1249,8 +1249,8 @@ mod tests {
             }
         });
         // `sleep`は計画なしでは実行できないので、許可リストに入れて承認なしで走らせる
-        fs::create_dir_all(root.join(".tachicoma")).unwrap();
-        fs::write(root.join(".tachicoma/command-policy.json"), r#"{ "allow": ["sleep"] }"#).unwrap();
+        fs::create_dir_all(root.join(".my-assistant")).unwrap();
+        fs::write(root.join(".my-assistant/command-policy.json"), r#"{ "allow": ["sleep"] }"#).unwrap();
         let started = std::time::Instant::now();
         let out = run(
             &env,
