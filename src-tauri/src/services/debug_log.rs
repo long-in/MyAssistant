@@ -1,5 +1,5 @@
 //! デバッグモード。有効な間、各APIのリクエスト・レスポンスと音声の文字起こしを
-//! ナレッジ配下の`debug-logs`へ日付ごとのJSON Lines(`YYYY-MM-DD.jsonl`)で追記する。
+//! 出力先(既定はナレッジ配下の`debug-logs`)へ日付ごとのJSON Lines(`YYYY-MM-DD.jsonl`)で追記する。
 //! APIキーはヘッダーにのみ載るため、ここへ渡す本文には含まれない。
 use std::{
     fs::OpenOptions,
@@ -16,7 +16,9 @@ use super::batch;
 use crate::{db::Db, utils::{error::AppError, path}};
 
 pub const ENABLED_KEY: &str = "debug_mode";
-/// ナレッジ直下に作るログ用ディレクトリ名。
+/// 出力先を利用者が指定したときの絶対パス。空・未設定ならナレッジ直下の`DIR_NAME`。
+pub const DIR_KEY: &str = "debug_log_dir";
+/// ナレッジ直下に作る既定のログ用ディレクトリ名。
 pub const DIR_NAME: &str = "debug-logs";
 
 /// 有効なときだけ出力先ディレクトリが入る。
@@ -27,12 +29,41 @@ pub fn is_enabled(db: &Db) -> Result<bool, AppError> {
     Ok(db.get_setting(ENABLED_KEY)?.as_deref() == Some("1"))
 }
 
+/// 指定された出力先。未指定なら`None`(ナレッジ配下の既定を使う)。
+fn custom_dir(db: &Db) -> Result<Option<PathBuf>, AppError> {
+    Ok(db.get_setting(DIR_KEY)?.filter(|p| !p.is_empty()).map(PathBuf::from))
+}
+
+/// ログの出力先(作成はしない)。
+pub fn log_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
+    match custom_dir(&app.state::<Db>())? {
+        Some(dir) => Ok(dir),
+        None => Ok(batch::knowledge_root(app)?.join(DIR_NAME)),
+    }
+}
+
+/// 出力先として使える絶対パスのディレクトリを用意し、書き込めることを確かめて正規化して返す。
+pub fn prepare_dir(dir: &Path) -> Result<PathBuf, AppError> {
+    if !dir.is_absolute() {
+        return Err(AppError::PathNotAllowed);
+    }
+    std::fs::create_dir_all(dir).map_err(|e| AppError::Io(e.to_string()))?;
+    let dir = dir.canonicalize().map_err(|e| AppError::Io(e.to_string()))?;
+    let probe = dir.join(".write_test");
+    std::fs::write(&probe, b"").map_err(|e| AppError::Io(e.to_string()))?;
+    let _ = std::fs::remove_file(probe);
+    Ok(dir)
+}
+
 /// 設定とナレッジの保存先から出力先を決め直す。ナレッジの保存先や設定を変えたときに呼ぶ。
 pub fn refresh(app: &AppHandle) -> Result<(), AppError> {
-    let dir = if is_enabled(&app.state::<Db>())? {
-        Some(path::ensure_dir(&batch::knowledge_root(app)?, &[DIR_NAME.to_owned()])?)
-    } else {
+    let db = app.state::<Db>();
+    let dir = if !is_enabled(&db)? {
         None
+    } else if let Some(custom) = custom_dir(&db)? {
+        Some(prepare_dir(&custom)?)
+    } else {
+        Some(path::ensure_dir(&batch::knowledge_root(app)?, &[DIR_NAME.to_owned()])?)
     };
     *LOG_DIR.lock().unwrap_or_else(|e| e.into_inner()) = dir;
     Ok(())

@@ -42,6 +42,7 @@ import {
   generateVoicePhrases,
   getCommandPolicy,
   getDefaultCommandPolicy,
+  getDebugLogDir,
   getDebugMode,
   setCommandPolicy,
   type CommandPolicy,
@@ -89,6 +90,7 @@ import {
   ttsReady as fetchTtsReady,
   type SttEngine,
   setWakeConfig,
+  setDebugLogDir,
   setDebugMode,
   setShellAccess,
   setWebAccess,
@@ -581,11 +583,27 @@ function LanguageSetting() {
 function DebugMode() {
   const t = useT();
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [dir, setDir] = useState("");
   useEffect(() => {
     getDebugMode()
       .then(setEnabled)
       .catch((e) => toast.error(reportError(e)));
+    getDebugLogDir()
+      .then(setDir)
+      .catch((e) => toast.error(reportError(e)));
   }, []);
+
+  const changeDir = async (path: string | null) => {
+    try {
+      setDir(await setDebugLogDir(path));
+    } catch (e) {
+      toast.error(reportError(e));
+    }
+  };
+  const pickDir = async () => {
+    const picked = await openDialog({ title: t("ログの出力先"), directory: true, multiple: false });
+    if (typeof picked === "string") await changeDir(picked);
+  };
 
   const change = async (next: boolean) => {
     setEnabled(next);
@@ -599,17 +617,18 @@ function DebugMode() {
   };
 
   return (
-    <section className="hud-panel flex items-center justify-between gap-4 px-5 py-4">
+    <section className="hud-panel space-y-3 px-5 py-4">
+      <div className="flex items-center justify-between gap-4">
       <div>
         <Heading title="Debug Mode" help={t("デバッグログの記録")}>
           <p>{t("各APIへのリクエスト・レスポンスと、音声入力の文字起こし結果をファイルに記録します。")}</p>
           <ul>
-            <li>{t("ナレッジ内の")} <strong>debug-logs</strong> {t("フォルダに、日付ごとの")} <strong>.jsonl</strong> {t("ファイルとして追記されます。")}</li>
+            <li>{t("出力先(既定はナレッジ内の")} <strong>debug-logs</strong>{t(")に、日付ごとの")} <strong>.jsonl</strong> {t("ファイルとして追記されます。")}</li>
             <li>{t("会話の内容がそのまま残ります。不要になったらオフにして、ファイルを削除してください。")}</li>
             <li>{t("APIキーと音声データ本体は記録しません。")}</li>
           </ul>
         </Heading>
-        <p className="text-xs text-muted-foreground">{t("API通信と文字起こしをナレッジ内の debug-logs に記録します。")}</p>
+        <p className="text-xs text-muted-foreground">{t("API通信と文字起こしを指定した出力先(既定はナレッジ内の debug-logs)に記録します。")}</p>
       </div>
       <Switch
         checked={enabled ?? false}
@@ -617,6 +636,12 @@ function DebugMode() {
         onCheckedChange={change}
         aria-label={t("デバッグモード")}
       />
+      </div>
+      <div className="flex items-center gap-2">
+        <Input readOnly value={dir} aria-label={t("ログの出力先")} className="font-mono text-xs" />
+        <Button variant="outline" size="sm" onClick={pickDir}>{t("変更")}</Button>
+        <Button variant="outline" size="sm" onClick={() => changeDir(null)}>{t("既定に戻す")}</Button>
+      </div>
     </section>
   );
 }
