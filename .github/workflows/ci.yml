@@ -25,6 +25,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
+      # LayoutProps 等のグローバル型は next typegen で生成されるため、tsc の前に実行する。
+      - run: npx next typegen
       - run: npx tsc --noEmit
 
   rust-test:
