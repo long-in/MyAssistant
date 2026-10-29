@@ -49,6 +49,9 @@ import {
   getWakeConfig,
   getWebAccess,
   getSttEngine,
+  getTtsEngine,
+  getVoicevoxStyle,
+  installVoicevox,
   getBatchInterval,
   setBatchInterval,
   getSttLanguage,
@@ -68,6 +71,13 @@ import {
   saveAquaKey,
   saveTtsKey,
   setSttEngine,
+  setTtsEngine,
+  setVoicevoxStyle,
+  type TtsEngine,
+  type VoicevoxSpeaker,
+  voicevoxInstalled,
+  voicevoxSpeakers,
+  ttsReady as fetchTtsReady,
   type SttEngine,
   setWakeConfig,
   setDebugMode,
@@ -836,7 +846,7 @@ function Proofread({ keyStatus }: { keyStatus: Partial<KeyStatus> }) {
 
 /** 常時音声待機。起動ワードを含む発話があったときだけ、依頼の待ち受けに入る。 */
 /** 繰り返し使う定型の音声を作成するボタン。作成済みは再送しない。実行時はTTSへ送らず、保存した音声を再生する。 */
-function VoicePhrases({ ttsReady }: { ttsReady: boolean }) {
+function VoicePhrases({ ready, engine, style }: { ready: boolean; engine: TtsEngine; style: number }) {
   const t = useT();
   const [phrases, setPhrases] = useState<VoicePhrase[]>([]);
   const [busy, setBusy] = useState(false);
@@ -844,7 +854,7 @@ function VoicePhrases({ ttsReady }: { ttsReady: boolean }) {
     voicePhrasesStatus()
       .then(setPhrases)
       .catch((e) => toast.error(reportError(e)));
-  }, []);
+  }, [engine, style]); // 声ごとに別の音声として保存されるため、切り替えたら作成状況を取り直す
 
   const missing = phrases.some((p) => !p.ready);
   const create = async () => {
@@ -867,10 +877,10 @@ function VoicePhrases({ ttsReady }: { ttsReady: boolean }) {
           <div className="text-sm font-medium">{t("定型音声")}</div>
           <div className="text-xs text-muted-foreground">
             {t("呼びかけへの応答や会話切り替えの確認で繰り返し使う音声を、先に作成して保存します。")}
-            {ttsReady ? "" : t("作成にはGoogle Cloudのキーが必要です。")}
+            {ready ? "" : engine === "voicevox" ? t("作成にはVOICEVOXの取得が必要です。") : t("作成にはGoogle Cloudのキーが必要です。")}
           </div>
         </div>
-        <Button size="sm" variant="outline" disabled={!ttsReady || busy || !missing} onClick={create}>
+        <Button size="sm" variant="outline" disabled={!ready || busy || !missing} onClick={create}>
           {busy ? <Loader2 className="animate-spin" /> : null}
           {busy ? t("作成中…") : missing ? t("定型音声を作成") : t("作成済み")}
         </Button>
@@ -887,7 +897,7 @@ function VoicePhrases({ ttsReady }: { ttsReady: boolean }) {
   );
 }
 
-function WakeWords({ ttsReady, cloudStt }: { ttsReady: boolean; cloudStt: string | null }) {
+function WakeWords({ ttsReady, engine, cloudStt }: { ttsReady: boolean; engine: TtsEngine; cloudStt: string | null }) {
   const t = useT();
   const [config, setConfig] = useState<WakeConfig | null>(null);
   const [word, setWord] = useState("");
@@ -934,7 +944,7 @@ function WakeWords({ ttsReady, cloudStt }: { ttsReady: boolean; cloudStt: string
               </li>
               <li>
                 {t("応答の音声は、Voice Linkの「定型音声を作成」で先に作成して保存したものを再生します(待機中にTTSへは送りません)。")}
-                {ttsReady ? "" : t("Google Cloudのキーが未登録のため、音声は作成できません。")}
+                {ttsReady ? "" : engine === "voicevox" ? t("VOICEVOXが未取得のため、音声は作成できません。") : t("Google Cloudのキーが未登録のため、音声は作成できません。")}
               </li>
               <li>{t("応答や読み上げの再生中は、その音を拾わないよう待機を止めます。")}</li>
               <li>{t("ひらがな・カタカナ・全角半角・句読点の違いは区別しません。1語は2〜20文字、登録は10個までです。")}</li>
@@ -1056,11 +1066,85 @@ function SettingsTransfer() {
   );
 }
 
+/** VOICEVOX COREの取得と声の選択。COREは同梱せず、公式の配布物をアプリデータへ取得して使う。 */
+function VoicevoxPanel({ installed, style, onChanged, onStyle }: { installed: boolean; style: number; onChanged: () => void; onStyle: (id: number) => void }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [speakers, setSpeakers] = useState<VoicevoxSpeaker[]>([]);
+  useEffect(() => {
+    if (!installed) return;
+    voicevoxSpeakers()
+      .then(setSpeakers)
+      .catch((e) => toast.error(reportError(e)));
+  }, [installed]);
+
+  const install = async () => {
+    setBusy(true);
+    try {
+      await installVoicevox();
+      toast.success(t("VOICEVOXを取得しました。"));
+      onChanged();
+    } catch (e) {
+      toast.error(reportError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="border-t py-3">
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            VOICEVOX CORE
+            <Badge variant={installed ? "default" : "outline"}>{installed ? t("取得済み") : t("未取得")}</Badge>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {t("端末内で音声を合成します(キー不要・無料)。公式配布のCORE・ONNX Runtime・辞書・音声モデル(約90MB)をダウンロードします。")}
+          </div>
+        </div>
+        <Button size="sm" variant="outline" disabled={busy} onClick={install}>
+          {busy ? <Loader2 className="animate-spin" /> : <Download />}
+          {busy ? t("取得中…") : installed ? t("取得し直す") : t("規約に同意して取得")}
+        </Button>
+      </div>
+      <p className="mt-2 text-xs text-muted-foreground">
+        {t("利用規約(github.com/VOICEVOX/voicevox_vvm)と各音声ライブラリの規約に従ってください。音声を公開・配布するときは「VOICEVOX:ずんだもん」のようにクレジットの表記が必要です。")}
+      </p>
+      {installed && speakers.length > 0 && (
+        <div className="mt-3 flex items-center gap-3">
+          <div className="min-w-0 flex-1 text-sm font-medium">{t("声")}</div>
+          <select
+            aria-label={t("声")}
+            className="h-9 rounded-md border bg-background px-2 text-sm"
+            value={style}
+            onChange={(e) => onStyle(Number(e.target.value))}
+          >
+            {speakers.map((sp) => (
+              <optgroup key={sp.name} label={sp.name}>
+                {sp.styles.map((st) => (
+                  <option key={st.id} value={st.id}>
+                    {sp.name}({st.name})
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Setup() {
   const t = useT();
   const router = useRouter();
   const [status, setStatus] = useState<Partial<KeyStatus>>({});
-  const [ttsReady, setTtsReady] = useState(false);
+  const [ttsReady, setTtsReady] = useState(false); // Google Cloudのキー(読み上げ・Google音声認識で共通)
+  const [speechReady, setSpeechReady] = useState(false); // 選んだ読み上げエンジンが使える状態か
+  const [ttsEngine, setTtsEngineState] = useState<TtsEngine>("google");
+  const [vvInstalled, setVvInstalled] = useState(false);
+  const [vvStyle, setVvStyle] = useState(3);
   const [aquaReady, setAquaReady] = useState(false);
   const [sttEngine, setSttEngineState] = useState<SttEngine>("local");
   const [sttLang, setSttLang] = useState<SttLanguage>("auto");
@@ -1069,8 +1153,12 @@ export default function Setup() {
 
   const refresh = useCallback(
     () =>
-      Promise.all([getKeyStatus(), ttsKeyRegistered(), aquaKeyRegistered(), getSttEngine(), getSttLanguage(), sttModelUpgradable()])
-        .then(([s, t, a, e, l, u]) => {
+      Promise.all([getKeyStatus(), ttsKeyRegistered(), aquaKeyRegistered(), getSttEngine(), getSttLanguage(), sttModelUpgradable(), getTtsEngine(), voicevoxInstalled(), getVoicevoxStyle(), fetchTtsReady()])
+        .then(([s, t, a, e, l, u, te, vi, vs, sr]) => {
+          setTtsEngineState(te);
+          setVvInstalled(vi);
+          setVvStyle(vs);
+          setSpeechReady(sr);
           setSttLang(l);
           setSttUpgradable(u);
           setStatus(s);
@@ -1171,7 +1259,32 @@ export default function Setup() {
                 })
               }
             />
-            <VoicePhrases ttsReady={ttsReady} />
+            <VoicevoxPanel
+              installed={vvInstalled}
+              style={vvStyle}
+              onChanged={refresh}
+              onStyle={(id) => run("vv-style", () => setVoicevoxStyle(id))}
+            />
+            <div className="flex items-center gap-3 border-t py-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">{t("読み上げエンジン")}</div>
+                <div className="text-xs text-muted-foreground">{t("Google Cloudはクラウドで合成し、課金対象です。VOICEVOXは端末内で合成し、無料です。")}</div>
+              </div>
+              <select
+                aria-label={t("読み上げエンジン")}
+                className="h-9 rounded-md border bg-background px-2 text-sm"
+                value={ttsEngine}
+                disabled={busy === "tts-engine"}
+                onChange={(e) => {
+                  const engine = e.target.value as TtsEngine;
+                  run("tts-engine", () => setTtsEngine(engine));
+                }}
+              >
+                <option value="google">Google Cloud</option>
+                <option value="voicevox">VOICEVOX</option>
+              </select>
+            </div>
+            <VoicePhrases ready={speechReady} engine={ttsEngine} style={vvStyle} />
             <KeyRow
               title="Aqua Voice"
               description={t("音声認識用のAPIキー(読み上げには使えません)")}
@@ -1250,7 +1363,7 @@ export default function Setup() {
             </div>
           </section>
 
-          <WakeWords ttsReady={ttsReady} cloudStt={sttEngine === "google" ? "Google Speech-to-Text" : sttEngine === "aqua" ? "Aqua Voice" : null} />
+          <WakeWords ttsReady={speechReady} engine={ttsEngine} cloudStt={sttEngine === "google" ? "Google Speech-to-Text" : sttEngine === "aqua" ? "Aqua Voice" : null} />
 
           <TuningPanel
             title="Voice Timing"

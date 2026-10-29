@@ -1,3 +1,4 @@
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
@@ -11,6 +12,8 @@ use crate::{
         proofread, secrets, stt,
         stt::SttEngine,
         stt_aqua, stt_google, tts,
+        tts::Voice,
+        voicevox::{self, VoicevoxEngine},
         vad::{self, VadEngine},
         voice_phrases, wake,
     },
@@ -313,28 +316,133 @@ fn app_data(app: &AppHandle) -> Result<std::path::PathBuf, AppError> {
     app.path().app_data_dir().map_err(|e| AppError::Io(e.to_string()))
 }
 
-/// 定型音声ごとの作成状況。
-#[tauri::command]
-pub fn voice_phrases_status(app: AppHandle) -> Result<Vec<voice_phrases::PhraseStatus>, AppError> {
-    Ok(voice_phrases::status(&app_data(&app)?))
+pub const TTS_ENGINE_KEY: &str = "tts_engine";
+pub const VOICEVOX_STYLE_KEY: &str = "voicevox_style";
+
+/// 選択できる読み上げエンジン。
+pub const TTS_ENGINES: [&str; 2] = ["google", "voicevox"];
+
+/// 読み上げエンジンの設定値。未設定・不明な値はGoogle Cloud。
+fn tts_engine(db: &Db) -> Result<&'static str, AppError> {
+    let saved = db.get_setting(TTS_ENGINE_KEY)?;
+    Ok(TTS_ENGINES.into_iter().find(|e| Some(*e) == saved.as_deref()).unwrap_or("google"))
 }
 
-/// 未作成の定型音声をGoogle Cloud TTSで合成して保存する。作成済みは送らない。
-#[tauri::command]
-pub async fn generate_voice_phrases(app: AppHandle) -> Result<Vec<voice_phrases::PhraseStatus>, AppError> {
-    voice_phrases::generate(&app_data(&app)?).await
+fn voicevox_style(db: &Db) -> Result<u32, AppError> {
+    Ok(db.get_setting(VOICEVOX_STYLE_KEY)?.and_then(|v| v.parse().ok()).unwrap_or(voicevox::DEFAULT_STYLE))
 }
 
-/// 作成済みの定型音声(base64のMP3)。未作成なら`None`で、TTSへは送らない。
-#[tauri::command]
-pub fn voice_phrase_audio(app: AppHandle, id: String) -> Result<Option<String>, AppError> {
-    Ok(voice_phrases::audio(&app_data(&app)?, &id))
+/// 現在の設定で読み上げに使う声。
+fn current_voice(db: &Db) -> Result<Voice, AppError> {
+    Ok(if tts_engine(db)? == "voicevox" { Voice::Voicevox(voicevox_style(db)?) } else { Voice::Google })
 }
 
-/// 応答テキストをGoogle Cloud TTSで音声化し、base64(MP3)を返す。
 #[tauri::command]
-pub async fn synthesize_speech(text: String) -> Result<String, AppError> {
-    tts::synthesize(&text).await
+pub fn get_tts_engine(db: State<'_, Db>) -> Result<&'static str, AppError> {
+    tts_engine(&db)
+}
+
+#[tauri::command]
+pub fn set_tts_engine(db: State<'_, Db>, engine: String) -> Result<(), AppError> {
+    if TTS_ENGINES.contains(&engine.as_str()) {
+        db.set_setting(TTS_ENGINE_KEY, &engine)
+    } else {
+        Err(AppError::InvalidProvider(engine))
+    }
+}
+
+#[tauri::command]
+pub fn get_voicevox_style(db: State<'_, Db>) -> Result<u32, AppError> {
+    voicevox_style(&db)
+}
+
+#[tauri::command]
+pub fn set_voicevox_style(db: State<'_, Db>, style: u32) -> Result<(), AppError> {
+    db.set_setting(VOICEVOX_STYLE_KEY, &style.to_string())
+}
+
+/// 読み上げに必要なものが揃っているか(Google Cloudはキー登録、VOICEVOXはCOREの取得)。
+#[tauri::command]
+pub fn tts_ready(app: AppHandle, db: State<'_, Db>) -> Result<bool, AppError> {
+    if tts_engine(&db)? == "voicevox" {
+        Ok(voicevox::installed(&app_data(&app)?))
+    } else {
+        secrets::has_tts_key()
+    }
+}
+
+#[tauri::command]
+pub fn voicevox_installed(app: AppHandle) -> Result<bool, AppError> {
+    Ok(voicevox::installed(&app_data(&app)?))
+}
+
+/// VOICEVOX COREと辞書・音声モデルを取得する(取得済みでも再取得する)。利用規約への同意はフロントエンドで取る。
+#[tauri::command]
+pub async fn install_voicevox(app: AppHandle) -> Result<(), AppError> {
+    voicevox::install(&app_data(&app)?).await?;
+    // 差し替えたファイルを次の合成で読み直す
+    app.state::<VoicevoxEngine>().reset();
+    Ok(())
+}
+
+/// 取得済みの音声モデルの話者とスタイル。
+#[tauri::command]
+pub async fn voicevox_speakers(app: AppHandle) -> Result<Vec<voicevox::Speaker>, AppError> {
+    let dir = app_data(&app)?;
+    tauri::async_runtime::spawn_blocking(move || app.state::<VoicevoxEngine>().speakers(&dir))
+        .await
+        .map_err(|e| AppError::Voicevox(e.to_string()))?
+}
+
+/// 現在のエンジンで`text`を音声化する。Google CloudはMP3、VOICEVOXはWAV。
+async fn synthesize_bytes(app: &AppHandle, voice: Voice, text: &str) -> Result<Vec<u8>, AppError> {
+    match voice {
+        Voice::Google => STANDARD.decode(tts::synthesize(text).await?).map_err(|_| AppError::BadResponse),
+        Voice::Voicevox(style) => {
+            if text.trim().is_empty() {
+                return Err(AppError::EmptyText);
+            }
+            let dir = app_data(app)?;
+            let app = app.clone();
+            let text = tts::spoken_text(text).to_owned();
+            tauri::async_runtime::spawn_blocking(move || app.state::<VoicevoxEngine>().synthesize(&dir, &text, style))
+                .await
+                .map_err(|e| AppError::Voicevox(e.to_string()))?
+        }
+    }
+}
+
+/// 定型音声ごとの作成状況(現在の声について)。
+#[tauri::command]
+pub fn voice_phrases_status(app: AppHandle, db: State<'_, Db>) -> Result<Vec<voice_phrases::PhraseStatus>, AppError> {
+    Ok(voice_phrases::status(&app_data(&app)?, current_voice(&db)?))
+}
+
+/// 未作成の定型音声を現在のエンジンで合成して保存する。作成済みは送らない。途中で失敗しても、保存済みの分は残る。
+#[tauri::command]
+pub async fn generate_voice_phrases(app: AppHandle, db: State<'_, Db>) -> Result<Vec<voice_phrases::PhraseStatus>, AppError> {
+    let dir = app_data(&app)?;
+    let voice = current_voice(&db)?;
+    for p in voice_phrases::missing(&dir, voice) {
+        voice_phrases::save(&dir, voice, p, synthesize_bytes(&app, voice, p.text).await?)?;
+    }
+    Ok(voice_phrases::status(&dir, voice))
+}
+
+/// 作成済みの定型音声(base64のMP3またはWAV)。未作成なら`None`で、TTSへは送らない。
+#[tauri::command]
+pub fn voice_phrase_audio(app: AppHandle, db: State<'_, Db>, id: String) -> Result<Option<String>, AppError> {
+    Ok(voice_phrases::audio(&app_data(&app)?, current_voice(&db)?, &id))
+}
+
+/// 応答テキストを現在のエンジンで音声化し、base64(Google CloudはMP3、VOICEVOXはWAV)を返す。
+#[tauri::command]
+pub async fn synthesize_speech(app: AppHandle, db: State<'_, Db>, text: String) -> Result<String, AppError> {
+    let voice = current_voice(&db)?;
+    if voice == Voice::Google {
+        return tts::synthesize(&text).await;
+    }
+    Ok(STANDARD.encode(synthesize_bytes(&app, voice, &text).await?))
 }
 
 #[tauri::command]

@@ -9,7 +9,8 @@
 | `timeline.db` | SQLite。会話ログ・使用量・アプリ設定 |
 | `secrets.json` | API キー。**平文 JSON**(権限 0600)。OS のキーチェーンは使っていない([security.md](security.md)) |
 | `models/` | Whisper モデル(`ggml-large-v3-turbo-q5_0.bin` / `ggml-small.bin`) |
-| `voice/` | 定型音声(`<id>-<ハッシュ>.mp3`) |
+| `voice/` | 定型音声(`<id>-<ハッシュ>.mp3` / `.wav`。声ごとに別ファイル) |
+| `voicevox/` | VOICEVOX CORE・ONNX Runtime・OpenJTalk 辞書・音声モデル(設定画面から取得) |
 | ナレッジ | 既定ではアプリデータ配下。設定で任意のフォルダへ変更できる([knowledge.md](knowledge.md)) |
 
 識別子は、保存先を変えないためあえて旧名のまま。`.tachicoma/`(コマンド権限)や設定ファイルの内部 ID(`tachicoma-agent`)、エクスポートのフォルダ名も同じ理由で変えていない。
@@ -62,6 +63,8 @@ erDiagram
 | `shell_access` | `0` / `1` | 有効 | Command Tasks |
 | `stt_engine` | `local` / `google` / `aqua` | `local` | Voice Link |
 | `stt_language` | `auto` / `ja` / `en` / `zh` / `ko` | `auto` | Voice Link |
+| `tts_engine` | `google` / `voicevox` | `google` | Voice Link |
+| `voicevox_style` | VOICEVOX のスタイル ID(数値の文字列) | `3`(ずんだもん ノーマル) | Voice Link |
 | `proofread_route` | `Route`(JSON)。空ならオフ | オフ | Proofread |
 | `wake_enabled` / `wake_words` | `0` / `1`、JSON 配列 | 無効 | Wake Words |
 | `tuning` | 調整項目(JSON) | 下表 | Voice Timing / Limits |

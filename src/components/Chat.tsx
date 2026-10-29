@@ -53,7 +53,7 @@ import {
   sttModelReady,
   synthesizeSpeech,
   trimRecording,
-  ttsKeyRegistered,
+  ttsReady as fetchTtsReady,
   voicePhraseAudio,
   waitForSpeechEnd,
 } from "@/lib/api";
@@ -181,7 +181,7 @@ export default function Chat() {
   const fail = (e: unknown) => toast.error(reportError(e));
 
   useEffect(() => {
-    Promise.all([listModels(), loadRouting(), getKeyStatus(), ttsKeyRegistered(), getWakeConfig(), getTuning()])
+    Promise.all([listModels(), loadRouting(), getKeyStatus(), fetchTtsReady(), getWakeConfig(), getTuning()])
       .then(([m, r, k, t, w, u]) => {
         tuning.current = u;
         setModels(m);
@@ -823,7 +823,7 @@ export default function Chat() {
               size="sm"
               aria-pressed={speakReply}
               disabled={!ttsReady}
-              title={ttsReady ? t("応答の読み上げのオン/オフ") : t("設定でGoogle Cloud TTSのキーを登録してください")}
+              title={ttsReady ? t("応答の読み上げのオン/オフ") : t("設定で読み上げの準備をしてください")}
               onClick={() => {
                 if (speakReply) stopSpeech(); // 読み上げの途中でオフにしたら、その場で止める
                 setVoiceReply((v) => !v);

@@ -4,16 +4,28 @@
 
 ## 音声合成(`tts.rs`)
 
+エンジンは設定(`tts_engine`: `google` / `voicevox`、既定 `google`)で選ぶ。`synthesize_speech` は選んだエンジンで合成し、base64 の音声(Google は MP3、VOICEVOX は WAV)を返す。再生側は Web Audio の `decodeAudioData` で形式を自動判別するため、どちらもそのまま再生できる。
+
+### Google Cloud
+
 - Google Cloud Text-to-Speech(REST)。キーは Google Cloud API キー(設定の Voice Link)で、Google STT と共通。
 - 言語は本文で判定する(`voice_for`): かな・漢字を含めば日本語(`ja-JP-Neural2-B`)、それ以外は英語(`en-US-Neural2-F`)。
 - 入力の上限は 5,000 バイトのため、UTF-8 の文字境界で 4,500 バイトに切って送る。**これを超える長文は先頭部分だけが読み上げられる**。
-- 音声は base64 の MP3 で返す。
+
+### VOICEVOX CORE(`voicevox.rs`)
+
+- 端末内で合成する(キー不要・無料。応答テキストも外へ出ない)。
+- CORE は同梱しない。設定の「規約に同意して取得」で、公式配布物を GitHub からアプリデータの `voicevox/` へ取得する(約 90MB): CORE(`core/libvoicevox_core.dylib`)、ONNX Runtime(`onnxruntime/`)、OpenJTalk 辞書(`dict/`)、音声モデル `0.vvm`(`models/`。四国めたん・ずんだもん・春日部つむぎ・雨晴はう)。展開はシステムの `tar` / `unzip` を使う。macOS のみ対応。
+- 実行時は C API を `libloading` で動的ロードする(`voicevox_onnxruntime_load_once` → OpenJTalk → シンセサイザ → 音声モデル)。初回の合成でロードし、以降は使い回す。取得し直したら破棄して読み直す。
+- 声は設定の「声」で選ぶ(`voicevox_style`、既定は 3 = ずんだもん ノーマル)。選択肢は読み込んだモデルのメタ情報から作る。
+- 入力は Google と同じ 4,500 バイトに切る(字幕の同期範囲を変えないため)。
+- 生成した音声を公開・配布するときは、音声モデルの利用規約に従ったクレジット表記(例: 「VOICEVOX:ずんだもん」)が必要。画面にも注意書きを出している。
 
 ### 読み上げの有効条件
 
-`speakReply = 読み上げスイッチ ∧ Google Cloud キー登録済み`。
+`speakReply = 読み上げスイッチ ∧ 選んだエンジンが使える`(Google Cloud はキー登録済み、VOICEVOX は CORE を取得済み。`tts_ready`)。
 
-- キーが未登録なら読み上げず、字幕だけで応答する(Voice Link のキーなしで字幕のみ使える)。
+- 使えないなら読み上げず、字幕だけで応答する(キーも VOICEVOX もなしで字幕のみ使える)。
 - 画面の「読み上げ / ミュート」で切り替える。
 
 ## 再生(`lib/api.ts`)
@@ -56,7 +68,7 @@ sequenceDiagram
 | `wake_ack` | 用件は、なんでしょうか | 起動ワードだけが言われたときの応答([wake-standby.md](wake-standby.md)) |
 | `switch_confirm` | 新しい会話を始めてもよいですか | 会話の切り替えの確認([conversation-session.md](conversation-session.md)) |
 
-- 設定の「定型音声を作成」で、未作成の音声だけを Google Cloud TTS で合成してアプリデータの `voice/` に保存する。
-- ファイル名は `<id>-<FNV-1a ハッシュ>.mp3`。ハッシュは「声の名前 + 文言」から作るため、文言や声が変わると別名になり、古い音声は未作成として扱われる。
+- 設定の「定型音声を作成」で、未作成の音声だけを選んだエンジンで合成してアプリデータの `voice/` に保存する。
+- ファイル名は `<id>-<FNV-1a ハッシュ>.<mp3 または wav>`。ハッシュは「声の名前 + 文言」から作る(VOICEVOX は `voicevox-<スタイルID>`)ため、文言・声・エンジンが変わると別名になり、古い音声は未作成として扱われる。エンジンや声を変えたら作り直す。
 - 書き込み途中のファイルを作成済みと見なさないよう、一時ファイル経由でリネームする。途中で失敗しても作成済みの分は残る。
 - 未作成の間は、定型音声を再生せずに待つ(無音)。新しい定型音声を足すときは `PHRASES` に追加する。
