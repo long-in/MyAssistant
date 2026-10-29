@@ -15,7 +15,7 @@ import ApprovalModal, { type Approval, type Listening } from "./ApprovalModal";
 import AbortButton from "./AbortButton";
 import SwitchConfirm from "./SwitchConfirm";
 import ExecutionLog, { applyAgentEvent, emptyLog, type LogState } from "./ExecutionLog";
-import ExchangeLog, { type Turn } from "./ExchangeLog";
+import { type Turn } from "./Reply";
 import OrbReadout, { type Phase } from "./OrbReadout";
 import { cn } from "@/lib/utils";
 import { isPlainSpace, matchShortcut } from "@/lib/shortcuts";
@@ -224,14 +224,6 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
   const changeRoute = (r: Route) => {
     setRoute(r);
     saveRouting(r).catch(fail);
-  };
-
-  const speak = async (text: string) => {
-    try {
-      await playBase64Mp3(await synthesizeSpeech(text), text);
-    } catch (e) {
-      fail(e);
-    }
   };
 
   const showApproval = (a: Approval | null) => {
@@ -850,8 +842,8 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
         </div>
         {/* 右下: 処理が始まったら現れる強制中断。どの状態からでもすぐ押せるよう大きく目立たせる */}
         {isWorking && <AbortButton onAbort={abortAll} />}
-        {/* 左上: 直前の会話と、その下に実行ログ */}
-        <div className={cn("pointer-events-none absolute top-4 left-4 z-10 w-72 max-w-[calc(100%-2rem)] flex-col gap-3", HIDE_WHEN_SMALL_FLEX)}>
+        {/* 左上: 新しい会話ボタンと、その下に実行ログ */}
+        <div className={cn("pointer-events-none absolute top-4 left-4 z-10 w-[26rem] max-w-[calc(100%-2rem)] xl:w-[34rem] flex-col gap-3", HIDE_WHEN_SMALL_FLEX)}>
           <Button
             type="button"
             variant="outline"
@@ -863,7 +855,6 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
             <MessageSquarePlus />
             {t("新しい会話")}
           </Button>
-          <ExchangeLog turn={turn} pending={busy} canSpeak={ttsReady} onSpeak={speak} />
           <ExecutionLog log={log} busy={busy} onCancel={cancelTask} onClose={() => setLog(emptyLog)} />
         </div>
         {/* 字幕は固定高の領域に収め、長文は領域内でスクロールさせる(円形波形の大きさを変えない) */}
