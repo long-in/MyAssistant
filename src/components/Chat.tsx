@@ -2,14 +2,17 @@
 
 import { useT } from "@/lib/i18n";
 import { useEffect, useRef, useState } from "react";
-import { Download, Ear, Loader2, MessageSquarePlus, Mic, Square, Volume2, VolumeX } from "lucide-react";
+import { Download, Ear, Loader2, MessageSquarePlus, Mic, Send, Square, Volume2, VolumeX } from "lucide-react";
 import { toast } from "sonner";
+import { createPortal } from "react-dom";
 import ModelSelector from "./ModelSelector";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { VoiceOrb } from "./Waveforms";
 import UsageHud from "./UsageHud";
 import Subtitles from "./Subtitles";
 import ApprovalModal, { type Approval, type Listening } from "./ApprovalModal";
+import AbortButton from "./AbortButton";
 import SwitchConfirm from "./SwitchConfirm";
 import ExecutionLog, { applyAgentEvent, emptyLog, type LogState } from "./ExecutionLog";
 import ExchangeLog, { type Turn } from "./ExchangeLog";
@@ -99,15 +102,21 @@ const HIDE_WHEN_SMALL = "[@media(max-height:40rem),(max-width:40rem)]:hidden";
 const HIDE_WHEN_SMALL_FLEX = "flex [@media(max-height:40rem),(max-width:40rem)]:hidden";
 const SMALL_COLLAPSE_SUBTITLES = "h-[clamp(9rem,26vh,14rem)] [@media(max-height:40rem),(max-width:40rem)]:h-auto";
 
-/** 現在の会話のセッション。設定画面などへ移動して`Chat`が作り直されても引き継ぐ(リロード・再起動で新しくなる)。 */
+/** 現在の会話のセッション。リロード・再起動で新しくなる。 */
 let currentSession = { id: crypto.randomUUID() };
 
-export default function Chat() {
+/** `active`は対話画面を表示中かどうか。`modelSlot`はモデル選択を表示する左メニュー下部の要素。他の画面へ移動しても`Chat`は`AppShell`に残り、進行中の処理や待機を続ける。 */
+export default function Chat({ active, modelSlot }: { active: boolean; modelSlot: HTMLElement | null }) {
   const t = useT();
+  const activeRef = useRef(active);
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
   // 会話の切り替えは、ユーザーが明示したときだけ。コマンド実行の依頼・承認や画面移動では切り替えない(再起動後は、バックエンドが前回までの文脈をMarkdownから復元する)
   const session = useRef(currentSession);
   const [turn, setTurn] = useState<Turn | null>(null);
   const [busy, setBusy] = useState(false);
+  const [draft, setDraft] = useState("");
   const [activity, setActivity] = useState<string | null>(null);
   const [approval, setApproval] = useState<Approval | null>(null);
   // 音声の返答の待ち受けは非同期で動くので、最新の承認要求をrefでも持つ
@@ -180,7 +189,9 @@ export default function Chat() {
 
   const fail = (e: unknown) => toast.error(reportError(e));
 
+  // 対話画面へ戻るたびに、設定画面などでの変更(キー・モデル・待機設定)を読み直す
   useEffect(() => {
+    if (!active) return;
     Promise.all([listModels(), loadRouting(), getKeyStatus(), fetchTtsReady(), getWakeConfig(), getTuning()])
       .then(([m, r, k, t, w, u]) => {
         tuning.current = u;
@@ -191,7 +202,7 @@ export default function Chat() {
         setWake(w);
       })
       .catch(fail);
-  }, []);
+  }, [active]);
 
   useEffect(() => {
     mounted.current = true;
@@ -268,12 +279,39 @@ export default function Chat() {
     toast.success(t("新しい会話を始めました。"));
   };
 
+  /**
+   * 進行中の処理をすべて強制的に止める(雑音や話し声で意図せず進んだときの停止手段)。
+   * 読み上げ・録音・文字起こしの結果・実行中の依頼・承認待ち・切り替えの確認を打ち切り、会話の続きの待ち受けも終える。
+   * 会話の文脈は残す。待機がオンなら、そのまま起動ワードの待ち受けに戻る。
+   */
+  const abortAll = () => {
+    resetEpoch.current++; // 会話中のループ・待ち受け・返答の読み上げは、番号の違いで終わる
+    manualRun.current++;
+    clearTail();
+    stopSpeech();
+    cancelTask();
+    if (switchResolve.current) answerSwitch(false);
+    if (micNow.current === "recording" || micNow.current === "standby") {
+      void cancelRecording().catch(() => {});
+      setMic("idle");
+    }
+    setListening("idle");
+    setAwake(false);
+    setActivity(null);
+    setTurn(null);
+    toast.info(t("中断しました。"));
+  };
+  const abortRef = useRef(abortAll);
+  const working = useRef(false);
+
   /** 依頼を送る。`spoke`: 返答を読み上げた、`replied`: 返答は画面のみ、`none`: 返答なし。 */
   const submit = async (raw: string): Promise<"spoke" | "replied" | "none"> => {
     const text = raw.trim();
     if (!text || busy) return "none";
     unlockAudio(); // 操作のタイミングで有効化し、応答の自動再生を可能にする
     const sessionId = session.current.id;
+    const epoch = resetEpoch.current;
+    const aborted = () => session.current.id !== sessionId || resetEpoch.current !== epoch;
     const userAt = new Date();
     setLog(emptyLog);
     setBusy(true);
@@ -283,7 +321,7 @@ export default function Chat() {
       if (!route) throw new Error(t("使えるモデルがありません。設定でAPIキーを登録してください。"));
       const r = await sendChat(sessionId, text, route, onAgentEvent);
       refreshUsage();
-      if (session.current.id !== sessionId) return "none"; // 待っている間に新しい会話へ切り替わった
+      if (aborted()) return "none"; // 待っている間に新しい会話へ切り替わった、または中断された
       const replied = { user: text, userAt, reply: r.content, replyAt: new Date(), via: r.model };
       result = "replied";
       if (speakReply) {
@@ -292,7 +330,7 @@ export default function Chat() {
           fail(e);
           return null;
         });
-        if (session.current.id !== sessionId) return "none";
+        if (aborted()) return "none";
         if (audio && speakReplyRef.current) await playBase64Mp3(audio, r.content).catch(fail);
         result = "spoke";
       }
@@ -307,13 +345,24 @@ export default function Chat() {
     return result;
   };
 
+  /** 入力欄の文章を送る。送信が始まったら欄を空にし、読み上げ中なら止めてから送る。 */
+  const submitDraft = () => {
+    const text = draft.trim();
+    if (!text || busy || needModel || mic !== "idle") return;
+    stopSpeech();
+    setDraft("");
+    void submit(text);
+  };
+
   /** `hold`: スペース長押しでの開始。開始処理中にキーが離されていたら、録音できた時点でそのまま停止する。 */
   const toggleMic = async (hold = false) => {
     // 開始・停止処理の最中の再入力(キーのリピートや連打)は無視し、録音を勝手に止めない
     const state = micNow.current;
     if (micLock.current || state === "starting" || state === "transcribing") return;
+    if (state !== "recording" && isSpeaking()) return; // 読み上げ中は手動でもマイクを開かない(音声を拾って割り込むため)
     micLock.current = true;
     unlockAudio();
+    const epoch = resetEpoch.current;
     let text: string | null = null;
     try {
       const stop = state === "recording";
@@ -343,7 +392,7 @@ export default function Chat() {
     } finally {
       micLock.current = false;
     }
-    if (text) {
+    if (text && resetEpoch.current === epoch) {
       // 承認待ちの間の発話は、新しい依頼ではなく承認への返答として扱う
       if (approvalRef.current) answerByVoice(text);
       else await converse(text, () => mounted.current);
@@ -579,7 +628,9 @@ export default function Chat() {
   };
 
   /** 起動ワードを聞き取ったあと。続けて依頼があればそのまま送り、なければ応答して用件を待つ。 */
-  const handleWake = async (rest: string, alive: () => boolean) => {
+  const handleWake = async (rest: string, standbyAlive: () => boolean) => {
+    const epoch = resetEpoch.current;
+    const alive = () => standbyAlive() && resetEpoch.current === epoch; // 中断で終わる
     if (rest) {
       await converse(rest, alive);
       return;
@@ -689,6 +740,8 @@ export default function Chat() {
 
   useEffect(() => {
     gate.current = { busy, needModel };
+    abortRef.current = abortAll;
+    working.current = busy || speaking || switching || !!approval || awake || mic === "starting" || mic === "recording" || mic === "transcribing";
     holdRef.current = (down) => {
       keyHeld.current = down;
       if (down) {
@@ -705,15 +758,20 @@ export default function Chat() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (!activeRef.current) return; // 他の画面ではSpaceを通常の入力に使う
       const id = matchShortcut(e);
       if (id === "mic") {
         e.preventDefault();
         if (!e.repeat) holdRef.current(true); // 押しっぱなしのリピートで開始→即停止しない
+      } else if (id === "abort" && working.current && !e.isComposing) {
+        e.preventDefault();
+        abortRef.current();
       }
     };
     // ボタンにフォーカスがあるとスペースのkeyupでクリックが発火し、二重に切り替わるため止める
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code !== "Space") return;
+      if (!activeRef.current) return;
       if (isPlainSpace(e)) e.preventDefault();
       holdRef.current(false);
     };
@@ -750,6 +808,7 @@ export default function Chat() {
   };
 
   const recording = mic === "recording";
+  const isWorking = busy || speaking || switching || !!approval || awake || mic === "starting" || recording || mic === "transcribing";
   const phase: Phase =
     mic === "starting" ? "initializing"
     : recording ? "listening"
@@ -766,6 +825,7 @@ export default function Chat() {
 
   return (
     <div className="flex h-full flex-col">
+      {modelSlot && createPortal(<ModelSelector route={route} models={models} keyStatus={keyStatus} onChange={changeRoute} />, modelSlot)}
       {needModel && (
         <div className="mx-6 mt-4 flex items-center justify-between gap-3 rounded-lg border bg-muted/40 p-3 text-sm">
           <span>{t("音声入力にはローカル音声認識モデル(約470MB)のダウンロードが必要です。")}</span>
@@ -788,8 +848,21 @@ export default function Chat() {
             <OrbReadout phase={phase} />
           </div>
         </div>
+        {/* 右下: 処理が始まったら現れる強制中断。どの状態からでもすぐ押せるよう大きく目立たせる */}
+        {isWorking && <AbortButton onAbort={abortAll} />}
         {/* 左上: 直前の会話と、その下に実行ログ */}
         <div className={cn("pointer-events-none absolute top-4 left-4 z-10 w-72 max-w-[calc(100%-2rem)] flex-col gap-3", HIDE_WHEN_SMALL_FLEX)}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="pointer-events-auto self-start bg-background/80 backdrop-blur"
+            title={t("これまでの会話の流れを引き継がず、新しい会話を始める")}
+            onClick={() => startNewConversation(true)}
+          >
+            <MessageSquarePlus />
+            {t("新しい会話")}
+          </Button>
           <ExchangeLog turn={turn} pending={busy} canSpeak={ttsReady} onSpeak={speak} />
           <ExecutionLog log={log} busy={busy} onCancel={cancelTask} onClose={() => setLog(emptyLog)} />
         </div>
@@ -812,51 +885,22 @@ export default function Chat() {
 
       {approval && <ApprovalModal approval={approval} listening={listening} onAnswer={answerApproval} />}
 
-      {/* 下部: マイク入力の横長波形 */}
+      {/* 下部: 操作ボタンと入力欄 */}
       <div className="border-t border-primary/20 px-6 py-4">
-        <div className="mx-auto mb-3 flex max-w-3xl items-center justify-between gap-3">
-          <ModelSelector route={route} models={models} keyStatus={keyStatus} onChange={changeRoute} />
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              aria-pressed={speakReply}
-              disabled={!ttsReady}
-              title={ttsReady ? t("応答の読み上げのオン/オフ") : t("設定で読み上げの準備をしてください")}
-              onClick={() => {
-                if (speakReply) stopSpeech(); // 読み上げの途中でオフにしたら、その場で止める
-                setVoiceReply((v) => !v);
-              }}
-            >
-              {speakReply ? <Volume2 /> : <VolumeX />}
-              {speakReply ? t("読み上げ") : t("ミュート")}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              title={t("これまでの会話の流れを引き継がず、新しい会話を始める")}
-              onClick={() => startNewConversation(true)}
-            >
-              <MessageSquarePlus />
-              {t("新しい会話")}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              aria-pressed={standbyOn}
-              disabled={!wake.words.length}
-              title={wake.words.length ? t("呼びかけで起動する常時待機のオン/オフ") : t("設定で起動ワードを登録してください")}
-              onClick={toggleStandby}
-            >
-              <Ear />
-              {standbyOn ? t("待機中") : t("待機オフ")}
-            </Button>
-          </div>
-        </div>
-        <div className="mx-auto flex max-w-3xl items-center gap-4">
+        <div className="mx-auto flex max-w-4xl items-center gap-4">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon-lg"
+            aria-pressed={standbyOn}
+            aria-label={standbyOn ? t("待機中") : t("待機オフ")}
+            disabled={!wake.words.length}
+            title={wake.words.length ? t("呼びかけで起動する常時待機のオン/オフ") : t("設定で起動ワードを登録してください")}
+            className={cn("size-11 shrink-0 rounded-full [&_svg]:size-5", standbyOn && "border-primary text-primary")}
+            onClick={toggleStandby}
+          >
+            <Ear />
+          </Button>
           <Button
             type="button"
             size="icon-lg"
@@ -864,13 +908,61 @@ export default function Chat() {
             aria-label={recording ? t("録音を停止して送信") : t("音声入力")}
             title={t("{recording} ({micHint}を押している間)", { recording: recording ? "録音を停止して送信" : "音声入力", micHint })}
             aria-pressed={recording}
-            disabled={(busy && !approval) || mic === "starting" || mic === "transcribing" || needModel}
-            className={cn("shrink-0", recording && "animate-pulse")}
+            disabled={(busy && !approval) || mic === "starting" || mic === "transcribing" || needModel || (speaking && mic !== "recording")}
+            className={cn("size-16 shrink-0 rounded-full [&_svg]:size-7", recording && "animate-pulse")}
             onClick={() => void toggleMic()}
           >
             {mic === "starting" || mic === "transcribing" ? <Loader2 className="animate-spin" /> : recording ? <Square /> : <Mic />}
           </Button>
-          <span className="hud-label min-w-0 flex-1 text-[0.65rem]">{status}</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon-lg"
+            aria-pressed={!speakReply}
+            aria-label={speakReply ? t("ミュート") : t("読み上げ")}
+            disabled={!ttsReady}
+            title={ttsReady ? t("応答の読み上げのオン/オフ") : t("設定で読み上げの準備をしてください")}
+            className="size-11 shrink-0 rounded-full [&_svg]:size-5"
+            onClick={() => {
+              if (speakReply) stopSpeech(); // 読み上げの途中でオフにしたら、その場で止める
+              setVoiceReply((v) => !v);
+            }}
+          >
+            {speakReply ? <Volume2 /> : <VolumeX />}
+          </Button>
+          <form
+            className="flex min-w-0 flex-1 items-stretch gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitDraft();
+            }}
+          >
+            <Textarea
+              value={draft}
+              rows={3}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                // Enterで送信、Shift+Enterで改行。日本語入力の変換確定のEnterでは送らない
+                if (e.key !== "Enter" || e.shiftKey) return;
+                e.preventDefault();
+                if (!e.nativeEvent.isComposing && e.keyCode !== 229) submitDraft();
+              }}
+              disabled={busy || needModel}
+              placeholder={status}
+              aria-label={t("メッセージ")}
+              className="max-h-48 min-h-20 resize-none bg-background/60"
+            />
+            <Button
+              type="submit"
+              variant="outline"
+              aria-label={t("送信")}
+              title={t("送信")}
+              disabled={!draft.trim() || busy || needModel || mic !== "idle"}
+              className="h-auto w-14 shrink-0 flex-col [&_svg]:size-5"
+            >
+              <Send />
+            </Button>
+          </form>
         </div>
       </div>
     </div>
