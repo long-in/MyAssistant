@@ -170,6 +170,11 @@ export const getDefaultCommandPolicy = () => invoke<CommandPolicy>("get_default_
 export const getDebugMode = () => invoke<boolean>("get_debug_mode");
 export const setDebugMode = (enabled: boolean) => invoke<void>("set_debug_mode", { enabled });
 
+/** デバッグログの現在の出力先。 */
+export const getDebugLogDir = () => invoke<string>("get_debug_log_dir");
+/** 出力先を変更する(絶対パス)。`null`でナレッジ配下の既定に戻す。既存ログは移動しない。 */
+export const setDebugLogDir = (path: string | null) => invoke<string>("set_debug_log_dir", { path });
+
 export type DebugLogFile = { name: string; bytes: number };
 /** デバッグログのファイル一覧(新しい日付が先頭)。 */
 export const listDebugLogs = () => invoke<DebugLogFile[]>("list_debug_logs");
@@ -503,6 +508,15 @@ export const loadBatchRoute = () => invoke<Route | null>("load_batch_route");
 export const saveBatchRoute = (route: Route) => invoke<void>("save_batch_route", { route });
 export const listKnowledge = () => invoke<KnowledgeFile[]>("list_knowledge");
 export const readKnowledge = (path: string) => invoke<string>("read_knowledge", { path });
+/** Markdown以外のファイル一覧(閲覧専用)。 */
+export const listOtherKnowledge = () => invoke<KnowledgeFile[]>("list_other_knowledge");
+export const readOtherKnowledge = (path: string) => invoke<string>("read_other_knowledge", { path });
+export const listKnowledgeDirs = () => invoke<string[]>("list_knowledge_dirs");
+export const writeKnowledge = (path: string, content: string) => invoke<void>("write_knowledge", { path, content });
+export const createKnowledgeFile = (path: string) => invoke<string>("create_knowledge_file", { path });
+export const createKnowledgeDir = (path: string) => invoke<void>("create_knowledge_dir", { path });
+export const renameKnowledge = (from: string, to: string) => invoke<void>("rename_knowledge", { from, to });
+export const deleteKnowledge = (path: string) => invoke<void>("delete_knowledge", { path });
 export type TransferReport = { files: number; skipped: number; dest: string | null };
 /** ナレッジ全体を選んだフォルダ直下の新しいフォルダへ書き出す。 */
 export const exportKnowledge = (dest: string) => invoke<TransferReport>("export_knowledge", { dest });
