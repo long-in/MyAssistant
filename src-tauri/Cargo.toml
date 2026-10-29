@@ -29,7 +29,7 @@ rusqlite = { version = "0.41.0", features = ["bundled"] }
 uuid = { version = "1.29.0", features = ["v4"] }
 whisper-rs = { version = "0.16.0", features = ["metal"] }
 cpal = "0.18.2"
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 tauri-plugin-dialog = "2"
 libc = "0.2"
