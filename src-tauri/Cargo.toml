@@ -1,0 +1,39 @@
+[package]
+name = "app"
+version = "0.1.0"
+description = "MyAssistant: 音声で対話できるデスクトップ AI エージェント"
+license = "MIT"
+repository = ""
+edition = "2024"
+rust-version = "1.90"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.12.5", features = ["tray-icon", "image-png"] }
+tauri-plugin-log = "2"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["macros", "rt", "sync", "time", "process", "io-util"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart"] }
+rusqlite = { version = "0.41.0", features = ["bundled"] }
+uuid = { version = "1.29.0", features = ["v4"] }
+whisper-rs = { version = "0.16.0", features = ["metal"] }
+cpal = "0.18.2"
+base64 = "0.22"
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+tauri-plugin-dialog = "2"
+libc = "0.2"
+
+[dev-dependencies]
+hound = "3.5.1"
+tempfile = "3.27.0"
