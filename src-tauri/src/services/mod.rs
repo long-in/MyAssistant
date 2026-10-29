@@ -14,6 +14,7 @@ pub mod llm_client;
 pub mod llm_router;
 pub mod proofread;
 pub mod profile;
+pub mod pronunciation;
 pub mod stt;
 pub mod stt_aqua;
 pub mod stt_google;

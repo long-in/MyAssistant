@@ -295,6 +295,13 @@ export const voicevoxSpeakers = () => invoke<VoicevoxSpeaker[]>("voicevox_speake
 export const getVoicevoxStyle = () => invoke<number>("get_voicevox_style");
 export const setVoicevoxStyle = (style: number) => invoke<void>("set_voicevox_style", { style });
 
+/** 読み上げ前に置き換える語と読み。組み込み(読み取り専用)と、ユーザーが登録した分。 */
+export type DictionaryEntry = { word: string; reading: string };
+export type TtsDictionary = { builtin: DictionaryEntry[]; user: DictionaryEntry[] };
+export const getTtsDictionary = () => invoke<TtsDictionary>("get_tts_dictionary");
+/** ユーザー辞書を丸ごと保存し、整形後(空欄・大文字小文字違いの重複を除いた)の内容を返す。 */
+export const setTtsDictionary = (entries: DictionaryEntry[]) => invoke<DictionaryEntry[]>("set_tts_dictionary", { entries });
+
 export const ttsKeyRegistered = () => invoke<boolean>("tts_key_registered");
 export const saveTtsKey = (key: string) => invoke<void>("save_tts_key", { key });
 export const deleteTtsKey = () => invoke<void>("delete_tts_key");

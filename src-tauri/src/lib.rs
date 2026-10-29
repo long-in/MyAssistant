@@ -75,6 +75,8 @@ pub fn run() {
       commands::voice::generate_voice_phrases,
       commands::voice::voice_phrase_audio,
       commands::voice::synthesize_speech,
+      commands::voice::get_tts_dictionary,
+      commands::voice::set_tts_dictionary,
       commands::voice::get_tts_engine,
       commands::voice::set_tts_engine,
       commands::voice::get_voicevox_style,

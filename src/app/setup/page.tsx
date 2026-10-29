@@ -3,7 +3,7 @@
 import { LANGS, setLang, tr, useLang, useT, type Lang } from "@/lib/i18n";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, ChevronDown, Download, KeyRound, Loader2, Plus, Trash2, Upload, X } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, Download, KeyRound, Loader2, Pencil, Plus, Trash2, Upload, X } from "lucide-react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -46,7 +46,11 @@ import {
   setCommandPolicy,
   type CommandPolicy,
   getShellAccess,
+  getTtsDictionary,
   getWakeConfig,
+  setTtsDictionary,
+  type DictionaryEntry,
+  type TtsDictionary,
   getWebAccess,
   getSttEngine,
   getTtsEngine,
@@ -897,6 +901,146 @@ function VoicePhrases({ ready, engine, style }: { ready: boolean; engine: TtsEng
   );
 }
 
+/** 読み上げ前に置き換える語と読み。英単語やサービス名がアルファベット読みされるのを、カタカナで直す。字幕は元の表記のまま。 */
+function PronunciationDictionary() {
+  const t = useT();
+  const [dict, setDict] = useState<TtsDictionary | null>(null);
+  const [word, setWord] = useState("");
+  const [reading, setReading] = useState("");
+  const [busy, setBusy] = useState(false);
+  // 編集中の行(編集前の語)と、その入力値
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState<DictionaryEntry>({ word: "", reading: "" });
+  useEffect(() => {
+    getTtsDictionary()
+      .then(setDict)
+      .catch((e) => toast.error(reportError(e)));
+  }, []);
+
+  const save = async (user: DictionaryEntry[]) => {
+    setBusy(true);
+    try {
+      const saved = await setTtsDictionary(user);
+      setDict((d) => d && { ...d, user: saved });
+      return true;
+    } catch (e) {
+      toast.error(reportError(e));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 同じ語(大文字小文字違いを含む)を登録し直すと、読みが上書きされる
+  const add = async () => {
+    if (!dict || !word.trim() || !reading.trim()) return;
+    if (await save([...dict.user, { word, reading }])) {
+      setWord("");
+      setReading("");
+    }
+  };
+
+  // 語を変えた場合は元の行を置き換える(別の登録済みの語に変えたときは、そちらが上書きされる)
+  const commitEdit = async () => {
+    if (!dict || editing === null || !draft.word.trim() || !draft.reading.trim()) return;
+    const rest = dict.user.filter((x) => x.word !== editing);
+    if (await save([...rest, draft])) setEditing(null);
+  };
+
+  return (
+    <div className="border-t py-3">
+      <div className="text-sm font-medium">{t("読み上げ辞書")}</div>
+      <div className="text-xs text-muted-foreground">
+        {t("英単語やサービス名がアルファベットで読まれるときは、読みをカタカナで登録します。字幕は元の表記のままです。大文字小文字は区別せず、前後が英数字でつながる語(GitHubberなど)には適用しません。")}
+      </div>
+      <form
+        className="mt-2 flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void add();
+        }}
+      >
+        <Input placeholder={t("語(例: Figma)")} aria-label={t("語")} maxLength={64} value={word} onChange={(e) => setWord(e.target.value)} />
+        <Input placeholder={t("読み(例: フィグマ)")} aria-label={t("読み")} maxLength={128} value={reading} onChange={(e) => setReading(e.target.value)} />
+        <Button type="submit" variant="outline" disabled={!dict || busy || !word.trim() || !reading.trim()}>
+          <Plus /> {t("追加")}
+        </Button>
+      </form>
+      {!!dict?.user.length && (
+        <ul className="mt-2 space-y-1 text-sm">
+          {dict.user.map((e) =>
+            editing === e.word ? (
+              <li key={e.word}>
+                <form
+                  className="flex items-center gap-2"
+                  onSubmit={(ev) => {
+                    ev.preventDefault();
+                    void commitEdit();
+                  }}
+                >
+                  <Input aria-label={t("語")} maxLength={64} value={draft.word} onChange={(ev) => setDraft({ ...draft, word: ev.target.value })} />
+                  <Input aria-label={t("読み")} maxLength={128} value={draft.reading} onChange={(ev) => setDraft({ ...draft, reading: ev.target.value })} />
+                  <Button type="submit" variant="ghost" size="icon-xs" aria-label={t("保存")} disabled={busy || !draft.word.trim() || !draft.reading.trim()}>
+                    <Check />
+                  </Button>
+                  <Button type="button" variant="ghost" size="icon-xs" aria-label={t("キャンセル")} disabled={busy} onClick={() => setEditing(null)}>
+                    <X />
+                  </Button>
+                </form>
+              </li>
+            ) : (
+              <li key={e.word} className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate">
+                  {e.word} <span className="text-muted-foreground">→ {e.reading}</span>
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={t("{w}を編集", { w: e.word })}
+                  disabled={busy}
+                  onClick={() => {
+                    setEditing(e.word);
+                    setDraft(e);
+                  }}
+                >
+                  <Pencil />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={t("{w}を削除", { w: e.word })}
+                  disabled={busy}
+                  onClick={() => {
+                    if (editing === e.word) setEditing(null);
+                    void save(dict.user.filter((x) => x.word !== e.word));
+                  }}
+                >
+                  <X />
+                </Button>
+              </li>
+            ),
+          )}
+        </ul>
+      )}
+      {!!dict?.builtin.length && (
+        <details className="mt-2 text-xs text-muted-foreground">
+          <summary className="cursor-pointer">{t("組み込みの読み({n}語)", { n: dict.builtin.length })}</summary>
+          <p className="mt-1">{t("同じ語を上で登録すると、そちらが優先されます。")}</p>
+          <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5">
+            {dict.builtin.map((e) => (
+              <li key={e.word}>
+                {e.word} → {e.reading}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
 function WakeWords({ ttsReady, engine, cloudStt }: { ttsReady: boolean; engine: TtsEngine; cloudStt: string | null }) {
   const t = useT();
   const [config, setConfig] = useState<WakeConfig | null>(null);
@@ -1285,6 +1429,7 @@ export default function Setup() {
               </select>
             </div>
             <VoicePhrases ready={speechReady} engine={ttsEngine} style={vvStyle} />
+            <PronunciationDictionary />
             <KeyRow
               title="Aqua Voice"
               description={t("音声認識用のAPIキー(読み上げには使えません)")}

@@ -9,7 +9,7 @@ use crate::{
         audio::Recorder,
         batch, debug_log, knowledge,
         llm_router::{self, Route},
-        proofread, secrets, stt,
+        proofread, pronunciation, secrets, stt,
         stt::SttEngine,
         stt_aqua, stt_google, tts,
         tts::Voice,
@@ -312,6 +312,18 @@ pub fn set_wake_config(db: State<'_, Db>, config: wake::WakeConfig) -> Result<wa
     wake::save(&db, &config)
 }
 
+/// 読み上げ辞書(組み込みとユーザー登録)。
+#[tauri::command]
+pub fn get_tts_dictionary(app: AppHandle) -> Result<pronunciation::Listing, AppError> {
+    Ok(pronunciation::listing(&app_data(&app)?))
+}
+
+/// ユーザー辞書を丸ごと保存し、整形後の内容を返す。
+#[tauri::command]
+pub fn set_tts_dictionary(app: AppHandle, entries: Vec<pronunciation::Entry>) -> Result<Vec<pronunciation::Entry>, AppError> {
+    pronunciation::save_user(&app_data(&app)?, entries)
+}
+
 fn app_data(app: &AppHandle) -> Result<std::path::PathBuf, AppError> {
     app.path().app_data_dir().map_err(|e| AppError::Io(e.to_string()))
 }
@@ -394,17 +406,22 @@ pub async fn voicevox_speakers(app: AppHandle) -> Result<Vec<voicevox::Speaker>,
         .map_err(|e| AppError::Voicevox(e.to_string()))?
 }
 
+/// TTSへ送る文字列。英単語やサービス名を読み辞書でカタカナへ置き換える(字幕は元の文字列のまま)。
+fn pronounced(app: &AppHandle, text: &str) -> Result<String, AppError> {
+    Ok(pronunciation::Dictionary::load(&app_data(app)?).apply(tts::spoken_text(text)))
+}
+
 /// 現在のエンジンで`text`を音声化する。Google CloudはMP3、VOICEVOXはWAV。
 async fn synthesize_bytes(app: &AppHandle, voice: Voice, text: &str) -> Result<Vec<u8>, AppError> {
     match voice {
-        Voice::Google => STANDARD.decode(tts::synthesize(text).await?).map_err(|_| AppError::BadResponse),
+        Voice::Google => STANDARD.decode(tts::synthesize(&pronounced(app, text)?).await?).map_err(|_| AppError::BadResponse),
         Voice::Voicevox(style) => {
             if text.trim().is_empty() {
                 return Err(AppError::EmptyText);
             }
             let dir = app_data(app)?;
             let app = app.clone();
-            let text = tts::spoken_text(text).to_owned();
+            let text = pronounced(&app, text)?;
             tauri::async_runtime::spawn_blocking(move || app.state::<VoicevoxEngine>().synthesize(&dir, &text, style))
                 .await
                 .map_err(|e| AppError::Voicevox(e.to_string()))?
@@ -440,7 +457,7 @@ pub fn voice_phrase_audio(app: AppHandle, db: State<'_, Db>, id: String) -> Resu
 pub async fn synthesize_speech(app: AppHandle, db: State<'_, Db>, text: String) -> Result<String, AppError> {
     let voice = current_voice(&db)?;
     if voice == Voice::Google {
-        return tts::synthesize(&text).await;
+        return tts::synthesize(&pronounced(&app, &text)?).await;
     }
     Ok(STANDARD.encode(synthesize_bytes(&app, voice, &text).await?))
 }
