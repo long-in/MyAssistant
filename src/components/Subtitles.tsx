@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { addSttCorrection, reportError } from "@/lib/api";
-import { Reply, type Turn } from "./ExchangeLog";
+import { Reply, type Turn } from "./Reply";
 
 /** 入力と回答を字幕のように表示する。回答は末尾を追いかけ、長文は上へスクロールして全文を読める。 */
 export default function Subtitles({

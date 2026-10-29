@@ -102,7 +102,7 @@ function Entry({ x }: { x: LogEntry }) {
   );
   if (!x.output) return <p>{head}</p>;
   const pre = (
-    <pre className="my-0.5 max-h-28 overflow-auto border-l border-primary/30 pl-2 whitespace-pre-wrap break-all text-foreground/80">
+    <pre className="my-0.5 max-h-48 overflow-auto border-l border-primary/30 pl-2 whitespace-pre-wrap break-all text-foreground/80">
       {x.output}
     </pre>
   );
@@ -192,7 +192,7 @@ export default function ExecutionLog({
           />
         </div>
       )}
-      <div ref={scroller} className="max-h-[30vh] overflow-y-auto pr-1 pl-1.5">
+      <div ref={scroller} className="max-h-[60vh] overflow-y-auto pr-1 pl-1.5">
         <ol className="relative ml-[0.3125rem] border-l border-primary/30">
           {log.plan?.map((step, i) => {
             const state = states[i];
