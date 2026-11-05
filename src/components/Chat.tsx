@@ -114,7 +114,8 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
   }, [active]);
   // 会話の切り替えは、ユーザーが明示したときだけ。コマンド実行の依頼・承認や画面移動では切り替えない(再起動後は、バックエンドが前回までの文脈をMarkdownから復元する)
   const session = useRef(currentSession);
-  const [turn, setTurn] = useState<Turn | null>(null);
+  // この会話(セッション)のやり取り。最後が現在の1件で、会話を切り替えるまで残す
+  const [turns, setTurns] = useState<Turn[]>([]);
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState("");
   const [activity, setActivity] = useState<string | null>(null);
@@ -266,7 +267,7 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
     if (interrupt) resetEpoch.current++; // 会話中のループは自分で続けるので、止めるのは外からの操作のときだけ
     stopSpeech();
     if (gate.current.busy || approvalRef.current) cancelTask();
-    setTurn(null);
+    setTurns([]);
     setLog(emptyLog);
     toast.success(t("新しい会話を始めました。"));
   };
@@ -290,7 +291,7 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
     setListening("idle");
     setAwake(false);
     setActivity(null);
-    setTurn(null);
+    setTurns((ts) => ts.filter((x) => x.reply)); // 返答前の依頼だけ消し、これまでのやり取りは残す
     toast.info(t("中断しました。"));
   };
   const abortRef = useRef(abortAll);
@@ -307,7 +308,7 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
     const userAt = new Date();
     setLog(emptyLog);
     setBusy(true);
-    setTurn({ user: text, userAt });
+    setTurns((ts) => [...ts.filter((x) => x.reply), { user: text, userAt }]);
     let result: "spoke" | "replied" | "none" = "none";
     try {
       if (!route) throw new Error(t("使えるモデルがありません。設定でAPIキーを登録してください。"));
@@ -326,7 +327,7 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
         if (audio && speakReplyRef.current) await playBase64Mp3(audio, r.content).catch(fail);
         result = "spoke";
       }
-      setTurn(replied);
+      setTurns((ts) => ts.map((x) => (x.userAt === userAt ? replied : x)));
     } catch (e) {
       fail(e);
     } finally {
@@ -869,7 +870,7 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
           </div>
           {switching && <SwitchConfirm listening={switchListening} onAnswer={answerSwitch} />}
           <div className={cn("flex min-h-0 w-full flex-1 flex-col items-center justify-end", HIDE_WHEN_SMALL)}>
-            <Subtitles turn={turn} pending={busy} onCorrected={(text) => setTurn((t) => t && { ...t, user: text })} />
+            <Subtitles turns={turns} pending={busy} onCorrected={(text) => setTurns((ts) => ts.map((x, i) => (i === ts.length - 1 ? { ...x, user: text } : x)))} />
           </div>
         </div>
       </div>

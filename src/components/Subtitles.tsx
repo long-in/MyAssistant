@@ -9,18 +9,20 @@ import { Input } from "@/components/ui/input";
 import { addSttCorrection, reportError } from "@/lib/api";
 import { Reply, type Turn } from "./Reply";
 
-/** 入力と回答を字幕のように表示する。回答は末尾を追いかけ、長文は上へスクロールして全文を読める。 */
+/** 会話の流れを字幕のように表示する。過去のやり取りは上に薄く積み、現在の回答は末尾を追いかける。上へスクロールすると過去を読み返せる。 */
 export default function Subtitles({
-  turn,
+  turns,
   pending,
   onCorrected,
 }: {
-  turn: Turn | null;
+  turns: Turn[];
   pending: boolean;
   /** 聞き取り訂正を保存したとき、正しい文を渡す。 */
   onCorrected: (text: string) => void;
 }) {
   const t = useT();
+  const turn = turns.length ? turns[turns.length - 1] : null;
+  const past = turns.slice(0, -1);
   const [editing, setEditing] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -53,10 +55,22 @@ export default function Subtitles({
       if (follow.current) el.scrollTop = el.scrollHeight;
     }, 60);
     return () => clearInterval(id);
-  }, [reply]);
+  }, [reply, turns.length]);
 
   return (
-    <div className="flex min-h-0 w-full max-w-3xl flex-col items-center justify-end gap-1.5 text-center" aria-live="polite">
+    <div
+      ref={box}
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+      }}
+      className="flex min-h-0 w-full max-w-3xl flex-col items-center gap-1.5 overflow-y-auto text-center [mask-image:linear-gradient(to_bottom,transparent,black_2rem)]"
+      aria-live="polite"
+    >
+      <div className="flex-1" aria-hidden />
+      {past.map((p) => (
+        <PastTurn key={p.userAt.getTime()} turn={p} onToggle={() => (follow.current = false)} />
+      ))}
       {turn && editing === null && (
         <p className="flex max-w-full items-center gap-1 text-xs text-muted-foreground [text-shadow:0_0_6px_var(--background)]">
           <span className="truncate">
@@ -98,20 +112,38 @@ export default function Subtitles({
         </form>
       )}
       {reply ? (
-        <div
-          ref={box}
-          onScroll={(e) => {
-            const el = e.currentTarget;
-            follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
-          }}
-          className="min-h-0 overflow-y-auto rounded-sm bg-background/60 px-4 py-1.5 text-base leading-6 text-foreground [text-shadow:0_0_8px_var(--background)] backdrop-blur-sm"
-        >
+        <div className="rounded-sm bg-background/60 px-4 py-1.5 text-base leading-6 text-foreground [text-shadow:0_0_8px_var(--background)] backdrop-blur-sm">
           <Reply text={reply} />
         </div>
       ) : (
         pending && (
           <p className="hud-label animate-hud-blink-slow text-[0.65rem]">Processing…</p>
         )
+      )}
+    </div>
+  );
+}
+
+/** 過去のやり取り1件。返答は3行に絞って薄く表示し、クリックで全文を開閉する。 */
+function PastTurn({ turn, onToggle }: { turn: Turn; onToggle: () => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`flex w-full flex-col items-center gap-1 opacity-60 transition-opacity hover:opacity-100`}>
+      <p className="max-w-full truncate text-xs text-muted-foreground">
+        <span className="text-primary">&#9656;</span> {turn.user}
+      </p>
+      {turn.reply && (
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => {
+            onToggle();
+            setOpen((o) => !o);
+          }}
+          className={`cursor-pointer rounded-sm bg-background/40 px-4 py-1 text-sm leading-5 text-foreground ${open ? "" : "line-clamp-3"}`}
+        >
+          {turn.reply}
+        </button>
       )}
     </div>
   );
