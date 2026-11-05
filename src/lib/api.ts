@@ -1,7 +1,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { tr } from "@/lib/i18n";
 
-export const PROVIDERS = ["anthropic", "openai"] as const;
+export const PROVIDERS = ["anthropic", "bedrock"] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export type KeyStatus = Record<Provider, boolean>;
 
@@ -10,7 +10,7 @@ export type AppError = { code: string; message: string; source?: string | null }
 /** エラーの発生元APIの表示名。 */
 export const SOURCE_LABELS: Record<string, string> = {
   anthropic: "Anthropic (Claude)",
-  openai: "OpenAI (GPT)",
+  bedrock: "Amazon Bedrock (Claude)",
   google_tts: "Google Cloud Text-to-Speech",
   google_stt: "Google Cloud Speech-to-Text",
   aqua_stt: "Aqua Voice",
@@ -19,7 +19,7 @@ export const SOURCE_LABELS: Record<string, string> = {
 
 export const PROVIDER_LABELS: Record<Provider, string> = {
   anthropic: "Anthropic (Claude)",
-  openai: "OpenAI (GPT)",
+  bedrock: "Amazon Bedrock (Claude)",
 };
 
 export const ERROR_MESSAGES: Record<string, string> = {
@@ -57,6 +57,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   invalid_version: "バージョンには英数字と . _ - のみ使えます(64文字まで)。",
   path_not_allowed: "ナレッジディレクトリ外のパスにはアクセスできません。",
   io_error: "ファイルの読み書きに失敗しました。",
+  mfa_required: "MFAコードが入力されませんでした。もう一度お試しください。",
   invalid_settings: "設定ファイルの形式が正しくありません。このアプリが書き出したファイルを選んでください。",
 };
 
@@ -65,6 +66,8 @@ export function errorMessage(e: unknown): string {
   const body =
     code === "provider_rejected" && message
       ? tr("拒否されました: {message}", { message })
+      : code === "aws_config_error" && message
+        ? tr("AWSの設定に問題があります: {message}", { message })
       : tr((code && ERROR_MESSAGES[code]) || "予期しないエラーが発生しました。");
   const label = source ? SOURCE_LABELS[source] : undefined;
   return label ? `[${label}] ${body}` : body;
@@ -79,6 +82,50 @@ export const saveApiKey = (provider: Provider, key: string) =>
 
 export const deleteApiKey = (provider: Provider) =>
   invoke<void>("delete_api_key", { provider });
+
+/** `~/.aws/config`・`credentials`の貼り付け内容から読み取ったプロファイル。キーの値は含まれない。 */
+export type AwsProfile = {
+  name: string;
+  region: string | null;
+  role: boolean;
+  mfa: boolean;
+  usable: boolean;
+  /** 使えない場合の理由(英語の短い説明)。 */
+  reason: string | null;
+};
+
+export type AwsStatus = {
+  registered: boolean;
+  profiles: AwsProfile[];
+  selected: string | null;
+  /** 一時クレデンシャルの期限(UNIX秒)。未取得ならnull。 */
+  session_expires_at: number | null;
+  /** 登録済みのBedrockモデルID(推論プロファイルIDやARNも可)。モデル選択に並ぶ。 */
+  models: string[];
+  /** 初期候補のうち、未登録のもの。 */
+  suggested_models: string[];
+};
+
+/** MFAコードの入力を求めるイベント(Bedrock呼び出しはコードが届くまで待つ)。 */
+export const AWS_MFA_EVENT = "aws-mfa-required";
+export type AwsMfaPrompt = { profile: string; mfa_serial: string; error: string | null };
+
+export const getAwsStatus = () => invoke<AwsStatus>("get_aws_status");
+/** 貼り付け中の内容から読み取れるプロファイル一覧(保存しない)。 */
+export const previewAwsConfig = (config: string, credentials: string) =>
+  invoke<AwsProfile[]>("preview_aws_config", { config, credentials });
+/** 貼り付けた内容と使うプロファイルをRust側で検証して保存する。保存後、内容はフロントエンドへ戻らない。 */
+export const saveAwsConfig = (config: string, credentials: string, profile: string) =>
+  invoke<AwsStatus>("save_aws_config", { config, credentials, profile });
+/** Bedrockの推論プロファイルから`global.anthropic.`のIDを取得する(登録はしない)。MFAが必要なら`AWS_MFA_EVENT`が飛ぶ。 */
+export const fetchAwsModels = () => invoke<string[]>("fetch_aws_models");
+export const addAwsModel = (model: string) => invoke<AwsStatus>("add_aws_model", { model });
+export const removeAwsModel = (model: string) => invoke<AwsStatus>("remove_aws_model", { model });
+export const selectAwsProfile = (name: string) => invoke<AwsStatus>("select_aws_profile", { name });
+/** 認証からモデル呼び出しまで通しで確認する。MFAが必要なら`AWS_MFA_EVENT`が飛び、コード入力まで待つ。 */
+export const testAwsConnection = () => invoke<AwsStatus>("test_aws_connection");
+export const submitAwsMfa = (code: string) => invoke<void>("submit_aws_mfa", { code });
+export const cancelAwsMfa = () => invoke<void>("cancel_aws_mfa");
 
 export type Route = { provider: Provider; model: string };
 
@@ -260,6 +307,8 @@ export type WakeCheck = { woke: boolean; text: string };
 /** 録音を止めて文字起こしし、起動ワードを含むか判定する。`text`は起動ワードに続く依頼(校正済み。なければ空)。 */
 export const stopRecordingAndCheckWake = (sessionId?: string) =>
   invoke<WakeCheck>("stop_recording_and_check_wake", { sessionId });
+/** 起動ワード登録用に、録音を止めて文字起こしした生の認識結果を返す(判定・校正なし)。 */
+export const transcribeWakeSample = () => invoke<string>("transcribe_wake_sample");
 /** 直近`keepMs`ミリ秒の入力だけを残して録音バッファを切り詰める(常時待機用)。 */
 export const trimRecording = (keepMs: number) => invoke<void>("trim_recording", { keepMs });
 

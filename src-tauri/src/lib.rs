@@ -22,6 +22,16 @@ pub fn run() {
       tray::set_tray_language,
       commands::agent::agent_approve,
       commands::agent::agent_cancel,
+      commands::aws::get_aws_status,
+      commands::aws::preview_aws_config,
+      commands::aws::save_aws_config,
+      commands::aws::select_aws_profile,
+      commands::aws::fetch_aws_models,
+      commands::aws::add_aws_model,
+      commands::aws::remove_aws_model,
+      commands::aws::test_aws_connection,
+      commands::aws::submit_aws_mfa,
+      commands::aws::cancel_aws_mfa,
       commands::command_policy::get_command_policy,
       commands::command_policy::get_default_command_policy,
       commands::command_policy::set_command_policy,
@@ -71,6 +81,7 @@ pub fn run() {
       commands::voice::stop_recording_and_transcribe,
       commands::voice::stop_recording_and_check_wake,
       commands::voice::trim_recording,
+      commands::voice::transcribe_wake_sample,
       commands::voice::get_wake_config,
       commands::voice::set_wake_config,
       commands::voice::voice_phrases_status,
@@ -121,6 +132,7 @@ pub fn run() {
       services::legacy_data::migrate(&dir);
       std::fs::create_dir_all(&dir)?;
       services::secrets::init(&dir)?;
+      services::aws::init(app.handle());
       app.manage(db::Db::open(&dir.join("timeline.db"))?);
       app.manage(commands::chat::SessionContexts::default());
       app.manage(services::graph::GraphCache::default());

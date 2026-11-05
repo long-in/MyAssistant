@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{
-    debug_log,
+    aws, debug_log,
     secrets::{self, Provider},
 };
 use crate::utils::error::AppError;
@@ -26,13 +26,9 @@ pub struct Completion {
     pub output_tokens: u64,
 }
 
-fn usage_of(provider: Provider, body: &Value) -> (u64, u64) {
-    let (i, o) = match provider {
-        Provider::Anthropic => ("/usage/input_tokens", "/usage/output_tokens"),
-        Provider::Openai => ("/usage/prompt_tokens", "/usage/completion_tokens"),
-    };
+fn usage_of(body: &Value) -> (u64, u64) {
     let get = |p: &str| body.pointer(p).and_then(Value::as_u64).unwrap_or(0);
-    (get(i), get(o))
+    (get("/usage/input_tokens"), get("/usage/output_tokens"))
 }
 
 /// 応答を読み、デバッグモードなら往復を記録する。成功以外のステータスはエラーにする。
@@ -94,7 +90,7 @@ impl ToolTurn {
 }
 
 fn parse_tool_turn(body: &Value) -> Option<ToolTurn> {
-    let (input_tokens, output_tokens) = usage_of(Provider::Anthropic, body);
+    let (input_tokens, output_tokens) = usage_of(body);
     Some(ToolTurn {
         content: body.get("content")?.as_array()?.clone(),
         stop_reason: body.get("stop_reason")?.as_str()?.to_owned(),
@@ -103,22 +99,16 @@ fn parse_tool_turn(body: &Value) -> Option<ToolTurn> {
     })
 }
 
-/// Anthropic専用のツール使用API。`messages`と`tools`はMessages APIのJSON形式のまま渡す。
+/// ツール使用API(Anthropic / Bedrock)。`messages`と`tools`はMessages APIのJSON形式のまま渡す。
+/// Bedrockはサーバーツール(検索・ページ取得)を持たないため、`tools`にはClient側ツールだけを渡すこと。
 pub async fn complete_with_tools(
+    provider: Provider,
     model: &str,
     system: &str,
     messages: &[Value],
     tools: &[Value],
 ) -> Result<ToolTurn, AppError> {
-    let provider = Provider::Anthropic;
     async {
-        let key = secrets::get_key(provider)?
-            .ok_or_else(|| AppError::KeyMissing(provider.as_str().to_owned()))?;
-        let client = reqwest::Client::builder()
-            .timeout(AGENT_TIMEOUT)
-            .build()
-            .map_err(|_| AppError::Network)?;
-        let url = "https://api.anthropic.com/v1/messages";
         let request = json!({
             "model": model,
             "max_tokens": AGENT_MAX_TOKENS,
@@ -126,26 +116,70 @@ pub async fn complete_with_tools(
             "messages": messages,
             "tools": tools,
         });
-        let res = client
-            .post(url)
-            .header("x-api-key", &key)
-            .header("anthropic-version", "2023-06-01")
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| {
-                // 応答が無いまま失敗した場合も、どの要求で止まったかをデバッグログに残す
-                debug_log::record_api(provider.as_str(), url, &request, 0, &Value::String(e.to_string()));
-                AppError::from_reqwest(e)
-            })?;
-        let body = read_json(provider.as_str(), url, &request, res).await?;
+        let body = match provider {
+            Provider::Bedrock => invoke_bedrock(model, &request, AGENT_TIMEOUT).await?,
+            _ => {
+                let key = secrets::get_key(provider)?
+                    .ok_or_else(|| AppError::KeyMissing(provider.as_str().to_owned()))?;
+                let client = reqwest::Client::builder()
+                    .timeout(AGENT_TIMEOUT)
+                    .build()
+                    .map_err(|_| AppError::Network)?;
+                let url = "https://api.anthropic.com/v1/messages";
+                let res = client
+                    .post(url)
+                    .header("x-api-key", &key)
+                    .header("anthropic-version", "2023-06-01")
+                    .json(&request)
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        // 応答が無いまま失敗した場合も、どの要求で止まったかをデバッグログに残す
+                        debug_log::record_api(provider.as_str(), url, &request, 0, &Value::String(e.to_string()));
+                        AppError::from_reqwest(e)
+                    })?;
+                read_json(provider.as_str(), url, &request, res).await?
+            }
+        };
         parse_tool_turn(&body).ok_or_else(|| {
-            log::error!("unexpected anthropic tool response: {body}");
+            log::error!("unexpected {} tool response: {body}", provider.as_str());
             AppError::BadResponse
         })
     }
     .await
     .map_err(|e| e.with_source(provider.as_str()))
+}
+
+/// Bedrockへ送る。モデルIDはURLに入るため本文から外し、往復はデバッグモードなら記録する。
+async fn invoke_bedrock(model: &str, request: &Value, timeout: Duration) -> Result<Value, AppError> {
+    let mut body = request.clone();
+    if let Some(o) = body.as_object_mut() {
+        o.remove("model");
+    }
+    let label = format!("bedrock-runtime InvokeModel {model}");
+    match aws::invoke_model(model, &body, timeout).await {
+        Ok(response) => {
+            debug_log::record_api("bedrock", &label, &body, 200, &response);
+            Ok(response)
+        }
+        Err(e) => {
+            debug_log::record_api("bedrock", &label, &body, 0, &Value::String(e.to_string()));
+            Err(e)
+        }
+    }
+}
+
+/// Messages API形式の応答からtextブロックを連結する。
+/// 先頭が"text"とは限らない(thinking等が前に付く)ため、textブロックを連結する。
+fn anthropic_text(v: &Value) -> Option<String> {
+    let text: String = v
+        .get("content")?
+        .as_array()?
+        .iter()
+        .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|b| b.get("text")?.as_str())
+        .collect();
+    (!text.is_empty()).then_some(text)
 }
 
 pub async fn complete(
@@ -165,55 +199,34 @@ async fn complete_inner(
     system: Option<&str>,
     messages: &[ChatMessage],
 ) -> Result<Completion, AppError> {
-    let key = secrets::get_key(provider)?
-        .ok_or_else(|| AppError::KeyMissing(provider.as_str().to_owned()))?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
-        .build()
-        .map_err(|_| AppError::Network)?;
-
-    let (url, req, body, extract): (String, _, Value, fn(&Value) -> Option<String>) = match provider {
+    let mut request = json!({ "max_tokens": MAX_TOKENS, "messages": messages });
+    if let Some(s) = system {
+        request["system"] = json!(s);
+    }
+    let response = match provider {
+        Provider::Bedrock => invoke_bedrock(model, &request, Duration::from_secs(60)).await?,
         Provider::Anthropic => {
+            let key = secrets::get_key(provider)?
+                .ok_or_else(|| AppError::KeyMissing(provider.as_str().to_owned()))?;
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .build()
+                .map_err(|_| AppError::Network)?;
             let url = "https://api.anthropic.com/v1/messages";
-            let body = match system {
-                Some(s) => json!({ "model": model, "max_tokens": MAX_TOKENS, "system": s, "messages": messages }),
-                None => json!({ "model": model, "max_tokens": MAX_TOKENS, "messages": messages }),
-            };
-            (
-            url.to_owned(),
-            client.post(url).header("x-api-key", &key).header("anthropic-version", "2023-06-01").json(&body),
-            body,
-            // 先頭が"text"とは限らない(thinking等が前に付く)ため、textブロックを連結する
-            |v| {
-                let text: String = v
-                    .get("content")?
-                    .as_array()?
-                    .iter()
-                    .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
-                    .filter_map(|b| b.get("text")?.as_str())
-                    .collect();
-                (!text.is_empty()).then_some(text)
-            },
-            )
-        }
-        Provider::Openai => {
-            let url = "https://api.openai.com/v1/chat/completions";
-            let mut all: Vec<Value> = system.map(|s| json!({ "role": "system", "content": s })).into_iter().collect();
-            all.extend(messages.iter().map(|m| json!(m)));
-            let body = json!({ "model": model, "messages": all });
-            (
-                url.to_owned(),
-                client.post(url).bearer_auth(&key).json(&body),
-                body,
-                |v| Some(v.pointer("/choices/0/message/content")?.as_str()?.to_owned()),
-            )
+            request["model"] = json!(model);
+            let res = client
+                .post(url)
+                .header("x-api-key", &key)
+                .header("anthropic-version", "2023-06-01")
+                .json(&request)
+                .send()
+                .await
+                .map_err(AppError::from_reqwest)?;
+            read_json(provider.as_str(), url, &request, res).await?
         }
     };
-
-    let res = req.send().await.map_err(AppError::from_reqwest)?;
-    let response = read_json(provider.as_str(), &url, &body, res).await?;
-    let (input_tokens, output_tokens) = usage_of(provider, &response);
-    let text = extract(&response).ok_or_else(|| {
+    let (input_tokens, output_tokens) = usage_of(&response);
+    let text = anthropic_text(&response).ok_or_else(|| {
         // 原因調査用。応答本文にAPIキーは含まれない
         log::error!("unexpected {} response: {response}", provider.as_str());
         AppError::BadResponse

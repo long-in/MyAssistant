@@ -336,6 +336,17 @@ pub async fn stop_recording_and_check_wake(
     Ok(WakeCheck { woke: true, text })
 }
 
+/// 起動ワードの登録用に、録音を止めて文字起こしした生の認識結果を返す。
+/// 起動ワードの判定も校正(LLM)も通さない。短すぎる・無音などは通常の録音と同じエラーで返す。
+#[tauri::command]
+pub async fn transcribe_wake_sample(
+    app: AppHandle,
+    recorder: State<'_, Recorder>,
+    db: State<'_, Db>,
+) -> Result<String, AppError> {
+    transcribe_recording(&app, &recorder, &db, false).await
+}
+
 /// 直近`keep_ms`ミリ秒の入力だけを残して録音バッファを切り詰める(常時待機用)。
 #[tauri::command]
 pub fn trim_recording(recorder: State<'_, Recorder>, keep_ms: u32) {

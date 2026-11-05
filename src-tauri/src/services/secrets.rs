@@ -16,16 +16,17 @@ use crate::utils::error::AppError;
 #[serde(rename_all = "lowercase")]
 pub enum Provider {
     Anthropic,
-    Openai,
+    /// AWS Bedrock経由のClaude。認証はAPIキーではなく、貼り付けたAWSの設定ファイル(`aws.rs`)。
+    Bedrock,
 }
 
 impl Provider {
-    pub const ALL: [Provider; 2] = [Provider::Anthropic, Provider::Openai];
+    pub const ALL: [Provider; 2] = [Provider::Anthropic, Provider::Bedrock];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Anthropic => "anthropic",
-            Self::Openai => "openai",
+            Self::Bedrock => "bedrock",
         }
     }
 }
@@ -45,6 +46,14 @@ const TTS_ACCOUNT: &str = "google_tts";
 
 /// Aqua Voice API用のキー。
 const AQUA_ACCOUNT: &str = "aqua";
+
+/// AWS Bedrock用。`~/.aws/config`と`~/.aws/credentials`の貼り付け内容をそのまま保持する。
+const AWS_CONFIG_ACCOUNT: &str = "aws_config";
+const AWS_CREDENTIALS_ACCOUNT: &str = "aws_credentials";
+/// 使うプロファイル名(秘密ではないが、保存先を分けないため同じストアに置く)。
+const AWS_PROFILE_ACCOUNT: &str = "aws_profile";
+/// 使うBedrockのモデルID一覧(JSON配列)。秘密ではないが、プロファイルと同じ理由で同じストアに置く。
+const AWS_MODELS_ACCOUNT: &str = "aws_models";
 
 struct Store {
     path: PathBuf,
@@ -188,20 +197,72 @@ fn http_client() -> Result<reqwest::Client, AppError> {
 }
 
 pub fn has_key(provider: Provider) -> Result<bool, AppError> {
-    Ok(get_secret(provider.as_str())?.is_some())
+    match provider {
+        Provider::Bedrock => has_aws(),
+        p => Ok(get_secret(p.as_str())?.is_some()),
+    }
 }
 
-/// Rust内部のLLMクライアント専用。コマンドとして公開しないこと。
+/// Rust内部のLLMクライアント専用。コマンドとして公開しないこと。Bedrockは対象外(`get_aws_files`)。
 pub fn get_key(provider: Provider) -> Result<Option<String>, AppError> {
-    get_secret(provider.as_str())
+    match provider {
+        Provider::Bedrock => Ok(None),
+        p => get_secret(p.as_str()),
+    }
 }
 
 pub fn set_key(provider: Provider, key: &str) -> Result<(), AppError> {
-    set_secret(provider.as_str(), key)
+    match provider {
+        Provider::Bedrock => Err(AppError::InvalidProvider(provider.as_str().to_owned())),
+        p => set_secret(p.as_str(), key),
+    }
 }
 
 pub fn delete_key(provider: Provider) -> Result<(), AppError> {
-    delete_secret(provider.as_str())
+    match provider {
+        Provider::Bedrock => delete_aws(),
+        p => delete_secret(p.as_str()),
+    }
+}
+
+pub fn has_aws() -> Result<bool, AppError> {
+    Ok(get_secret(AWS_CONFIG_ACCOUNT)?.is_some() || get_secret(AWS_CREDENTIALS_ACCOUNT)?.is_some())
+}
+
+/// Rust内部のAWS認証(`aws.rs`)専用。コマンドとして公開しないこと。未登録の側は空文字を返す。
+pub fn get_aws_files() -> Result<(String, String), AppError> {
+    Ok((
+        get_secret(AWS_CONFIG_ACCOUNT)?.unwrap_or_default(),
+        get_secret(AWS_CREDENTIALS_ACCOUNT)?.unwrap_or_default(),
+    ))
+}
+
+pub fn set_aws_files(config: &str, credentials: &str) -> Result<(), AppError> {
+    set_secret(AWS_CONFIG_ACCOUNT, config)?;
+    set_secret(AWS_CREDENTIALS_ACCOUNT, credentials)
+}
+
+pub fn get_aws_profile() -> Result<Option<String>, AppError> {
+    get_secret(AWS_PROFILE_ACCOUNT)
+}
+
+pub fn set_aws_profile(name: &str) -> Result<(), AppError> {
+    set_secret(AWS_PROFILE_ACCOUNT, name)
+}
+
+pub fn get_aws_models() -> Result<Option<String>, AppError> {
+    get_secret(AWS_MODELS_ACCOUNT)
+}
+
+pub fn set_aws_models(json: &str) -> Result<(), AppError> {
+    set_secret(AWS_MODELS_ACCOUNT, json)
+}
+
+pub fn delete_aws() -> Result<(), AppError> {
+    delete_secret(AWS_MODELS_ACCOUNT)?;
+    delete_secret(AWS_CONFIG_ACCOUNT)?;
+    delete_secret(AWS_CREDENTIALS_ACCOUNT)?;
+    delete_secret(AWS_PROFILE_ACCOUNT)
 }
 
 /// モデル一覧取得(読み取り専用・無課金)で疎通確認する。
@@ -216,7 +277,7 @@ async fn verify_key_inner(provider: Provider, key: &str) -> Result<(), AppError>
             .get("https://api.anthropic.com/v1/models")
             .header("x-api-key", key)
             .header("anthropic-version", "2023-06-01"),
-        Provider::Openai => client.get("https://api.openai.com/v1/models").bearer_auth(key),
+        Provider::Bedrock => return Err(AppError::InvalidProvider(provider.as_str().to_owned())),
     };
     let res = req.send().await.map_err(AppError::from_reqwest)?;
     if res.status().is_success() {
@@ -264,7 +325,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn invalid_keys_report_their_source() {
-        for p in Provider::ALL {
+        for p in Provider::ALL.into_iter().filter(|p| *p != Provider::Bedrock) {
             let e = verify_key(p, "invalid-test-key").await.unwrap_err();
             let v = serde_json::to_value(&e).unwrap();
             println!("{} -> {v}", p.as_str());

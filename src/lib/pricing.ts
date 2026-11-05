@@ -3,13 +3,18 @@ export const PRICES: Record<string, { input: number; output: number }> = {
   "claude-haiku-5-5": { input: 0.1, output: 0.5 },
   "claude-sonnet-5-5": { input: 2, output: 10 },
   "claude-opus-5-5": { input: 4, output: 20 },
-  "gpt-4o-mini": { input: 0.15, output: 0.6 },
-  "gpt-4o": { input: 2.5, output: 10 },
 };
+
+/** 単価表のモデル。Bedrockのモデルは `us.anthropic.claude-sonnet-5-5-v1:0` のようにIDが長いため、名前を含むかで探す。 */
+function priceOf(model: string) {
+  if (PRICES[model]) return PRICES[model];
+  const key = Object.keys(PRICES).find((k) => model.includes(k));
+  return key ? PRICES[key] : undefined;
+}
 
 /** 推定コスト(USD)。単価が未登録のモデルは null。 */
 export function estimateCost(model: string, input: number, output: number): number | null {
-  const p = PRICES[model];
+  const p = priceOf(model);
   return p ? (input * p.input + output * p.output) / 1_000_000 : null;
 }
 

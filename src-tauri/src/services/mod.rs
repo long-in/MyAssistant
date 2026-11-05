@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod audio;
+pub mod aws;
 pub mod batch;
 pub mod cancel;
 pub mod command_policy;

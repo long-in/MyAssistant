@@ -5,7 +5,7 @@ use tauri::{AppHandle, State};
 use crate::{
     db::Db,
     services::{
-        debug_log,
+        aws, debug_log,
         secrets::{self, Provider},
     },
     utils::error::AppError,
@@ -34,7 +34,11 @@ pub async fn save_api_key(provider: String, key: String) -> Result<(), AppError>
 
 #[tauri::command]
 pub fn delete_api_key(provider: String) -> Result<(), AppError> {
-    secrets::delete_key(Provider::from_str(&provider)?)
+    match Provider::from_str(&provider)? {
+        // 保存内容に加えて、メモリ上の一時クレデンシャルも消す
+        Provider::Bedrock => aws::delete(),
+        p => secrets::delete_key(p),
+    }
 }
 
 #[tauri::command]

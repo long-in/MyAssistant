@@ -79,6 +79,12 @@ pub enum AppError {
     InvalidSettings(String),
     #[error("invalid personal data: {0}")]
     InvalidProfile(String),
+    /// 貼り付けたAWS設定の不備(プロファイルが無い、キーが無い、MFAコードの形式不正など)。
+    #[error("{0}")]
+    AwsConfig(String),
+    /// MFAコードの入力が取り消された、または時間内に入力されなかった。
+    #[error("MFA code was not provided")]
+    MfaRequired,
 }
 
 impl AppError {
@@ -125,6 +131,8 @@ impl AppError {
             Self::Io(_) => "io_error",
             Self::InvalidSettings(_) => "invalid_settings",
             Self::InvalidProfile(_) => "invalid_profile",
+            Self::AwsConfig(_) => "aws_config_error",
+            Self::MfaRequired => "mfa_required",
             Self::ProviderRejected(_) => "provider_rejected",
             Self::ApiDisabled => "api_disabled",
             Self::KeyRestricted => "key_restricted",
@@ -137,7 +145,7 @@ impl AppError {
 struct ErrorPayload<'a> {
     code: &'a str,
     message: String,
-    /// 発生元API("anthropic" | "openai" | "google_tts" | "google_stt" | "aqua_stt" | "voicevox")。不明な場合はnull。
+    /// 発生元API("anthropic" | "bedrock" | "google_tts" | "google_stt" | "aqua_stt" | "voicevox")。不明な場合はnull。
     source: Option<&'static str>,
 }
 
@@ -202,7 +210,7 @@ mod tests {
 
     #[test]
     fn source_is_attached_once_and_serialized() {
-        let e = AppError::Unauthorized.with_source("anthropic").with_source("openai");
+        let e = AppError::Unauthorized.with_source("anthropic").with_source("bedrock");
         assert_eq!(e.code(), "unauthorized");
         let v = serde_json::to_value(&e).unwrap();
         assert_eq!(v["source"], "anthropic");

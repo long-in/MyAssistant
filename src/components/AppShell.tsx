@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Bug, BookOpen, Keyboard, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings } from "lucide-react";
 import Chat from "@/components/Chat";
+import MfaModal from "@/components/MfaModal";
 import { DEBUG_MODE_EVENT, getDebugMode, getKeyStatus, setTrayLanguage } from "@/lib/api";
 import { useLang, useT } from "@/lib/i18n";
 import { matchShortcut, type ShortcutId } from "@/lib/shortcuts";
@@ -155,6 +156,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         )}
         {!onChat && children}
       </main>
+      <MfaModal />
     </div>
   );
 }

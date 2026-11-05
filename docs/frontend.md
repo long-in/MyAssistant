@@ -67,7 +67,7 @@ Next.js 16(App Router、`output: "export"`)の静的サイト。Tauri の WebVie
 
 | 節 | 内容 |
 | --- | --- |
-| AI Link / Voice Link | API キー(Anthropic / OpenAI / Google Cloud / Aqua Voice)、音声認識エンジン・言語、Whisper モデルのダウンロード、定型音声の作成 |
+| AI Link / Voice Link | API キー(Anthropic / Amazon Bedrock / Google Cloud / Aqua Voice)、音声認識エンジン・言語、Whisper モデルのダウンロード、定型音声の作成 |
 | Web Search / Command Tasks / Command Policy | ツールの有効化、コマンドの許可・ask・拒否 |
 | Knowledge Interval | 整理の間隔 |
 | Debug Mode | デバッグログ |

@@ -9,6 +9,7 @@ use crate::{
         agent::{self, AgentEvent, AgentOutcome, Env},
         cancel::CancelToken,
         llm_client,
+        secrets::Provider,
     },
     utils::error::AppError,
 };
@@ -25,14 +26,15 @@ pub struct AgentState {
     cancel: Mutex<Option<CancelToken>>,
 }
 
-/// 音声対話の1ターンをファイル操作ツール付きで実行する(Claude専用)。
+/// 音声対話の1ターンをファイル操作ツール付きで実行する(Claude専用。Anthropic直接またはBedrock)。
 /// `history`は直前までの会話(`user`/`assistant`のテキスト)で、今回の発話は`user_text`で渡す。
-/// `web_access`が有効なときは、インターネット検索・ページ取得(サーバーツール)も渡す。
+/// `web_access`が有効なときは、インターネット検索・ページ取得(サーバーツール)も渡す。Bedrockでは使えない。
 /// `shell_access`が有効なときは、作業計画の提示とシェルコマンドの実行も渡す。
 /// 進捗(ツール呼び出し・承認要求・コマンド出力)は`on_event`へ流す。実行中は`agent_cancel`で中断できる。
 pub async fn run_with_tools(
     state: &AgentState,
     root: &Path,
+    provider: Provider,
     model: &str,
     system: &str,
     web_access: Option<(u32, u32)>,
@@ -48,7 +50,8 @@ pub async fn run_with_tools(
     if shell_access {
         system.push_str(&format!("\n\n{}", agent::shell_guide()));
     }
-    if let Some((search_max, fetch_max)) = web_access {
+    // 検索・ページ取得はAnthropicのサーバーツールで、Bedrockには無い
+    if let Some((search_max, fetch_max)) = web_access.filter(|_| provider == Provider::Anthropic) {
         system.push_str(&format!("\n\n{}", agent::WEB_GUIDE));
         tools.extend(agent::web_tool_definitions(search_max, fetch_max));
     }
@@ -63,7 +66,7 @@ pub async fn run_with_tools(
         |msgs| {
             let on_usage = &on_usage;
             async move {
-                let turn = llm_client::complete_with_tools(model, system, &msgs, tools).await?;
+                let turn = llm_client::complete_with_tools(provider, model, system, &msgs, tools).await?;
                 // 途中で失敗しても、ここまでに使った分は記録する
                 on_usage(turn.input_tokens, turn.output_tokens);
                 Ok(turn)

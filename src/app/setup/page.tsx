@@ -1,9 +1,9 @@
 "use client";
 
 import { LANGS, setLang, tr, useLang, useT, type Lang } from "@/lib/i18n";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Check, ChevronDown, Download, KeyRound, Loader2, Pencil, Plus, Trash2, Upload, X } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, Download, KeyRound, Loader2, Mic, Pencil, Plus, Square, Trash2, Upload, X } from "lucide-react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ModelSelector from "@/components/ModelSelector";
 import HelpDrawer from "@/components/HelpDrawer";
+import AwsPanel from "@/components/AwsPanel";
 import { cn } from "@/lib/utils";
 import {
   PROVIDERS,
@@ -90,6 +91,9 @@ import {
   ttsReady as fetchTtsReady,
   type SttEngine,
   setWakeConfig,
+  startRecording,
+  cancelRecording,
+  transcribeWakeSample,
   setDebugLogDir,
   setDebugMode,
   setShellAccess,
@@ -698,7 +702,7 @@ function PersonalData() {
       <Heading title="Personal Data" help={t("パーソナルデータ")}>
         <p>{t("あなたの基本情報をAIへ毎回渡し、呼びかけや回答を合わせてもらいます。")}</p>
         <ul>
-          <li>{t("入力した項目だけが、選んでいるAIのプロバイダ(AnthropicまたはOpenAI)へ送られます。")}</li>
+          <li>{t("入力した項目だけが、選んでいるAIのプロバイダ(AnthropicまたはAmazon Bedrock)へ送られます。")}</li>
           <li>{t("生年月日は送らず、年齢だけを渡します。")}</li>
           <li>{t("会話から自動では記録しません。次の送信から反映されます。")}</li>
           <li>{t("設定のエクスポートに含まれます。ファイルの扱いに注意してください。")}</li>
@@ -1071,16 +1075,68 @@ function PronunciationDictionary() {
   );
 }
 
+/** 候補の同一判定用。ひらがな・カタカナ・全角半角・句読点の違いを揃える(待機中の検出と同じ基準)。 */
+const foldWake = (text: string) =>
+  text
+    .normalize("NFKC")
+    .replace(/[\u30A1-\u30F6]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60))
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, "");
+
+/** 認識結果から候補の表記を作る(前後の句読点・空白を除く)。 */
+const wakeCandidate = (text: string) => text.trim().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+
+type WakeSample = { word: string; count: number };
+
 function WakeWords({ ttsReady, engine, cloudStt }: { ttsReady: boolean; engine: TtsEngine; cloudStt: string | null }) {
   const t = useT();
   const [config, setConfig] = useState<WakeConfig | null>(null);
   const [word, setWord] = useState("");
   const [busy, setBusy] = useState(false);
+  const [rec, setRec] = useState<"idle" | "recording" | "transcribing">("idle");
+  const [samples, setSamples] = useState<WakeSample[]>([]);
+  const [takes, setTakes] = useState(0);
   useEffect(() => {
     getWakeConfig()
       .then(setConfig)
       .catch((e) => toast.error(reportError(e)));
   }, []);
+  const recording = rec === "recording";
+  const recordingRef = useRef(false);
+  useEffect(() => {
+    recordingRef.current = recording;
+  }, [recording]);
+  // 録音したまま画面を離れたら破棄する
+  useEffect(() => () => void (recordingRef.current && cancelRecording()), []);
+
+  const toggleRecording = async () => {
+    if (rec === "recording") {
+      setRec("transcribing");
+      try {
+        const text = wakeCandidate(await transcribeWakeSample());
+        const key = foldWake(text);
+        setTakes((n) => n + 1);
+        if (key) {
+          setSamples((prev) => {
+            const hit = prev.find((x) => foldWake(x.word) === key);
+            return hit ? prev.map((x) => (x === hit ? { ...x, count: x.count + 1 } : x)) : [...prev, { word: text, count: 1 }];
+          });
+        }
+      } catch (e) {
+        const code = (e as { code?: string })?.code;
+        toast.error(code === "too_short" || code === "no_audio" ? t("声が聞き取れませんでした。もう一度録音してください。") : reportError(e));
+      } finally {
+        setRec("idle");
+      }
+      return;
+    }
+    try {
+      await startRecording();
+      setRec("recording");
+    } catch (e) {
+      toast.error(reportError(e));
+    }
+  };
 
   const save = async (next: WakeConfig) => {
     setBusy(true);
@@ -1102,6 +1158,26 @@ function WakeWords({ ttsReady, engine, cloudStt }: { ttsReady: boolean; engine: 
     if (!saved) return;
     if (saved.words.length > config.words.length) setWord("");
     else toast.error(t("追加できませんでした。2〜20文字で、すでにある語(ひらがな・カタカナの違いを除く)とは別の語にしてください。登録は10個までです。"));
+  };
+
+  const addSample = async (w: string) => {
+    if (!config) return;
+    const saved = await save({ ...config, words: [...config.words, w] });
+    if (!saved) return;
+    if (saved.words.length > config.words.length) setSamples((prev) => prev.filter((x) => x.word !== w));
+    else toast.error(t("追加できませんでした。2〜20文字で、すでにある語(ひらがな・カタカナの違いを除く)とは別の語にしてください。登録は10個までです。"));
+  };
+
+  /** 候補をまとめて追加する。検証を通って保存された語だけ候補から外し、残りは理由を伝える。 */
+  const addAllSamples = async () => {
+    if (!config) return;
+    const words = [...samples].sort((a, b) => b.count - a.count).map((x) => x.word);
+    const saved = await save({ ...config, words: [...config.words, ...words] });
+    if (!saved) return;
+    const kept = new Set(saved.words.map(foldWake));
+    setSamples((prev) => prev.filter((x) => !kept.has(foldWake(x.word))));
+    const added = saved.words.length - config.words.length;
+    if (added < words.length) toast.error(t("{added}語を追加しました。残りは2〜20文字の範囲外、すでにある語との重複、または登録数の上限(10個)のため追加できませんでした。", { added }));
   };
 
   return (
@@ -1151,6 +1227,62 @@ function WakeWords({ ttsReady, engine, cloudStt }: { ttsReady: boolean; engine: 
           <Plus /> {t("追加")}
         </Button>
       </form>
+      <div className="mt-3 rounded-sm border border-dashed px-3 py-2.5">
+        <div className="flex items-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!config || busy || rec === "transcribing"}
+            onClick={() => void toggleRecording()}
+          >
+            {rec === "transcribing" ? <Loader2 className="animate-spin" /> : recording ? <Square /> : <Mic />}
+            {recording ? t("録音を止めて認識") : rec === "transcribing" ? t("認識中…") : t("声で録音")}
+          </Button>
+          <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+            {takes
+              ? t("{n}回録音しました。認識が揃った候補ほど、待機中も同じ形で聞き取られやすい語です。", { n: takes })
+              : t("起動ワードを声に出して、同じ言葉で数回録音してください。音声認識の結果が候補になります。")}
+          </p>
+          {samples.length > 1 && (
+            <Button type="button" variant="outline" size="sm" disabled={busy || recording || rec === "transcribing"} onClick={() => void addAllSamples()}>
+              {t("すべて追加")}
+            </Button>
+          )}
+          {!!takes && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={recording || rec === "transcribing"}
+              onClick={() => {
+                setSamples([]);
+                setTakes(0);
+              }}
+            >
+              {t("クリア")}
+            </Button>
+          )}
+        </div>
+        {!!samples.length && (
+          <ul className="mt-2 flex flex-wrap gap-2">
+            {[...samples]
+              .sort((a, b) => b.count - a.count)
+              .map((x) => (
+                <li key={x.word} className="flex items-center gap-1 rounded-sm border bg-muted/40 py-0.5 pr-1 pl-2.5 text-sm">
+                  {x.word}
+                  <span className="text-xs text-muted-foreground">×{x.count}</span>
+                  <Button type="button" variant="ghost" size="icon-xs" aria-label={t("{w}を起動ワードに追加", { w: x.word })} disabled={busy} onClick={() => void addSample(x.word)}>
+                    <Plus />
+                  </Button>
+                  <Button type="button" variant="ghost" size="icon-xs" aria-label={t("{w}を候補から外す", { w: x.word })} onClick={() => setSamples((prev) => prev.filter((y) => y !== x))}>
+                    <X />
+                  </Button>
+                </li>
+              ))}
+          </ul>
+        )}
+      </div>
       {!!config?.words.length && (
         <ul className="mt-3 flex flex-wrap gap-2">
           {config.words.map((w) => (
@@ -1501,6 +1633,8 @@ export default function Setup() {
               <Heading title="AI Link" help={t("AIの接続")}>
                 <p>{t("使いたいAIのAPIキーを登録します。全部は不要で、1つ以上あれば使えます。")}</p>
                 <ul>
+                  <li>{t("Amazon Bedrockは、APIキーではなく~/.aws/configと~/.aws/credentialsの中身を貼り付けて登録します。MFA付きのスイッチロール(role_arn + source_profile)に対応し、コードが必要なときは入力欄が開きます。")}</li>
+                  <li>{t("Bedrockでは、インターネット検索・ページ取得は使えません(ナレッジのファイル操作とコマンド実行は使えます)。")}</li>
                   <li>{t("キーは疎通確認に成功した場合のみ、この端末のアプリデータ内に保存されます。")}</li>
                   <li>{t("保存先は平文のJSONファイルです(OSのキーチェーンは使っていません)。")}</li>
                 </ul>
@@ -1508,7 +1642,7 @@ export default function Setup() {
               <span className="hud-label text-muted-foreground">{linked} / {PROVIDERS.length}</span>
             </div>
             <div className="divide-y divide-border">
-              {PROVIDERS.map((p: Provider) => (
+              {PROVIDERS.filter((p) => p !== "bedrock").map((p: Provider) => (
                 <KeyRow
                   key={p}
                   title={PROVIDER_LABELS[p]}
@@ -1518,6 +1652,7 @@ export default function Setup() {
                   onDelete={() => run(p, () => deleteApiKey(p))}
                 />
               ))}
+              <AwsPanel onChanged={refresh} />
             </div>
           </section>
 

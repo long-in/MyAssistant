@@ -63,9 +63,9 @@ pub async fn proofread(db: &Db, route: &Route, session_id: Option<&str>, correct
         }
     };
     let msg = [ChatMessage { role: "user".into(), content: prompt(text, &history, corrections) }];
-    match llm_client::complete(target.provider, target.model, Some(SYSTEM), &msg).await {
+    match llm_client::complete(target.provider, &target.model, Some(SYSTEM), &msg).await {
         Ok(done) => {
-            let _ = db.record_usage(target.provider.as_str(), target.model, done.input_tokens, done.output_tokens);
+            let _ = db.record_usage(target.provider.as_str(), &target.model, done.input_tokens, done.output_tokens);
             let out = done.text.trim();
             if acceptable(text, out) { out.to_owned() } else { text.to_owned() }
         }

@@ -12,7 +12,6 @@ use crate::{
         batch, compact,
         graph::{self, GraphCache},
         knowledge,
-        llm_client::{self, ChatMessage},
         llm_router::{self, ModelInfo, Route},
         profile,
         secrets::{self, Provider},
@@ -28,8 +27,6 @@ pub const SHELL_ACCESS_KEY: &str = "shell_access";
 /// 発話から想起する関連ノートの上限(件数・合計文字数)。本文は渡さず要約だけにしてトークン圧迫を避ける。
 const RELATED_NODES: usize = 5;
 const RELATED_CHARS: usize = 1_500;
-/// ツールを使えない経路で、最も関連するノートだけ同梱する本文の長さ。
-const EXCERPT_CHARS: usize = 1_000;
 /// 想起の起点が見つからないときに読み込む、直近更新されたMarkdownの上限(ファイル数・合計文字数)。
 const CONTEXT_FILES: usize = 3;
 const CONTEXT_CHARS: usize = 2_000;
@@ -131,8 +128,8 @@ fn restore_corrections(app: &AppHandle) -> Option<String> {
 }
 
 /// 発話から関連ノートを想起した節。起点が見つからなければ直近更新のノートで代える。
-/// `with_tools`がなければ本文を読めないため、最も関連する1件の本文末尾だけ同梱する。
-fn related_context(root: &Path, graphs: &GraphCache, query: &str, with_tools: bool) -> Option<String> {
+/// 本文は渡さず一覧だけにし、必要なときにモデルがツールで読む。
+fn related_context(root: &Path, graphs: &GraphCache, query: &str) -> Option<String> {
     let hits = match graphs.get(root) {
         Ok(g) => g.recall(query, RELATED_NODES),
         Err(e) => {
@@ -155,19 +152,9 @@ fn related_context(root: &Path, graphs: &GraphCache, query: &str, with_tools: bo
         };
     }
     let list = graph::render(&hits, RELATED_CHARS);
-    if with_tools {
-        return Some(format!(
-            "発話に関係しそうなナレッジを、つながりを辿って選んだ一覧です(パス | タイトル — 要約 (選んだ理由))。関係する場合のみ参照してください。\n\n\
-             <related_knowledge>\n{list}</related_knowledge>"
-        ));
-    }
-    let excerpt = hits
-        .first()
-        .and_then(|h| graph::excerpt(root, &h.path, EXCERPT_CHARS).map(|b| format!("\n最も関係するノート({})の本文末尾:\n{b}\n", h.path)))
-        .unwrap_or_default();
     Some(format!(
-        "発話に関係しそうなナレッジを、つながりを辿って選んだ一覧です(パス | タイトル — 要約 (選んだ理由))。本文は読めないため、要約と抜粋の範囲で答え、足りなければその旨を伝えてください。\n\n\
-         <related_knowledge>\n{list}{excerpt}</related_knowledge>"
+        "発話に関係しそうなナレッジを、つながりを辿って選んだ一覧です(パス | タイトル — 要約 (選んだ理由))。関係する場合のみ参照してください。\n\n\
+         <related_knowledge>\n{list}</related_knowledge>"
     ))
 }
 
@@ -198,12 +185,12 @@ pub fn add_stt_correction(
 pub struct ChatReply {
     pub content: String,
     pub provider: &'static str,
-    pub model: &'static str,
+    pub model: String,
 }
 
 #[tauri::command]
-pub fn list_models() -> &'static [ModelInfo] {
-    llm_router::CATALOG
+pub fn list_models() -> Vec<ModelInfo> {
+    llm_router::catalog()
 }
 
 /// 当月のトークン使用量(このアプリ経由の呼び出しのローカル集計)。
@@ -225,7 +212,7 @@ pub fn save_routing(db: State<'_, Db>, route: Route) -> Result<(), AppError> {
 }
 
 /// ユーザー発話を保存 → ルーティング → LLM呼び出し → 応答を保存。
-/// Claudeを選んでいる場合はナレッジのファイル操作ツールも使える。その進捗と書き込み承認は`on_event`へ流す。
+/// Claude(Anthropic直接・Bedrock)を選んでいる場合はナレッジのファイル操作ツールも使える。その進捗と書き込み承認は`on_event`へ流す。
 #[tauri::command]
 pub async fn send_chat(
     app: AppHandle,
@@ -260,12 +247,12 @@ pub async fn send_chat(
     let base = base_instructions(&db)?;
     db.insert_log(&session_id, "user", text, None, None)?;
     // 往復数が上限を超えていれば古い分を要約し、LLMへは「要約 + 直近の会話」だけを渡す
-    let window = compact::prepare(&db, &session_id, tuning.history_exchanges, target.provider, target.model).await?;
+    let window = compact::prepare(&db, &session_id, tuning.history_exchanges, target.provider, &target.model).await?;
     // 関連ナレッジは話題に合わせて発話ごとに想起する。「それ」などに備えて直前のユーザー発話も手がかりにする
     let previous = window.recent.iter().rev().filter(|r| r.role == "user").nth(1).map_or("", |r| r.content.as_str());
     let related = batch::knowledge_root(&app)
         .ok()
-        .and_then(|root| related_context(&root, &graphs, &format!("{text}\n{previous}"), target.provider == Provider::Anthropic));
+        .and_then(|root| related_context(&root, &graphs, &format!("{text}\n{previous}")));
     // 基本情報は設定の変更を次の発話から反映するため、セッションのキャッシュに入れず毎回読む
     let personal = profile::load(&db)?.prompt_block(chrono::Local::now().date_naive());
     let reference: Vec<String> = personal
@@ -282,26 +269,18 @@ pub async fn send_chat(
     let rows = window.recent;
 
     let record_usage = |input: u64, output: u64| {
-        if let Err(e) = db.record_usage(target.provider.as_str(), target.model, input, output) {
+        if let Err(e) = db.record_usage(target.provider.as_str(), &target.model, input, output) {
             log::warn!("usage record failed: {e}");
         }
     };
-    let content = if target.provider == Provider::Anthropic {
-        // 今回の発話は保存済みなので履歴から外し、別に渡す
-        let mut prior: Vec<Value> = rows.into_iter().map(|r| json!({ "role": r.role, "content": r.content })).collect();
-        prior.pop();
-        let root = batch::knowledge_root(&app)?;
-        let system = system.as_deref().unwrap_or_default();
-        let out = agent_cmd::run_with_tools(&agents, &root, target.model, system, web_access(&db)?.then_some((tuning.web_search_max, tuning.web_fetch_max)), shell_access(&db)?, prior, text, &on_event, record_usage).await?;
-        out.text
-    } else {
-        let messages: Vec<ChatMessage> =
-            rows.into_iter().map(|r| ChatMessage { role: r.role, content: r.content }).collect();
-        let done = llm_client::complete(target.provider, target.model, system.as_deref(), &messages).await?;
-        record_usage(done.input_tokens, done.output_tokens);
-        done.text
-    };
-    db.insert_log(&session_id, "assistant", &content, Some(target.provider.as_str()), Some(target.model))?;
+    // 今回の発話は保存済みなので履歴から外し、別に渡す
+    let mut prior: Vec<Value> = rows.into_iter().map(|r| json!({ "role": r.role, "content": r.content })).collect();
+    prior.pop();
+    let root = batch::knowledge_root(&app)?;
+    let system = system.as_deref().unwrap_or_default();
+    let out = agent_cmd::run_with_tools(&agents, &root, target.provider, &target.model, system, web_access(&db)?.then_some((tuning.web_search_max, tuning.web_fetch_max)), shell_access(&db)?, prior, text, &on_event, record_usage).await?;
+    let content = out.text;
+    db.insert_log(&session_id, "assistant", &content, Some(target.provider.as_str()), Some(&target.model))?;
     // 会話内容は確認なしでキャプチャ(チャプター)として書き出す。整理は画面の「今すぐ整理」で行う
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     match batch::knowledge_root(&app).and_then(|root| knowledge::append_capture(&root, &session_id, text, &content, &now)) {
@@ -310,5 +289,5 @@ pub async fn send_chat(
         }
         Err(e) => log::warn!("capture failed: {e}"),
     }
-    Ok(ChatReply { content, provider: target.provider.as_str(), model: target.model })
+    Ok(ChatReply { content, provider: target.provider.as_str(), model: target.model.clone() })
 }
