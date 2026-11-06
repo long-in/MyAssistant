@@ -21,7 +21,7 @@ const NAV = [
   { href: "/shortcuts", label: "Shortcuts", icon: Keyboard },
 ] as const;
 
-const PROJECTS_NAV = { href: "/workspace", label: "Projects", icon: FolderKanban } as const;
+const PROJECTS_NAV = { href: "/workspace", label: "Spaces", icon: FolderKanban } as const;
 
 const DEBUG_NAV = { href: "/debug", label: "Debug", icon: Bug } as const;
 

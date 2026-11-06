@@ -69,7 +69,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 /// トレイメニューを作る。表記は英語に固定する。
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
   let menu = Menu::new(app)?;
-  // いまのワークスペース(表示のみ)と、直接切り替えるためのProjects。ワークスペース関連の表記は英語に固定する
+  // いまのワークスペース(表示のみ)と、直接切り替えるためのSpaces。ワークスペース関連の表記は英語に固定する
   let (active, _) = workspace_state(app);
   let name = active.project.as_ref().map_or("Personal", |p| p.name.as_str());
   menu.append(&MenuItem::with_id(app, "ws-current", format!("Workspace: {name}"), false, None::<&str>)?)?;
@@ -93,7 +93,7 @@ fn workspace_state(app: &AppHandle) -> (ActiveWorkspace, Vec<crate::services::wo
   }
 }
 
-/// 「Projects」サブメニュー。パーソナルと各プロジェクトを並べ、選択中にチェックを付ける。クリックで、そのワークスペースへ切り替える。
+/// 「Spaces」サブメニュー。パーソナルと各プロジェクトを並べ、選択中にチェックを付ける。クリックで、そのワークスペースへ切り替える。
 fn projects_submenu(app: &AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
   let (active, projects) = workspace_state(app);
   let personal = CheckMenuItem::with_id(app, format!("{WORKSPACE_PREFIX}{PERSONAL_ID}"), "Personal", true, active.id == PERSONAL_ID, None::<&str>)?;
@@ -107,7 +107,7 @@ fn projects_submenu(app: &AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
     all.push(&separator);
     all.extend(items.iter().map(|i| i as &dyn IsMenuItem<tauri::Wry>));
   }
-  Submenu::with_items(app, "Projects", true, &all)
+  Submenu::with_items(app, "Spaces", true, &all)
 }
 
 /// アプリのメニューバーと、トレイのメニューを作り直す。ワークスペースの切り替えや、プロジェクトの追加・名称変更・削除のあとに呼ぶ。
@@ -127,14 +127,14 @@ pub fn refresh(app: &AppHandle) {
   }
 }
 
-/// アプリのメニューバーの項目が選ばれたとき。「Projects」の項目なら、そのワークスペースへ切り替える。
+/// アプリのメニューバーの項目が選ばれたとき。「Spaces」の項目なら、そのワークスペースへ切り替える。
 pub fn on_app_menu_event(app: &AppHandle, id: &str) {
   if let Some(workspace_id) = id.strip_prefix(WORKSPACE_PREFIX) {
     crate::commands::workspace::switch_from_menu(app, workspace_id);
   }
 }
 
-/// macOS のメニューバー。OS の言語に関わらず英語表記に固定する。「Projects」から、パーソナルや各プロジェクトへ直接切り替えられる。
+/// macOS のメニューバー。OS の言語に関わらず英語表記に固定する。「Spaces」から、パーソナルや各プロジェクトへ直接切り替えられる。
 pub fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
   use tauri::menu::{PredefinedMenuItem as P, Submenu};
   let app_sub = Submenu::with_items(

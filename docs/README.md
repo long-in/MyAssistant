@@ -17,7 +17,7 @@
 | [agent-command-tasks.md](agent-command-tasks.md) | 作業依頼(計画の承認とコマンド実行) |
 | [command-policy.md](command-policy.md) | コマンドの許可・拒否の判定とポリシーファイル |
 | [data-and-settings.md](data-and-settings.md) | 保存データ、設定項目、調整値、設定のエクスポート・インポート |
-| [workspace.md](workspace.md) | パーソナルとワークのプロジェクト、保存場所、切り替え、未対応事項 |
+| [workspace.md](workspace.md) | パーソナルとワークのスペース、保存場所、切り替え、未対応事項 |
 | [security.md](security.md) | API キーの扱い、パスのサンドボックス、プロンプトインジェクション対策 |
 | [debug-log.md](debug-log.md) | デバッグモードとログ画面 |
 | [frontend.md](frontend.md) | 画面構成、ショートカット、メニューバー常駐 |

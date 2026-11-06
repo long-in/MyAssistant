@@ -75,7 +75,7 @@ export default function WorkspaceSwitcher({ collapsed }: { collapsed: boolean })
         <Select items={items} value={active.id} onValueChange={(v) => v && void go(v as string)}>
           <SelectTrigger
             className={cn("hidden w-full", !collapsed && "md:flex")}
-            aria-label="Projects"
+            aria-label="Spaces"
             style={{ borderColor: active.project?.color }}
           >
             <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: active.project?.color }} />
@@ -96,7 +96,7 @@ export default function WorkspaceSwitcher({ collapsed }: { collapsed: boolean })
         <Select items={items} value={active.id} onValueChange={(v) => v && void go(v as string)}>
           <SelectTrigger
             className="size-8 justify-center rounded-full p-0 [&>svg:last-child]:hidden"
-            aria-label="Project"
+            aria-label="Space"
             title={active.project.name}
             style={{ borderColor: active.project.color }}
           >

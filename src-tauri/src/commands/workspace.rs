@@ -33,7 +33,7 @@ pub fn get_active_workspace(ws: State<'_, Workspaces>) -> ActiveWorkspace {
 #[tauri::command]
 pub fn create_project(app: AppHandle, ws: State<'_, Workspaces>, name: String, color: String) -> Result<Project, AppError> {
     let project = ws.create(&name, &color)?;
-    tray::refresh(&app); // メニューバー・トレイのProjectsに加える
+    tray::refresh(&app); // メニューバー・トレイのSpacesに加える
     Ok(project)
 }
 
@@ -104,7 +104,7 @@ pub fn copy_workspace_settings(
     result
 }
 
-/// メニューバー・トレイの「Projects」から切り替える。画面には `workspace-changed` で伝わる。
+/// メニューバー・トレイの「Spaces」から切り替える。画面には `workspace-changed` で伝わる。
 pub fn switch_from_menu(app: &AppHandle, id: &str) {
     let ws = app.state::<Workspaces>();
     match ws.switch(id) {

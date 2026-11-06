@@ -59,13 +59,13 @@ export default function WorkspacePage() {
       if (editing) {
         await updateProject(editing, name, color);
         await refreshWorkspace();
-        toast.success("Updated the project.");
+        toast.success("Updated the space.");
         reset();
       } else {
         const created = await createProject(name, color);
         await refreshWorkspace();
         await switchTo(created.id); // 作ったらそのまま開く。APIキーが未登録なら設定画面へ案内される
-        toast.success("Created the project.");
+        toast.success("Created the space.");
         reset();
       }
     } catch (e) {
@@ -82,15 +82,15 @@ export default function WorkspacePage() {
 
   const remove = async (p: Project) => {
     const ok = await ask(
-      `Delete the project "${p.name}"? Its conversations, settings, API keys and the knowledge in the default location are all deleted and this cannot be undone. A knowledge location you specified yourself is not deleted. Continue?`,
-      { title: "Delete project", kind: "warning" },
+      `Delete the space "${p.name}"? Its conversations, settings, API keys and the knowledge in the default location are all deleted and this cannot be undone. A knowledge location you specified yourself is not deleted. Continue?`,
+      { title: "Delete space", kind: "warning" },
     );
     if (!ok) return;
     try {
       await deleteProject(p.id);
       await refreshWorkspace();
       if (editing === p.id) reset();
-      toast.success("Deleted the project.");
+      toast.success("Deleted the space.");
     } catch (e) {
       toast.error(errorMessage(e));
     }
@@ -129,25 +129,25 @@ export default function WorkspacePage() {
       <div className="mx-auto flex max-w-2xl flex-col gap-5 px-6 py-10">
         <div>
           <p className="hud-label mb-1">{"// Work"}</p>
-          <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Spaces</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {"Each Work project is an independent agent. Conversations, knowledge, settings and API keys are not shared between projects or with Personal."}
+            {"Each Work space is an independent agent. Conversations, knowledge, settings and API keys are not shared between spaces or with Personal."}
           </p>
         </div>
 
         <Card>
           <CardHeader>
-            <CardTitle>{editing ? "Edit project" : "Create a project"}</CardTitle>
+            <CardTitle>{editing ? "Edit space" : "Create a space"}</CardTitle>
             <CardDescription>
-              {`The name and image color are shown so you can tell which agent you are talking to. Each project needs its own name and color, and names like "Personal" and "Work" are reserved. (${projects.length}/${MAX_PROJECTS})`}
+              {`The name and image color are shown so you can tell which agent you are talking to. Each space needs its own name and color, and names like "Personal" and "Work" are reserved. (${projects.length}/${MAX_PROJECTS})`}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <Input
               value={name}
               maxLength={PROJECT_NAME_MAX}
-              placeholder="Project name"
-              aria-label="Project name"
+              placeholder="Space name"
+              aria-label="Space name"
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && canSubmit && void submit()}
             />
@@ -189,7 +189,7 @@ export default function WorkspacePage() {
                 </Button>
               )}
               {full && !editing && (
-                <span className="text-xs text-destructive">You can have up to 30 projects. Delete the ones you no longer need.</span>
+                <span className="text-xs text-destructive">You can have up to 30 spaces. Delete the ones you no longer need.</span>
               )}
             </div>
           </CardContent>
@@ -199,7 +199,7 @@ export default function WorkspacePage() {
           <CardHeader>
             <CardTitle>Copy settings</CardTitle>
             <CardDescription>
-              {"Copies the settings of another Personal space or project as is. Models, voice, wake words, command permissions and similar settings are copied; knowledge, conversations and the pronunciation dictionary are not."}
+              {"Copies the settings of Personal or another space as is. Models, voice, wake words, command permissions and similar settings are copied; knowledge, conversations and the pronunciation dictionary are not."}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
@@ -242,7 +242,7 @@ export default function WorkspacePage() {
             <label className="flex items-center justify-between gap-4 text-sm">
               <span>
                 {"Also copy personal data"}
-                <span className="block text-xs text-muted-foreground">Name, how to address you, birthday and so on. You normally should not copy these to a work project.</span>
+                <span className="block text-xs text-muted-foreground">Name, how to address you, birthday and so on. You normally should not copy these to a work space.</span>
               </span>
               <Switch checked={withProfile} onCheckedChange={setWithProfile} />
             </label>
@@ -257,10 +257,10 @@ export default function WorkspacePage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Project list</CardTitle>
+            <CardTitle>Space list</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col divide-y">
-            {projects.length === 0 && <p className="py-3 text-sm text-muted-foreground">No projects yet.</p>}
+            {projects.length === 0 && <p className="py-3 text-sm text-muted-foreground">No spaces yet.</p>}
             {projects.map((p) => {
               const current = active.id === p.id && active.id !== PERSONAL_ID;
               return (

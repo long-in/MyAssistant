@@ -61,12 +61,12 @@ export const ERROR_MESSAGES: Record<string, string> = {
   invalid_dictionary: "読み上げ辞書のJSONを取り込めませんでした。[{\"word\": \"語\", \"reading\": \"読み\"}] の形式で、ファイルは1MB以下にしてください。",
   invalid_settings: "設定ファイルの形式が正しくありません。このアプリが書き出したファイルを選んでください。",
   // ワークスペース(プロジェクト管理)の画面に出る文言。表記は英語に固定している
-  invalid_project: "Invalid project name (1-40 characters) or color.",
-  reserved_name: "That name is reserved. Choose a different project name.",
-  name_in_use: "Another project already uses that name. Choose a different one.",
-  color_in_use: "Another project already uses that color. Choose a different one.",
-  project_limit: "You can have up to 30 projects. Delete the ones you no longer need.",
-  project_not_found: "Project not found.",
+  invalid_project: "Invalid space name (1-40 characters) or color.",
+  reserved_name: "That name is reserved. Choose a different space name.",
+  name_in_use: "Another space already uses that name. Choose a different one.",
+  color_in_use: "Another space already uses that color. Choose a different one.",
+  project_limit: "You can have up to 30 spaces. Delete the ones you no longer need.",
+  project_not_found: "Space not found.",
   path_in_use: "その場所は、ほかのワークスペースのナレッジまたはデバッグログの保存先と重なっています。別の場所を選んでください。",
 };
 
