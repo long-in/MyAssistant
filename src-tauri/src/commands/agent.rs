@@ -145,7 +145,7 @@ pub fn agent_detach(app: AppHandle, ws: State<'_, Workspaces>, workspace_id: Str
         if let Some(a) = ctx.shared.agent.pending_approval()
             && attention::is_background(&app, &workspace_id)
         {
-            attention::notify(&app, &workspace_id, AttentionKind::Approval, Some(attention::summarize(&a)), None);
+            attention::notify(&app, &workspace_id, AttentionKind::Approval, Some(&a), None);
         }
     }
 }

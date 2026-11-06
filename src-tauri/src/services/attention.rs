@@ -36,7 +36,9 @@ pub struct Attention {
     pub workspace_name: Option<String>,
     pub workspace_color: Option<String>,
     pub kind: AttentionKind,
-    /// 承認を求められている内容の要約。
+    /// 承認の種類(`file` / `plan` / `command` / `allow_command`)。承認のときだけ。
+    pub approval_kind: Option<&'static str>,
+    /// 承認を求められている内容(ファイルは作成先、コマンドはその内容)を、1行にまとめたもの。計画では空。
     pub detail: Option<String>,
     /// 失敗の内容(`AppError`のシリアライズ)。
     pub error: Option<Value>,
@@ -48,7 +50,7 @@ pub fn is_background<R: Runtime>(app: &impl Manager<R>, workspace_id: &str) -> b
 }
 
 /// 通知を出す。呼び出す側で、裏のワークスペースのときだけ呼ぶこと。
-pub fn notify(app: &AppHandle, workspace_id: &str, kind: AttentionKind, detail: Option<String>, error: Option<Value>) {
+pub fn notify(app: &AppHandle, workspace_id: &str, kind: AttentionKind, approval: Option<&Approval>, error: Option<Value>) {
     let space = app
         .try_state::<Workspaces>()
         .and_then(|ws| ws.list().into_iter().find(|s| s.id == workspace_id));
@@ -57,7 +59,8 @@ pub fn notify(app: &AppHandle, workspace_id: &str, kind: AttentionKind, detail: 
         workspace_name: space.as_ref().map(|s| s.name.clone()),
         workspace_color: space.map(|s| s.color),
         kind,
-        detail,
+        approval_kind: approval.map(|a| kind_name(a.kind)),
+        detail: approval.map(detail_of),
         error,
     };
     if let Err(e) = app.emit(ATTENTION_EVENT, event) {
@@ -74,13 +77,23 @@ fn truncate(text: &str) -> String {
     format!("{cut}…")
 }
 
-/// 承認を求められている内容を、1行にまとめる。
-pub fn summarize(a: &Approval) -> String {
+/// 承認の種類の名前。画面が、言語に合わせた文言を選ぶのに使う。
+fn kind_name(kind: ApprovalKind) -> &'static str {
+    match kind {
+        ApprovalKind::File => "file",
+        ApprovalKind::Plan => "plan",
+        ApprovalKind::Command => "command",
+        ApprovalKind::AllowCommand => "allow_command",
+    }
+}
+
+/// 承認を求められている内容(ファイルは作成先、コマンドはその内容)を、1行にまとめる。計画は内容が長いので空にする。
+pub fn detail_of(a: &Approval) -> String {
     match a.kind {
-        ApprovalKind::File => truncate(&format!("Create file: {}", a.path)),
-        ApprovalKind::Plan => "Review the plan".to_owned(),
-        ApprovalKind::Command => truncate(&format!("Run command: {}", a.preview)),
-        ApprovalKind::AllowCommand => truncate(&format!("Allow command: {}", a.steps.join(", "))),
+        ApprovalKind::File => truncate(&a.path),
+        ApprovalKind::Plan => String::new(),
+        ApprovalKind::Command => truncate(&a.preview),
+        ApprovalKind::AllowCommand => truncate(&a.steps.join(", ")),
     }
 }
 
@@ -100,21 +113,24 @@ mod tests {
     }
 
     #[test]
-    fn summarizes_each_kind_in_one_line() {
-        assert_eq!(summarize(&approval(ApprovalKind::File, "notes/a.md", "body", &[])), "Create file: notes/a.md");
-        assert_eq!(summarize(&approval(ApprovalKind::Plan, "", "overview", &["1", "2"])), "Review the plan");
-        assert_eq!(summarize(&approval(ApprovalKind::Command, "", "git\n  status", &[])), "Run command: git status");
-        assert_eq!(summarize(&approval(ApprovalKind::AllowCommand, "", "", &["git status", "ls"])), "Allow command: git status, ls");
+    fn describes_each_kind_in_one_line() {
+        let d = |kind, path, preview, steps: &[&str]| detail_of(&approval(kind, path, preview, steps));
+        assert_eq!(d(ApprovalKind::File, "notes/a.md", "body", &[]), "notes/a.md");
+        assert_eq!(d(ApprovalKind::Plan, "", "overview", &["1", "2"]), "", "計画は内容を載せない");
+        assert_eq!(d(ApprovalKind::Command, "", "git\n  status", &[]), "git status");
+        assert_eq!(d(ApprovalKind::AllowCommand, "", "", &["git status", "ls"]), "git status, ls");
+        let names = [ApprovalKind::File, ApprovalKind::Plan, ApprovalKind::Command, ApprovalKind::AllowCommand].map(kind_name);
+        assert_eq!(names, ["file", "plan", "command", "allow_command"]);
     }
 
     #[test]
     fn long_details_are_cut_with_an_ellipsis() {
         let long = "x".repeat(500);
-        let s = summarize(&approval(ApprovalKind::Command, "", &long, &[]));
+        let s = detail_of(&approval(ApprovalKind::Command, "", &long, &[]));
         assert_eq!(s.chars().count(), DETAIL_MAX_CHARS + 1);
         assert!(s.ends_with('…'));
         // 日本語など、複数バイトの文字でも、文字の途中で切らない
         let ja = "あ".repeat(500);
-        assert!(summarize(&approval(ApprovalKind::Command, "", &ja, &[])).ends_with('…'));
+        assert!(detail_of(&approval(ApprovalKind::Command, "", &ja, &[])).ends_with('…'));
     }
 }

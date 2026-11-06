@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Loader2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { useT } from "@/lib/i18n";
 import { PERSONAL_ID, copyWorkspaceSettings, errorMessage, type CopyReport } from "@/lib/api";
 import type { CopyRequest, CopyTarget } from "@/lib/copyTargets";
 import SpaceChip from "./SpaceChip";
@@ -22,6 +23,7 @@ type Props = {
  * 既定のフォーカスは「Cancel」。実行中は閉じられない。
  */
 export default function CopyConfirmModal({ request, targets, onClose, onCopied }: Props) {
+  const t = useT();
   const [busy, setBusy] = useState(false);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const from = targets.find((t) => t.id === request.from);
@@ -64,7 +66,7 @@ export default function CopyConfirmModal({ request, targets, onClose, onCopied }
         className="w-full max-w-md rounded-xl border border-destructive/40 bg-card/80 p-5 text-sm shadow-2xl backdrop-blur-md"
       >
         <h2 id="copy-title" className="text-base font-medium">
-          Copy settings
+          {t("設定のコピー")}
         </h2>
         <div className="mt-3 flex items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 font-medium">
           <SpaceChip name={from.name} color={from.color} />
@@ -72,36 +74,37 @@ export default function CopyConfirmModal({ request, targets, onClose, onCopied }
           <SpaceChip name={to.name} color={to.color} />
         </div>
 
-        <p className="mt-4 text-xs font-medium text-muted-foreground">Copied</p>
+        <p className="mt-4 text-xs font-medium text-muted-foreground">{t("コピーするもの")}</p>
         <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs">
-          <li>Settings: models, voice, wake words, tuning, knowledge batch, debug mode</li>
-          <li>Command permissions</li>
-          <li>Bedrock model list</li>
-          {request.includeKeys && <li className="font-medium text-destructive">API keys (Anthropic, AWS, Google, Aqua)</li>}
-          {request.includeProfile && <li className="font-medium text-destructive">Personal data</li>}
+          <li>{t("設定: モデル・音声・起動ワード・調整値・ナレッジ整理・デバッグモード")}</li>
+          <li>{t("コマンド権限")}</li>
+          <li>{t("Bedrockのモデル一覧")}</li>
+          {request.includeKeys && <li className="font-medium text-destructive">{t("APIキー(Anthropic・AWS・Google・Aqua)")}</li>}
+          {request.includeProfile && <li className="font-medium text-destructive">{t("パーソナルデータ")}</li>}
         </ul>
-        <p className="mt-3 text-xs font-medium text-muted-foreground">Not copied</p>
+        <p className="mt-3 text-xs font-medium text-muted-foreground">{t("コピーしないもの")}</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          Knowledge, conversations, the pronunciation dictionary and the knowledge / debug log locations
-          {request.includeKeys ? "" : ", API keys"}
-          {request.includeProfile ? "" : ", personal data"}.
+          {t("ナレッジ・会話・読み上げ辞書、ナレッジとデバッグログの保存先")}
+          {request.includeKeys ? "" : t("、APIキー")}
+          {request.includeProfile ? "" : t("、パーソナルデータ")}
+          {t("。")}
         </p>
 
         <div className="mt-4 flex items-start gap-2 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-xs">
           <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
           <p>
-            The same settings in <strong>{to.name}</strong> are <strong>overwritten</strong>
-            {to.id === PERSONAL_ID ? " (this is your existing Personal agent)" : ""}. This cannot be undone.
+            {t("「{to}」の同じ設定は上書きされます。元に戻せません。", { to: to.name })}
+            {to.id === PERSONAL_ID ? " " + t("コピー先は、既存のパーソナルです。") : ""}
           </p>
         </div>
 
         <div className="mt-5 flex justify-end gap-2">
           <Button ref={cancelRef} type="button" variant="outline" disabled={busy} onClick={onClose}>
-            Cancel
+            {t("キャンセル")}
           </Button>
           <Button type="button" variant="destructive" disabled={busy} onClick={() => void run()}>
             {busy && <Loader2 className="animate-spin" />}
-            Overwrite and copy
+            {t("上書きしてコピー")}
           </Button>
         </div>
       </div>

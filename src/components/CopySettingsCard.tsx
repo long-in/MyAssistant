@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ArrowRight, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useT } from "@/lib/i18n";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { CopyRequest, CopyTarget } from "@/lib/copyTargets";
 import CopyOptions from "./CopyOptions";
@@ -22,6 +23,7 @@ type Props = {
  * 作ったばかりのスペースがあれば、コピー先の候補として最初から選んでおく。
  */
 export default function CopySettingsCard({ targets, suggestedTo, onRequest }: Props) {
+  const t = useT();
   const [pickedFrom, setPickedFrom] = useState<string | null>(null);
   const [pickedTo, setPickedTo] = useState<string | null>(null);
   const [includeKeys, setIncludeKeys] = useState(false);
@@ -46,25 +48,23 @@ export default function CopySettingsCard({ targets, suggestedTo, onRequest }: Pr
   return (
     <Card id="copy-settings">
       <CardHeader>
-        <CardTitle>Copy settings</CardTitle>
+        <CardTitle>{t("設定のコピー")}</CardTitle>
         <CardDescription>
-          Copies the settings of Personal or another space as is. Models, voice, wake words, command permissions and similar settings
-          are copied; knowledge, conversations and the pronunciation dictionary are not. The same settings in the destination are
-          overwritten, so you confirm before anything is copied.
+          {t("パーソナルまたはほかのスペースの設定を、そのまま写します。モデル・音声・起動ワード・コマンド権限などが対象で、ナレッジ・会話・読み上げ辞書は写しません。コピー先の同じ設定は上書きされるため、コピーの前に確認します。")}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-2">
           <Select items={items(targets.filter((t) => t.id !== to))} value={fromId} onValueChange={(v) => v && setPickedFrom(v as string)}>
-            <SelectTrigger className="min-w-40" aria-label="Copy from">
-              <SelectValue placeholder="Copy from" />
+            <SelectTrigger className="min-w-40" aria-label={t("コピー元")}>
+              <SelectValue placeholder={t("コピー元")} />
             </SelectTrigger>
             <SelectContent>{options(targets.filter((t) => t.id !== to))}</SelectContent>
           </Select>
           <ArrowRight className="size-4 text-muted-foreground" />
           <Select items={items(targets)} value={to} onValueChange={(v) => v && setPickedTo(v as string)}>
-            <SelectTrigger className="min-w-40" aria-label="Copy to">
-              <SelectValue placeholder="Copy to (choose)" />
+            <SelectTrigger className="min-w-40" aria-label={t("コピー先")}>
+              <SelectValue placeholder={t("コピー先を選択")} />
             </SelectTrigger>
             <SelectContent>{options(targets)}</SelectContent>
           </Select>
@@ -73,9 +73,9 @@ export default function CopySettingsCard({ targets, suggestedTo, onRequest }: Pr
         <div className="flex items-center gap-3">
           <Button disabled={!ready} onClick={() => ready && onRequest({ from: fromId, to, includeKeys, includeProfile })}>
             <Copy />
-            Copy…
+            {t("コピー…")}
           </Button>
-          {to === null && <span className="text-xs text-muted-foreground">Choose where to copy to.</span>}
+          {to === null && <span className="text-xs text-muted-foreground">{t("コピー先を選んでください。")}</span>}
         </div>
       </CardContent>
     </Card>

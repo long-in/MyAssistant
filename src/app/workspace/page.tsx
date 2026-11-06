@@ -23,6 +23,7 @@ import {
   updateSpace,
   type Space,
 } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import { type CopyRequest, copyTargets } from "@/lib/copyTargets";
 import { cn } from "@/lib/utils";
 import { bumpSettingsVersion, refreshWorkspace, switchTo, useWorkspace } from "@/lib/workspace";
@@ -31,6 +32,7 @@ import { bumpSettingsVersion, refreshWorkspace, switchTo, useWorkspace } from "@
 const NO_COPY = "none";
 
 export default function WorkspacePage() {
+  const t = useT();
   const router = useRouter();
   const { active, spaces, palette } = useWorkspace();
   const [editing, setEditing] = useState<string | null>(null); // 編集中のスペースID。nullなら新規作成
@@ -71,7 +73,7 @@ export default function WorkspacePage() {
       if (editing) {
         await updateSpace(editing, name, color);
         await refreshWorkspace();
-        toast.success("Updated the space.");
+        toast.success(t("スペースを更新しました。"));
         reset();
       } else {
         const created = await createSpace(name, color);
@@ -81,9 +83,9 @@ export default function WorkspacePage() {
         if (createFrom !== NO_COPY) {
           // 設定のコピーを選んでいたら、作成のあとに最終確認を出す(取りやめても、スペースは作成済みのまま)
           setCopyRequest({ from: createFrom, to: created.id, includeKeys: createKeys, includeProfile: createProfile });
-          toast.success("Created the space.");
+          toast.success(t("スペースを作成しました。"));
         } else {
-          toast.success("Created the space.", { description: "To bring over settings, use “Copy settings” below." });
+          toast.success(t("スペースを作成しました。"), { description: t("設定を引き継ぐには、下の「設定のコピー」を使ってください。") });
         }
         reset();
       }
@@ -101,15 +103,15 @@ export default function WorkspacePage() {
 
   const remove = async (p: Space) => {
     const ok = await ask(
-      `Delete the space "${p.name}"? Its conversations, settings, API keys and the knowledge in the default location are all deleted and this cannot be undone. A knowledge location you specified yourself is not deleted. Continue?`,
-      { title: "Delete space", kind: "warning" },
+      t("スペース「{name}」を削除します。会話・設定・APIキーと、既定の場所のナレッジがすべて削除され、元に戻せません。独自に指定したナレッジの保存先は削除されません。続行しますか?", { name: p.name }),
+      { title: t("スペースの削除"), kind: "warning" },
     );
     if (!ok) return;
     try {
       await deleteSpace(p.id);
       await refreshWorkspace();
       if (editing === p.id) reset();
-      toast.success("Deleted the space.");
+      toast.success(t("スペースを削除しました。"));
     } catch (e) {
       toast.error(errorMessage(e));
     }
@@ -118,7 +120,7 @@ export default function WorkspacePage() {
   const targets = copyTargets(spaces);
 
   const copied = (r: { settings: number; keys: number }, req: CopyRequest) => {
-    toast.success(`Copied ${r.settings} settings.` + (r.keys > 0 ? ` (${r.keys} API keys)` : ""));
+    toast.success(t("設定を{count}件コピーしました。", { count: r.settings }) + (r.keys > 0 ? t("(APIキー{keys}件)", { keys: r.keys }) : ""));
     if (req.to === active.id) bumpSettingsVersion(); // 選択中のスペースへコピーしたら、設定画面などを読み直す
   };
 
@@ -129,29 +131,29 @@ export default function WorkspacePage() {
       <div className="mx-auto flex max-w-2xl flex-col gap-5 px-6 py-10">
         <div>
           <p className="hud-label mb-1">{"// Work"}</p>
-          <h1 className="text-2xl font-semibold tracking-tight">Spaces</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{t("スペース")}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {"Each Work space is an independent agent. Conversations, knowledge, settings and API keys are not shared between spaces or with Personal."}
+            {t("ワークの各スペースは、独立したエージェントです。会話・ナレッジ・設定・APIキーは、スペース同士でも、パーソナルとも共有されません。")}
           </p>
         </div>
 
         <Card>
           <CardHeader>
-            <CardTitle>{editing ? "Edit space" : "Create a space"}</CardTitle>
+            <CardTitle>{editing ? t("スペースを編集") : t("スペースを作成")}</CardTitle>
             <CardDescription>
-              {`The name and image color are shown so you can tell which agent you are talking to. Each space needs its own name and color, and names like "Personal" and "Work" are reserved. (${spaces.length}/${MAX_SPACES})`}
+              {t("名称とイメージカラーは、どのエージェントと話しているかを見分けるために表示されます。名称と色はスペースごとに重複できず、「パーソナル」「ワーク」などは予約名です。({count}/{max}件)", { count: spaces.length, max: MAX_SPACES })}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <Input
               value={name}
               maxLength={SPACE_NAME_MAX}
-              placeholder="Space name"
-              aria-label="Space name"
+              placeholder={t("スペース名")}
+              aria-label={t("スペース名")}
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && canSubmit && void submit()}
             />
-            <div className="grid grid-cols-10 gap-2" role="radiogroup" aria-label="Image color">
+            <div className="grid grid-cols-10 gap-2" role="radiogroup" aria-label={t("イメージカラー")}>
               {palette.map((c) => {
                 const owner = usedBy.get(c);
                 return (
@@ -160,8 +162,8 @@ export default function WorkspacePage() {
                     type="button"
                     role="radio"
                     aria-checked={color === c}
-                    aria-label={owner ? `${c} (in use: ${owner})` : c}
-                    title={owner ? `In use: ${owner}` : c}
+                    aria-label={owner ? t("{color}(使用中: {name})", { color: c, name: owner }) : c}
+                    title={owner ? t("使用中: {name}", { name: owner }) : c}
                     disabled={owner !== undefined}
                     onClick={() => setPicked(c)}
                     className={cn(
@@ -180,17 +182,17 @@ export default function WorkspacePage() {
             {!editing && (
               <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-3">
                 <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="text-muted-foreground">Copy settings from</span>
+                  <span className="text-muted-foreground">{t("設定のコピー元")}</span>
                   <Select
-                    items={[{ value: NO_COPY, label: "Don't copy" }, ...targets.map((t) => ({ value: t.id, label: t.name }))]}
+                    items={[{ value: NO_COPY, label: t("コピーしない") }, ...targets.map((t) => ({ value: t.id, label: t.name }))]}
                     value={createFrom}
                     onValueChange={(v) => v && setCreateFrom(v as string)}
                   >
-                    <SelectTrigger className="min-w-40" aria-label="Copy settings from (optional)">
+                    <SelectTrigger className="min-w-40" aria-label={t("設定のコピー元(任意)")}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value={NO_COPY}>Don&apos;t copy</SelectItem>
+                      <SelectItem value={NO_COPY}>{t("コピーしない")}</SelectItem>
                       {targets.map((t) => (
                         <SelectItem key={t.id} value={t.id}>
                           <SpaceChip name={t.name} color={t.color} />
@@ -202,7 +204,7 @@ export default function WorkspacePage() {
                 {createFrom !== NO_COPY && (
                   <>
                     <CopyOptions includeKeys={createKeys} includeProfile={createProfile} onKeys={setCreateKeys} onProfile={setCreateProfile} />
-                    <p className="text-xs text-muted-foreground">You confirm once more after the space is created.</p>
+                    <p className="text-xs text-muted-foreground">{t("スペースの作成後に、もう一度確認します。")}</p>
                   </>
                 )}
               </div>
@@ -210,16 +212,16 @@ export default function WorkspacePage() {
             <div className="flex items-center gap-2">
               <Button onClick={() => void submit()} disabled={!canSubmit}>
                 {editing ? <Check /> : <Plus />}
-                {editing ? "Save" : "Create"}
+                {editing ? t("保存") : t("作成")}
               </Button>
               {editing && (
                 <Button variant="outline" onClick={reset}>
                   <X />
-                  {"Cancel"}
+                  {t("キャンセル")}
                 </Button>
               )}
               {full && !editing && (
-                <span className="text-xs text-destructive">You can have up to 30 spaces. Delete the ones you no longer need.</span>
+                <span className="text-xs text-destructive">{t("スペースは30件までです。不要なスペースを削除してください。")}</span>
               )}
             </div>
           </CardContent>
@@ -229,10 +231,10 @@ export default function WorkspacePage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Space list</CardTitle>
+            <CardTitle>{t("スペース一覧")}</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col divide-y">
-            {spaces.length === 0 && <p className="py-3 text-sm text-muted-foreground">No spaces yet.</p>}
+            {spaces.length === 0 && <p className="py-3 text-sm text-muted-foreground">{t("まだスペースがありません。")}</p>}
             {spaces.map((p) => {
               const current = active.id === p.id && active.id !== PERSONAL_ID;
               return (
@@ -240,18 +242,18 @@ export default function WorkspacePage() {
                   <div className="flex min-w-0 items-center gap-3">
                     <span className="size-4 shrink-0 rounded-full" style={{ backgroundColor: p.color }} />
                     <span className="truncate text-sm font-medium">{p.name}</span>
-                    {current && <span className="shrink-0 text-xs text-muted-foreground">Selected</span>}
+                    {current && <span className="shrink-0 text-xs text-muted-foreground">{t("選択中")}</span>}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
                     {!current && (
                       <Button size="sm" variant="outline" onClick={() => void open(p.id)}>
-                        {"Open"}
+                        {t("開く")}
                       </Button>
                     )}
-                    <Button size="icon" variant="ghost" title="Edit" aria-label="Edit" onClick={() => startEdit(p)}>
+                    <Button size="icon" variant="ghost" title={t("編集")} aria-label={t("編集")} onClick={() => startEdit(p)}>
                       <Pencil />
                     </Button>
-                    <Button size="icon" variant="ghost" title="Delete" aria-label="Delete" onClick={() => void remove(p)}>
+                    <Button size="icon" variant="ghost" title={t("削除")} aria-label={t("削除")} onClick={() => void remove(p)}>
                       <Trash2 />
                     </Button>
                   </div>

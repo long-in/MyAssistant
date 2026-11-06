@@ -60,13 +60,13 @@ export const ERROR_MESSAGES: Record<string, string> = {
   mfa_required: "MFAコードが入力されませんでした。もう一度お試しください。",
   invalid_dictionary: "読み上げ辞書のJSONを取り込めませんでした。[{\"word\": \"語\", \"reading\": \"読み\"}] の形式で、ファイルは1MB以下にしてください。",
   invalid_settings: "設定ファイルの形式が正しくありません。このアプリが書き出したファイルを選んでください。",
-  // ワークスペース(スペース管理)の画面に出る文言。表記は英語に固定している
-  invalid_space: "Invalid space name (1-40 characters) or color.",
-  reserved_name: "That name is reserved. Choose a different space name.",
-  name_in_use: "Another space already uses that name. Choose a different one.",
-  color_in_use: "Another space already uses that color. Choose a different one.",
-  space_limit: "You can have up to 30 spaces. Delete the ones you no longer need.",
-  space_not_found: "Space not found.",
+  // スペース(ワークスペースの管理)の画面に出る文言。表記は言語設定に従う
+  invalid_space: "スペースの名称(1〜40文字)またはイメージカラーが正しくありません。",
+  reserved_name: "その名称は予約されています。別のスペース名にしてください。",
+  name_in_use: "その名称は、ほかのスペースがすでに使っています。別の名称にしてください。",
+  color_in_use: "その色は、ほかのスペースがすでに使っています。別の色を選んでください。",
+  space_limit: "スペースは30件までです。不要なスペースを削除してください。",
+  space_not_found: "スペースが見つかりません。",
   path_in_use: "その場所は、ほかのワークスペースのナレッジまたはデバッグログの保存先と重なっています。別の場所を選んでください。",
 };
 
@@ -662,7 +662,9 @@ export type AgentAttention = {
   workspace_color: string | null;
   /** approval=承認が必要、finished=依頼が完了、failed=依頼が失敗。 */
   kind: "approval" | "finished" | "failed";
-  /** 承認を求められている内容の要約。 */
+  /** 承認の種類。承認のときだけ。 */
+  approval_kind: "file" | "plan" | "command" | "allow_command" | null;
+  /** 承認を求められている内容(ファイルは作成先、コマンドはその内容)。計画では空。 */
   detail: string | null;
   error: AppError | null;
 };

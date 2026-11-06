@@ -1,4 +1,5 @@
 import { PERSONAL_ID, type Space } from "@/lib/api";
+import { tr } from "@/lib/i18n";
 
 /** 設定のコピー元・コピー先に選べるワークスペース(パーソナルと各スペース)。 */
 export type CopyTarget = { id: string; name: string; color: string | null };
@@ -14,6 +15,6 @@ export type CopyRequest = {
 };
 
 export const copyTargets = (spaces: Space[]): CopyTarget[] => [
-  { id: PERSONAL_ID, name: "Personal", color: null },
+  { id: PERSONAL_ID, name: tr("パーソナル"), color: null },
   ...spaces.map((s) => ({ id: s.id, name: s.name, color: s.color })),
 ];

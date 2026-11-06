@@ -328,7 +328,7 @@ async fn send_chat_inner(
             if let AgentEvent::Approval(a) = &event
                 && attention::is_background(app, &ctx.id)
             {
-                attention::notify(app, &ctx.id, AttentionKind::Approval, Some(attention::summarize(a)), None);
+                attention::notify(app, &ctx.id, AttentionKind::Approval, Some(a), None);
             }
             ctx.shared.agent.emit(event);
         },

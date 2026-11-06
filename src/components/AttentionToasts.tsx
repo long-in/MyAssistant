@@ -5,16 +5,35 @@ import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { AGENT_ATTENTION_EVENT, type AgentAttention, errorMessage } from "@/lib/api";
+import { tr } from "@/lib/i18n";
 import { switchTo, useWorkspace } from "@/lib/workspace";
 
 /** 通知の識別子。同じスペース・同じ種類の通知は、重ねずに置き換える。 */
 const toastId = (workspaceId: string, kind: AgentAttention["kind"]) => `attention:${workspaceId}:${kind}`;
 const KINDS: AgentAttention["kind"][] = ["approval", "finished", "failed"];
 
+/** 承認を求められている内容を、言語設定に合わせた1行にする。 */
+function approvalText(a: AgentAttention): string | undefined {
+  const detail = a.detail ?? "";
+  switch (a.approval_kind) {
+    case "file":
+      return tr("ファイルを作成: {detail}", { detail });
+    case "plan":
+      return tr("作業計画の確認");
+    case "command":
+      return tr("コマンドを実行: {detail}", { detail });
+    case "allow_command":
+      return tr("コマンドを許可: {detail}", { detail });
+    default:
+      return undefined;
+  }
+}
+
 /**
  * 開いていないスペースで、依頼が完了・失敗したときや、承認が必要になったときに、トーストで知らせる。
- * 「Open」で、そのスペースへ切り替えて対話画面を開く(承認は、戻れば答えられる)。
+ * 「開く」で、そのスペースへ切り替えて対話画面を開く(承認は、戻れば答えられる)。
  * 承認の通知は、対応するまで消えない。そのスペースを開いたら、そのスペースの通知は消す。
+ * 文言は、受け取った時点の言語設定に従う。
  */
 export default function AttentionToasts() {
   const router = useRouter();
@@ -27,15 +46,15 @@ export default function AttentionToasts() {
         .catch((e) => toast.error(errorMessage(e)));
     const un = listen<AgentAttention>(AGENT_ATTENTION_EVENT, (e) => {
       const a = e.payload;
-      const who = a.workspace_name ?? "Personal";
+      const who = a.workspace_name ?? tr("パーソナル");
       const id = toastId(a.workspace_id, a.kind);
-      const action = { label: "Open", onClick: () => void open(a.workspace_id) };
+      const action = { label: tr("開く"), onClick: () => void open(a.workspace_id) };
       if (a.kind === "approval") {
-        toast.warning(`${who}: approval needed`, { id, description: a.detail ?? undefined, duration: Infinity, action });
+        toast.warning(tr("{who}: 承認が必要です", { who }), { id, description: approvalText(a), duration: Infinity, action });
       } else if (a.kind === "finished") {
-        toast.success(`${who}: request completed`, { id, duration: 30_000, action });
+        toast.success(tr("{who}: 依頼が完了しました", { who }), { id, duration: 30_000, action });
       } else {
-        toast.error(`${who}: request failed`, { id, description: a.error ? errorMessage(a.error) : undefined, duration: 30_000, action });
+        toast.error(tr("{who}: 依頼が失敗しました", { who }), { id, description: a.error ? errorMessage(a.error) : undefined, duration: 30_000, action });
       }
     });
     return () => {
