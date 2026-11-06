@@ -9,10 +9,11 @@ Next.js 16(App Router、`output: "export"`)の静的サイト。Tauri の WebVie
 | `/` | 対話 | 音声入力・応答・字幕・実行ログ・承認 |
 | `/knowledge` | ナレッジ | ノートの閲覧、整理、入出力([knowledge.md](knowledge.md)) |
 | `/setup` | 設定 | API キー、各種設定([data-and-settings.md](data-and-settings.md)) |
+| `/workspace` | プロジェクト | ワークのプロジェクトの作成・編集・削除、設定のコピー。ワークを選んでいるときだけナビゲーションに出る([workspace.md](workspace.md)) |
 | `/shortcuts` | ショートカット | 一覧。定義は `lib/shortcuts.ts` と共有 |
 | `/debug` | デバッグ | デバッグモードが有効なときだけ([debug-log.md](debug-log.md)) |
 
-左のナビゲーション(`AppShell`)で移動する。幅の狭いウィンドウではアイコンだけになる。
+左のナビゲーション(`AppShell`)で移動する。幅の狭いウィンドウではアイコンだけになる。ナビゲーションの上部に、パーソナル / ワークの切り替えとプロジェクト選択(`WorkspaceSwitcher`)がある。
 
 ## 対話画面(`components/Chat.tsx`)
 
@@ -34,6 +35,14 @@ Next.js 16(App Router、`output: "export"`)の静的サイト。Tauri の WebVie
 - **小さいウィンドウ**では、補助の UI(実行ログ・使用量など)を畳んで音声のオーブを大きく保つ(高さ 40rem 以下または幅 40rem 以下)。
 - 「読み上げ / ミュート」の切り替えと、「新しい会話」ボタンがある。
 - Whisper のモデルが未ダウンロードのときは、ダウンロードを案内する。
+
+### ワークスペース
+
+- 状態は `lib/workspace.ts` のストア(`useSyncExternalStore`)で持つ。選択中のワークスペース、プロジェクト一覧、イメージカラーのパレット、設定の読み直しの印(`settingsVersion`)。バックエンドの `workspace-changed` で読み直す。
+- 選択中のプロジェクトの色は、ロゴ、画面上端の帯、対話画面右上のバッジ(`WorkspaceBadge`、名称つき)に出る。CSS 変数 `--workspace-color` にも入れる。
+- 切り替えると、`Chat` は `key` で作り直す(読み上げと録音を止める)。切替先でキーの有無を確かめ、未登録なら設定画面へ移る。設定・ナレッジ・デバッグの各画面も `key` で読み直す。
+- 会話のセッション ID はワークスペースごとに持つ(`Chat.tsx` の `sessions`)。切り替えて戻ると、同じ会話の続きになる。
+- サイドバーを畳んだ状態ではプロジェクトを選べない(モード切替と色の表示のみ)。`/workspace` の「開く」から選ぶ。
 
 ### 状態管理
 

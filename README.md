@@ -93,6 +93,14 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
     - 読み取り系以外のコマンドは、ナレッジのディレクトリ内でしか実行できません。
   - 許可・拒否・都度承認のコマンドは、設定画面の Command Policy で編集できます(実体はナレッジ内の `.my-assistant/command-policy.json`)。
 
+### ワークスペース
+
+- **パーソナルとワーク** ([workspace.md](docs/workspace.md))
+  - 従来の機能は「パーソナル」です。仕事用に「ワーク」を追加し、その中に最大30件の「プロジェクト」(独立したエージェント)を作れます。
+  - 会話・ナレッジ・設定・API キーは、パーソナルとプロジェクト、プロジェクト同士で共有しません。
+  - プロジェクトごとに名称とイメージカラー(30色から選択、重複不可)を付け、どのエージェントと話しているかを画面で見分けられます。
+  - 左メニューで切り替えます。ほかのワークスペースの設定を写すこともできます(API キー・パーソナルデータは選んだときだけ)。
+
 ### その他
 
 - **使用量表示:** プロバイダー・モデル別の当月のトークン使用量と概算金額を表示します。
@@ -186,24 +194,27 @@ npm run tauri build
 | --- | --- |
 | `timeline.db` | SQLite。会話ログ・使用量・アプリ設定 |
 | `secrets.json` | API キー。**平文 JSON**(権限 0600)。OS のキーチェーンは使っていません |
+| `workspaces/` | ワークのプロジェクト。`registry.json`(一覧)と、プロジェクトごとの `<UUID>/`(`timeline.db`・`secrets.json`・`knowledge/` などをパーソナルと同じ構成で持つ) |
 | `models/` | Whisper モデル |
 | `voicevox/` | VOICEVOX CORE・辞書・音声モデル(任意) |
 | `voice/` | 定型音声 |
 
-ナレッジの Markdown は、既定ではアプリデータ配下に保存されます。設定画面またはナレッジ画面で任意のディレクトリに変更できます(既存のノートは移動しません)。
+`timeline.db`・`secrets.json`・ナレッジはワークスペースごとに分かれます。上の表はパーソナルの場所で、`models/`・`voicevox/`・`voice/` は共有します。
+
+ナレッジの Markdown は、既定ではアプリデータ配下に保存されます。設定画面またはナレッジ画面で任意のディレクトリに変更できます(既存のノートは移動しません)。ほかのワークスペースの保存先と重なる場所は選べません。
 
 ## ディレクトリ構成
 
 ```text
 src/                    Next.js フロントエンド
-  app/                  画面 (対話 / knowledge / setup / shortcuts / debug)
+  app/                  画面 (対話 / knowledge / setup / workspace / shortcuts / debug)
   components/           UI コンポーネント (shadcn/ui は components/ui)
   lib/                  Tauri 呼び出し、音声での承認・切り替えの判定、
                         字幕の同期、ショートカット、料金計算
 src-tauri/              Tauri バックエンド (Rust)
   src/commands/         フロントエンドから呼ぶコマンド
   src/services/         LLM クライアント、STT/TTS、整理バッチ、ナレッジ、
-                        エージェント、コマンド判定、キー保存
+                        エージェント、コマンド判定、キー保存、ワークスペース
   src/db/               SQLite
   src/utils/            エラー型、パスのサンドボックス
   src/tray.rs           メニューバー常駐
