@@ -63,7 +63,7 @@ export default function CopyConfirmModal({ request, targets, onClose, onCopied }
         role="dialog"
         aria-modal="true"
         aria-labelledby="copy-title"
-        className="w-full max-w-md rounded-xl border border-destructive/40 bg-card/80 p-5 text-sm shadow-2xl backdrop-blur-md"
+        className="max-h-full w-full max-w-md overflow-y-auto rounded-xl border border-destructive/40 bg-card/80 p-5 text-sm shadow-2xl backdrop-blur-md"
       >
         <h2 id="copy-title" className="text-base font-medium">
           {t("設定のコピー")}

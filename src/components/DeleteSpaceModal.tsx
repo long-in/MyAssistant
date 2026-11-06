@@ -57,7 +57,7 @@ export default function DeleteSpaceModal({ space, onClose, onDeleted }: Props) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="delete-space-title"
-        className="w-full max-w-md rounded-xl border border-destructive/40 bg-card/80 p-5 text-sm shadow-2xl backdrop-blur-md"
+        className="max-h-full w-full max-w-md overflow-y-auto rounded-xl border border-destructive/40 bg-card/80 p-5 text-sm shadow-2xl backdrop-blur-md"
       >
         <h2 id="delete-space-title" className="text-base font-medium">
           {t("スペースの削除")}
