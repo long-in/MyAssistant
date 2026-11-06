@@ -1,0 +1,110 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { ArrowRight, Loader2, TriangleAlert } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { PERSONAL_ID, copyWorkspaceSettings, errorMessage, type CopyReport } from "@/lib/api";
+import type { CopyRequest, CopyTarget } from "@/lib/copyTargets";
+import SpaceChip from "./SpaceChip";
+
+type Props = {
+  request: CopyRequest;
+  targets: CopyTarget[];
+  /** 閉じる(取りやめ、または実行後)。 */
+  onClose: () => void;
+  /** コピーに成功した。 */
+  onCopied: (report: CopyReport, request: CopyRequest) => void;
+};
+
+/**
+ * 設定のコピーの最終確認。コピー先の同じ設定は上書きされ、元に戻せないため、実行前に必ずここで確かめる。
+ * 既定のフォーカスは「Cancel」。実行中は閉じられない。
+ */
+export default function CopyConfirmModal({ request, targets, onClose, onCopied }: Props) {
+  const [busy, setBusy] = useState(false);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const from = targets.find((t) => t.id === request.from);
+  const to = targets.find((t) => t.id === request.to);
+
+  useEffect(() => {
+    cancelRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !busy) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onClose]);
+
+  // どちらかが存在しなくなっていたら(削除など)、実行させない
+  if (!from || !to) return null;
+
+  const run = async () => {
+    setBusy(true);
+    try {
+      const report = await copyWorkspaceSettings(request.from, request.to, request.includeKeys, request.includeProfile);
+      onCopied(report, request);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setBusy(false);
+      onClose();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/40 p-6 backdrop-blur-sm">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="copy-title"
+        className="w-full max-w-md rounded-xl border border-destructive/40 bg-card/80 p-5 text-sm shadow-2xl backdrop-blur-md"
+      >
+        <h2 id="copy-title" className="text-base font-medium">
+          Copy settings
+        </h2>
+        <div className="mt-3 flex items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 font-medium">
+          <SpaceChip name={from.name} color={from.color} />
+          <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
+          <SpaceChip name={to.name} color={to.color} />
+        </div>
+
+        <p className="mt-4 text-xs font-medium text-muted-foreground">Copied</p>
+        <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs">
+          <li>Settings: models, voice, wake words, tuning, knowledge batch, debug mode</li>
+          <li>Command permissions</li>
+          <li>Bedrock model list</li>
+          {request.includeKeys && <li className="font-medium text-destructive">API keys (Anthropic, AWS, Google, Aqua)</li>}
+          {request.includeProfile && <li className="font-medium text-destructive">Personal data</li>}
+        </ul>
+        <p className="mt-3 text-xs font-medium text-muted-foreground">Not copied</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Knowledge, conversations, the pronunciation dictionary and the knowledge / debug log locations
+          {request.includeKeys ? "" : ", API keys"}
+          {request.includeProfile ? "" : ", personal data"}.
+        </p>
+
+        <div className="mt-4 flex items-start gap-2 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-xs">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
+          <p>
+            The same settings in <strong>{to.name}</strong> are <strong>overwritten</strong>
+            {to.id === PERSONAL_ID ? " (this is your existing Personal agent)" : ""}. This cannot be undone.
+          </p>
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <Button ref={cancelRef} type="button" variant="outline" disabled={busy} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="button" variant="destructive" disabled={busy} onClick={() => void run()}>
+            {busy && <Loader2 className="animate-spin" />}
+            Overwrite and copy
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}

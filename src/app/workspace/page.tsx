@@ -3,26 +3,32 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { ArrowRight, Check, Copy, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Check, Pencil, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
+import CopyConfirmModal from "@/components/CopyConfirmModal";
+import CopyOptions from "@/components/CopyOptions";
+import CopySettingsCard from "@/components/CopySettingsCard";
+import SpaceChip from "@/components/SpaceChip";
 import {
   MAX_SPACES,
   PERSONAL_ID,
   SPACE_NAME_MAX,
-  copyWorkspaceSettings,
   createSpace,
   deleteSpace,
   errorMessage,
   updateSpace,
   type Space,
 } from "@/lib/api";
+import { type CopyRequest, copyTargets } from "@/lib/copyTargets";
 import { cn } from "@/lib/utils";
 import { bumpSettingsVersion, refreshWorkspace, switchTo, useWorkspace } from "@/lib/workspace";
+
+/** 作成フォームで、設定をコピーしないことを表す選択肢の値。 */
+const NO_COPY = "none";
 
 export default function WorkspacePage() {
   const router = useRouter();
@@ -31,11 +37,14 @@ export default function WorkspacePage() {
   const [name, setName] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // 設定のコピー。コピー先は、選んでいなければ選択中のワークスペース。コピー元は、選んでいなければコピー先以外の先頭
-  const [copyFrom, setCopyFrom] = useState<string | null>(null);
-  const [copyTo, setCopyTo] = useState<string | null>(null);
-  const [withKeys, setWithKeys] = useState(false);
-  const [withProfile, setWithProfile] = useState(false);
+  // 作成と同時に行う設定のコピー(コピー元。コピーしないときは`NO_COPY`)
+  const [createFrom, setCreateFrom] = useState(NO_COPY);
+  const [createKeys, setCreateKeys] = useState(false);
+  const [createProfile, setCreateProfile] = useState(false);
+  // 最終確認を待っているコピー。確認のモーダルは、このページで1つだけ出す
+  const [copyRequest, setCopyRequest] = useState<CopyRequest | null>(null);
+  // 作ったばかりのスペース。設定のコピー先の候補にする
+  const [justCreated, setJustCreated] = useState<string | null>(null);
   const full = spaces.length >= MAX_SPACES;
   // ほかのスペースが使っている色は選べない(編集中は自分の色を除く)。選んだ色が使えなければ、空いている先頭の色にする
   const usedBy = new Map(spaces.filter((p) => p.id !== editing).map((p) => [p.color, p.name]));
@@ -45,6 +54,9 @@ export default function WorkspacePage() {
     setEditing(null);
     setName("");
     setPicked(null);
+    setCreateFrom(NO_COPY);
+    setCreateKeys(false);
+    setCreateProfile(false);
   };
 
   const startEdit = (p: Space) => {
@@ -64,8 +76,15 @@ export default function WorkspacePage() {
       } else {
         const created = await createSpace(name, color);
         await refreshWorkspace();
-        await switchTo(created.id); // 作ったらそのまま開く。APIキーが未登録なら設定画面へ案内される
-        toast.success("Created the space.");
+        // 作成後は切り替えない(画面が作り直されて、入力中の内容や選択が失われるため)。開くのは、一覧の「Open」から
+        setJustCreated(created.id);
+        if (createFrom !== NO_COPY) {
+          // 設定のコピーを選んでいたら、作成のあとに最終確認を出す(取りやめても、スペースは作成済みのまま)
+          setCopyRequest({ from: createFrom, to: created.id, includeKeys: createKeys, includeProfile: createProfile });
+          toast.success("Created the space.");
+        } else {
+          toast.success("Created the space.", { description: "To bring over settings, use “Copy settings” below." });
+        }
         reset();
       }
     } catch (e) {
@@ -96,30 +115,11 @@ export default function WorkspacePage() {
     }
   };
 
-  const targets = [
-    { id: PERSONAL_ID, name: "Personal", color: null as string | null },
-    ...spaces.map((p) => ({ id: p.id, name: p.name, color: p.color as string | null })),
-  ];
-  const to = targets.find((x) => x.id === copyTo)?.id ?? active.id;
-  const from = targets.find((x) => x.id === copyFrom && x.id !== to)?.id ?? targets.find((x) => x.id !== to)?.id ?? "";
-  const nameOf = (id: string) => targets.find((x) => x.id === id)?.name ?? "";
+  const targets = copyTargets(spaces);
 
-  const copy = async () => {
-    const ok = await ask(
-      `Copy the settings of "${nameOf(from)}" to "${nameOf(to)}"? The same items in "${nameOf(to)}" are overwritten. ${withKeys ? "API keys are also saved in the destination. " : ""}Continue?`,
-      { title: "Copy settings", kind: "warning" },
-    );
-    if (!ok) return;
-    setBusy(true);
-    try {
-      const r = await copyWorkspaceSettings(from, to, withKeys, withProfile);
-      if (to === active.id) bumpSettingsVersion();
-      toast.success(`Copied ${r.settings} settings.` + (r.keys > 0 ? ` (${r.keys} API keys)` : ""));
-    } catch (e) {
-      toast.error(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
+  const copied = (r: { settings: number; keys: number }, req: CopyRequest) => {
+    toast.success(`Copied ${r.settings} settings.` + (r.keys > 0 ? ` (${r.keys} API keys)` : ""));
+    if (req.to === active.id) bumpSettingsVersion(); // 選択中のスペースへコピーしたら、設定画面などを読み直す
   };
 
   const canSubmit = !busy && name.trim().length > 0 && color !== "" && (editing !== null || !full);
@@ -177,6 +177,36 @@ export default function WorkspacePage() {
                 );
               })}
             </div>
+            {!editing && (
+              <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-3">
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">Copy settings from</span>
+                  <Select
+                    items={[{ value: NO_COPY, label: "Don't copy" }, ...targets.map((t) => ({ value: t.id, label: t.name }))]}
+                    value={createFrom}
+                    onValueChange={(v) => v && setCreateFrom(v as string)}
+                  >
+                    <SelectTrigger className="min-w-40" aria-label="Copy settings from (optional)">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_COPY}>Don&apos;t copy</SelectItem>
+                      {targets.map((t) => (
+                        <SelectItem key={t.id} value={t.id}>
+                          <SpaceChip name={t.name} color={t.color} />
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {createFrom !== NO_COPY && (
+                  <>
+                    <CopyOptions includeKeys={createKeys} includeProfile={createProfile} onKeys={setCreateKeys} onProfile={setCreateProfile} />
+                    <p className="text-xs text-muted-foreground">You confirm once more after the space is created.</p>
+                  </>
+                )}
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <Button onClick={() => void submit()} disabled={!canSubmit}>
                 {editing ? <Check /> : <Plus />}
@@ -195,65 +225,7 @@ export default function WorkspacePage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Copy settings</CardTitle>
-            <CardDescription>
-              {"Copies the settings of Personal or another space as is. Models, voice, wake words, command permissions and similar settings are copied; knowledge, conversations and the pronunciation dictionary are not."}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <Select items={targets.filter((x) => x.id !== to).map((x) => ({ value: x.id, label: x.name }))} value={from} onValueChange={(v) => v && setCopyFrom(v as string)}>
-                <SelectTrigger className="min-w-40" aria-label="Copy from">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {targets.filter((x) => x.id !== to).map((x) => (
-                    <SelectItem key={x.id} value={x.id}>
-                      {x.color && <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: x.color }} />}
-                      {x.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <ArrowRight className="size-4 text-muted-foreground" />
-              <Select items={targets.map((x) => ({ value: x.id, label: x.name }))} value={to} onValueChange={(v) => v && setCopyTo(v as string)}>
-                <SelectTrigger className="min-w-40" aria-label="Copy to">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {targets.map((x) => (
-                    <SelectItem key={x.id} value={x.id}>
-                      {x.color && <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: x.color }} />}
-                      {x.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <label className="flex items-center justify-between gap-4 text-sm">
-              <span>
-                {"Also copy API keys"}
-                <span className="block text-xs text-muted-foreground">Saves the Anthropic, AWS, Google and Aqua keys in the destination too (the same keys there are overwritten).</span>
-              </span>
-              <Switch checked={withKeys} onCheckedChange={setWithKeys} />
-            </label>
-            <label className="flex items-center justify-between gap-4 text-sm">
-              <span>
-                {"Also copy personal data"}
-                <span className="block text-xs text-muted-foreground">Name, how to address you, birthday and so on. You normally should not copy these to a work space.</span>
-              </span>
-              <Switch checked={withProfile} onCheckedChange={setWithProfile} />
-            </label>
-            <div>
-              <Button onClick={() => void copy()} disabled={busy || from === ""}>
-                <Copy />
-                {"Copy"}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+        <CopySettingsCard targets={targets} suggestedTo={justCreated} onRequest={setCopyRequest} />
 
         <Card>
           <CardHeader>
@@ -289,6 +261,9 @@ export default function WorkspacePage() {
           </CardContent>
         </Card>
       </div>
+      {copyRequest && (
+        <CopyConfirmModal request={copyRequest} targets={targets} onClose={() => setCopyRequest(null)} onCopied={copied} />
+      )}
     </div>
   );
 }
