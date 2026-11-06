@@ -1,7 +1,8 @@
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{
     commands::chat::SessionContexts,
+    tray,
     services::{
         debug_log,
         settings_transfer::{self, CopyOptions, CopyReport},
@@ -30,8 +31,10 @@ pub fn get_active_workspace(ws: State<'_, Workspaces>) -> ActiveWorkspace {
 
 /// プロジェクトを作る(上限30件)。選択はしない。
 #[tauri::command]
-pub fn create_project(ws: State<'_, Workspaces>, name: String, color: String) -> Result<Project, AppError> {
-    ws.create(&name, &color)
+pub fn create_project(app: AppHandle, ws: State<'_, Workspaces>, name: String, color: String) -> Result<Project, AppError> {
+    let project = ws.create(&name, &color)?;
+    tray::refresh(&app); // メニューバー・トレイのProjectsに加える
+    Ok(project)
 }
 
 /// プロジェクトの名称とイメージカラーを変える。選択中なら画面へ通知する。
@@ -47,6 +50,7 @@ pub fn update_project(
     if ws.active_info().id == id {
         let _ = app.emit(WORKSPACE_CHANGED_EVENT, ws.active_info());
     }
+    tray::refresh(&app);
     Ok(project)
 }
 
@@ -66,6 +70,7 @@ pub fn delete_project(
     } else {
         // 一覧が変わったことは、選択中でなくても画面へ知らせる
         let _ = app.emit(WORKSPACE_CHANGED_EVENT, ws.active_info());
+        tray::refresh(&app);
     }
     Ok(ws.active_info())
 }
@@ -99,10 +104,20 @@ pub fn copy_workspace_settings(
     result
 }
 
-/// デバッグログの出力先を切替先に合わせ、画面へ通知する。
+/// メニューバー・トレイの「Projects」から切り替える。画面には `workspace-changed` で伝わる。
+pub fn switch_from_menu(app: &AppHandle, id: &str) {
+    let ws = app.state::<Workspaces>();
+    match ws.switch(id) {
+        Ok(_) => refresh_after_switch(app, &ws),
+        Err(e) => log::warn!("workspace switch from menu failed: {e}"),
+    }
+}
+
+/// デバッグログの出力先を切替先に合わせ、メニューバー・トレイの表示を更新し、画面へ通知する。
 fn refresh_after_switch(app: &AppHandle, ws: &Workspaces) {
     if let Err(e) = debug_log::refresh(&ws.active()) {
         log::warn!("debug log refresh failed: {e}");
     }
+    tray::refresh(app);
     let _ = app.emit(WORKSPACE_CHANGED_EVENT, ws.active_info());
 }

@@ -60,12 +60,14 @@ export const ERROR_MESSAGES: Record<string, string> = {
   mfa_required: "MFAコードが入力されませんでした。もう一度お試しください。",
   invalid_dictionary: "読み上げ辞書のJSONを取り込めませんでした。[{\"word\": \"語\", \"reading\": \"読み\"}] の形式で、ファイルは1MB以下にしてください。",
   invalid_settings: "設定ファイルの形式が正しくありません。このアプリが書き出したファイルを選んでください。",
-  invalid_project: "プロジェクトの名称(1〜40文字)またはイメージカラーが正しくありません。",
+  // ワークスペース(プロジェクト管理)の画面に出る文言。表記は英語に固定している
+  invalid_project: "Invalid project name (1-40 characters) or color.",
+  reserved_name: "That name is reserved. Choose a different project name.",
+  name_in_use: "Another project already uses that name. Choose a different one.",
+  color_in_use: "Another project already uses that color. Choose a different one.",
+  project_limit: "You can have up to 30 projects. Delete the ones you no longer need.",
+  project_not_found: "Project not found.",
   path_in_use: "その場所は、ほかのワークスペースのナレッジまたはデバッグログの保存先と重なっています。別の場所を選んでください。",
-  name_in_use: "その名称は、ほかのプロジェクトがすでに使っています。別の名称にしてください。",
-  color_in_use: "その色は、ほかのプロジェクトがすでに使っています。別の色を選んでください。",
-  project_limit: "プロジェクトは30件までです。不要なプロジェクトを削除してください。",
-  project_not_found: "プロジェクトが見つかりません。",
 };
 
 export function errorMessage(e: unknown): string {
@@ -115,7 +117,16 @@ export type AwsStatus = {
 
 /** MFAコードの入力を求めるイベント(Bedrock呼び出しはコードが届くまで待つ)。 */
 export const AWS_MFA_EVENT = "aws-mfa-required";
-export type AwsMfaPrompt = { profile: string; mfa_serial: string; error: string | null };
+export type AwsMfaPrompt = {
+  profile: string;
+  mfa_serial: string;
+  error: string | null;
+  /** コードを求めているワークスペース(`personal`またはプロジェクトID)。コードはこのIDで返す。 */
+  workspace_id: string;
+  /** プロジェクトの名称とイメージカラー。パーソナルは`null`。 */
+  workspace_name: string | null;
+  workspace_color: string | null;
+};
 
 export const getAwsStatus = () => invoke<AwsStatus>("get_aws_status");
 /** 貼り付け中の内容から読み取れるプロファイル一覧(保存しない)。 */
@@ -131,8 +142,9 @@ export const removeAwsModel = (model: string) => invoke<AwsStatus>("remove_aws_m
 export const selectAwsProfile = (name: string) => invoke<AwsStatus>("select_aws_profile", { name });
 /** 認証からモデル呼び出しまで通しで確認する。MFAが必要なら`AWS_MFA_EVENT`が飛び、コード入力まで待つ。 */
 export const testAwsConnection = () => invoke<AwsStatus>("test_aws_connection");
-export const submitAwsMfa = (code: string) => invoke<void>("submit_aws_mfa", { code });
-export const cancelAwsMfa = () => invoke<void>("cancel_aws_mfa");
+/** コードは、求めたワークスペースへ返す(選択中とは限らない)。 */
+export const submitAwsMfa = (workspaceId: string, code: string) => invoke<void>("submit_aws_mfa", { workspaceId, code });
+export const cancelAwsMfa = (workspaceId: string) => invoke<void>("cancel_aws_mfa", { workspaceId });
 
 export type Route = { provider: Provider; model: string };
 

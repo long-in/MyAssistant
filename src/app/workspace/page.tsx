@@ -21,12 +21,10 @@ import {
   updateProject,
   type Project,
 } from "@/lib/api";
-import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { bumpSettingsVersion, refreshWorkspace, switchTo, useWorkspace } from "@/lib/workspace";
 
 export default function WorkspacePage() {
-  const t = useT();
   const router = useRouter();
   const { active, projects, palette } = useWorkspace();
   const [editing, setEditing] = useState<string | null>(null); // 編集中のプロジェクトID。nullなら新規作成
@@ -61,13 +59,13 @@ export default function WorkspacePage() {
       if (editing) {
         await updateProject(editing, name, color);
         await refreshWorkspace();
-        toast.success(t("プロジェクトを更新しました。"));
+        toast.success("Updated the project.");
         reset();
       } else {
         const created = await createProject(name, color);
         await refreshWorkspace();
         await switchTo(created.id); // 作ったらそのまま開く。APIキーが未登録なら設定画面へ案内される
-        toast.success(t("プロジェクトを作成しました。"));
+        toast.success("Created the project.");
         reset();
       }
     } catch (e) {
@@ -84,22 +82,22 @@ export default function WorkspacePage() {
 
   const remove = async (p: Project) => {
     const ok = await ask(
-      t("プロジェクト「{name}」を削除します。会話・設定・APIキーと、既定の場所のナレッジがすべて削除され、元に戻せません。独自に指定したナレッジの保存先は削除されません。続行しますか?", { name: p.name }),
-      { title: t("プロジェクトの削除"), kind: "warning" },
+      `Delete the project "${p.name}"? Its conversations, settings, API keys and the knowledge in the default location are all deleted and this cannot be undone. A knowledge location you specified yourself is not deleted. Continue?`,
+      { title: "Delete project", kind: "warning" },
     );
     if (!ok) return;
     try {
       await deleteProject(p.id);
       await refreshWorkspace();
       if (editing === p.id) reset();
-      toast.success(t("プロジェクトを削除しました。"));
+      toast.success("Deleted the project.");
     } catch (e) {
       toast.error(errorMessage(e));
     }
   };
 
   const targets = [
-    { id: PERSONAL_ID, name: t("パーソナル"), color: null as string | null },
+    { id: PERSONAL_ID, name: "Personal", color: null as string | null },
     ...projects.map((p) => ({ id: p.id, name: p.name, color: p.color as string | null })),
   ];
   const to = targets.find((x) => x.id === copyTo)?.id ?? active.id;
@@ -108,19 +106,15 @@ export default function WorkspacePage() {
 
   const copy = async () => {
     const ok = await ask(
-      t("「{from}」の設定を「{to}」へコピーします。「{to}」の同じ項目は上書きされます。{extra}続行しますか?", {
-        from: nameOf(from),
-        to: nameOf(to),
-        extra: withKeys ? t("APIキーもコピー先に保存されます。") : "",
-      }),
-      { title: t("設定のコピー"), kind: "warning" },
+      `Copy the settings of "${nameOf(from)}" to "${nameOf(to)}"? The same items in "${nameOf(to)}" are overwritten. ${withKeys ? "API keys are also saved in the destination. " : ""}Continue?`,
+      { title: "Copy settings", kind: "warning" },
     );
     if (!ok) return;
     setBusy(true);
     try {
       const r = await copyWorkspaceSettings(from, to, withKeys, withProfile);
       if (to === active.id) bumpSettingsVersion();
-      toast.success(t("設定を{count}件コピーしました。", { count: r.settings }) + (r.keys > 0 ? t("(APIキー{keys}件)", { keys: r.keys }) : ""));
+      toast.success(`Copied ${r.settings} settings.` + (r.keys > 0 ? ` (${r.keys} API keys)` : ""));
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -135,32 +129,29 @@ export default function WorkspacePage() {
       <div className="mx-auto flex max-w-2xl flex-col gap-5 px-6 py-10">
         <div>
           <p className="hud-label mb-1">{"// Work"}</p>
-          <h1 className="text-2xl font-semibold tracking-tight">{t("プロジェクト")}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {t("ワークのプロジェクトは、それぞれが独立したエージェントです。会話・ナレッジ・設定・APIキーは、プロジェクト同士でも、パーソナルとも共有されません。")}
+            {"Each Work project is an independent agent. Conversations, knowledge, settings and API keys are not shared between projects or with Personal."}
           </p>
         </div>
 
         <Card>
           <CardHeader>
-            <CardTitle>{editing ? t("プロジェクトを編集") : t("プロジェクトを作成")}</CardTitle>
+            <CardTitle>{editing ? "Edit project" : "Create a project"}</CardTitle>
             <CardDescription>
-              {t("名称とイメージカラーは、どのエージェントと話しているかを見分けるために表示されます。色はプロジェクトごとに重複できません。({count}/{max}件)", {
-                count: projects.length,
-                max: MAX_PROJECTS,
-              })}
+              {`The name and image color are shown so you can tell which agent you are talking to. Each project needs its own name and color, and names like "Personal" and "Work" are reserved. (${projects.length}/${MAX_PROJECTS})`}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <Input
               value={name}
               maxLength={PROJECT_NAME_MAX}
-              placeholder={t("プロジェクト名")}
-              aria-label={t("プロジェクト名")}
+              placeholder="Project name"
+              aria-label="Project name"
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && canSubmit && void submit()}
             />
-            <div className="grid grid-cols-10 gap-2" role="radiogroup" aria-label={t("イメージカラー")}>
+            <div className="grid grid-cols-10 gap-2" role="radiogroup" aria-label="Image color">
               {palette.map((c) => {
                 const owner = usedBy.get(c);
                 return (
@@ -169,8 +160,8 @@ export default function WorkspacePage() {
                     type="button"
                     role="radio"
                     aria-checked={color === c}
-                    aria-label={owner ? t("{color}(使用中: {name})", { color: c, name: owner }) : c}
-                    title={owner ? t("使用中: {name}", { name: owner }) : c}
+                    aria-label={owner ? `${c} (in use: ${owner})` : c}
+                    title={owner ? `In use: ${owner}` : c}
                     disabled={owner !== undefined}
                     onClick={() => setPicked(c)}
                     className={cn(
@@ -189,16 +180,16 @@ export default function WorkspacePage() {
             <div className="flex items-center gap-2">
               <Button onClick={() => void submit()} disabled={!canSubmit}>
                 {editing ? <Check /> : <Plus />}
-                {editing ? t("保存") : t("作成")}
+                {editing ? "Save" : "Create"}
               </Button>
               {editing && (
                 <Button variant="outline" onClick={reset}>
                   <X />
-                  {t("キャンセル")}
+                  {"Cancel"}
                 </Button>
               )}
               {full && !editing && (
-                <span className="text-xs text-destructive">{t("プロジェクトは30件までです。不要なプロジェクトを削除してください。")}</span>
+                <span className="text-xs text-destructive">You can have up to 30 projects. Delete the ones you no longer need.</span>
               )}
             </div>
           </CardContent>
@@ -206,15 +197,15 @@ export default function WorkspacePage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>{t("設定のコピー")}</CardTitle>
+            <CardTitle>Copy settings</CardTitle>
             <CardDescription>
-              {t("ほかのパーソナル・プロジェクトの設定を、そのまま写します。モデル・音声・起動ワード・コマンド権限などが対象で、ナレッジ・会話・読み上げ辞書は写しません。")}
+              {"Copies the settings of another Personal space or project as is. Models, voice, wake words, command permissions and similar settings are copied; knowledge, conversations and the pronunciation dictionary are not."}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <div className="flex flex-wrap items-center gap-2">
               <Select items={targets.filter((x) => x.id !== to).map((x) => ({ value: x.id, label: x.name }))} value={from} onValueChange={(v) => v && setCopyFrom(v as string)}>
-                <SelectTrigger className="min-w-40" aria-label={t("コピー元")}>
+                <SelectTrigger className="min-w-40" aria-label="Copy from">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -228,7 +219,7 @@ export default function WorkspacePage() {
               </Select>
               <ArrowRight className="size-4 text-muted-foreground" />
               <Select items={targets.map((x) => ({ value: x.id, label: x.name }))} value={to} onValueChange={(v) => v && setCopyTo(v as string)}>
-                <SelectTrigger className="min-w-40" aria-label={t("コピー先")}>
+                <SelectTrigger className="min-w-40" aria-label="Copy to">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -243,22 +234,22 @@ export default function WorkspacePage() {
             </div>
             <label className="flex items-center justify-between gap-4 text-sm">
               <span>
-                {t("APIキーもコピーする")}
-                <span className="block text-xs text-muted-foreground">{t("Anthropic・AWS・Google・Aquaのキーを、コピー先にも保存します(コピー先の同じキーは上書き)。")}</span>
+                {"Also copy API keys"}
+                <span className="block text-xs text-muted-foreground">Saves the Anthropic, AWS, Google and Aqua keys in the destination too (the same keys there are overwritten).</span>
               </span>
               <Switch checked={withKeys} onCheckedChange={setWithKeys} />
             </label>
             <label className="flex items-center justify-between gap-4 text-sm">
               <span>
-                {t("パーソナルデータもコピーする")}
-                <span className="block text-xs text-muted-foreground">{t("名前・呼ばれ方・誕生日など。仕事用のプロジェクトへは、通常コピーしないでください。")}</span>
+                {"Also copy personal data"}
+                <span className="block text-xs text-muted-foreground">Name, how to address you, birthday and so on. You normally should not copy these to a work project.</span>
               </span>
               <Switch checked={withProfile} onCheckedChange={setWithProfile} />
             </label>
             <div>
               <Button onClick={() => void copy()} disabled={busy || from === ""}>
                 <Copy />
-                {t("コピーする")}
+                {"Copy"}
               </Button>
             </div>
           </CardContent>
@@ -266,10 +257,10 @@ export default function WorkspacePage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>{t("プロジェクト一覧")}</CardTitle>
+            <CardTitle>Project list</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col divide-y">
-            {projects.length === 0 && <p className="py-3 text-sm text-muted-foreground">{t("まだプロジェクトがありません。")}</p>}
+            {projects.length === 0 && <p className="py-3 text-sm text-muted-foreground">No projects yet.</p>}
             {projects.map((p) => {
               const current = active.id === p.id && active.id !== PERSONAL_ID;
               return (
@@ -277,18 +268,18 @@ export default function WorkspacePage() {
                   <div className="flex min-w-0 items-center gap-3">
                     <span className="size-4 shrink-0 rounded-full" style={{ backgroundColor: p.color }} />
                     <span className="truncate text-sm font-medium">{p.name}</span>
-                    {current && <span className="shrink-0 text-xs text-muted-foreground">{t("選択中")}</span>}
+                    {current && <span className="shrink-0 text-xs text-muted-foreground">Selected</span>}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
                     {!current && (
                       <Button size="sm" variant="outline" onClick={() => void open(p.id)}>
-                        {t("開く")}
+                        {"Open"}
                       </Button>
                     )}
-                    <Button size="icon" variant="ghost" title={t("編集")} aria-label={t("編集")} onClick={() => startEdit(p)}>
+                    <Button size="icon" variant="ghost" title="Edit" aria-label="Edit" onClick={() => startEdit(p)}>
                       <Pencil />
                     </Button>
-                    <Button size="icon" variant="ghost" title={t("削除")} aria-label={t("削除")} onClick={() => void remove(p)}>
+                    <Button size="icon" variant="ghost" title="Delete" aria-label="Delete" onClick={() => void remove(p)}>
                       <Trash2 />
                     </Button>
                   </div>

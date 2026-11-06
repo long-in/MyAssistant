@@ -9,7 +9,7 @@ import Chat from "@/components/Chat";
 import MfaModal from "@/components/MfaModal";
 import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
 import { DEBUG_MODE_EVENT, PERSONAL_ID, getDebugMode, getKeyStatus, setTrayLanguage } from "@/lib/api";
-import { useLang, useT } from "@/lib/i18n";
+import { useLang } from "@/lib/i18n";
 import { matchShortcut, type ShortcutId } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
 import { startWorkspaceSync, useWorkspace } from "@/lib/workspace";
@@ -37,7 +37,6 @@ const COLLAPSED_KEY = "sidebarCollapsed";
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const t = useT();
   const lang = useLang();
   const [debug, setDebug] = useState(false);
   const [chatReady, setChatReady] = useState(false);

@@ -201,8 +201,14 @@ pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result
     }
     let v = validate(&file)?;
 
-    let keys_backup = opts.include_keys.then(|| to.secrets.backup());
-    let keys = if opts.include_keys { to.secrets.copy_from(&from.secrets)? } else { 0 };
+    // キーは選んだときだけ写す。Bedrockのモデル一覧は秘密ではない設定項目なので、キーなしでも写す(失敗したら戻す)
+    let keys_backup = to.secrets.backup();
+    let keys = if opts.include_keys {
+        to.secrets.copy_from(&from.secrets)?
+    } else {
+        to.secrets.copy_aws_models_from(&from.secrets)?;
+        0
+    };
     let policy_root = batch::knowledge_root(to);
     let prev_policy = v.policy.as_ref().and_then(|_| policy_root.as_ref().ok()).map(|root| command_policy::load(root));
     let written = (|| {
@@ -220,9 +226,7 @@ pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result
         {
             log::warn!("command policy not restored: {err}");
         }
-        if let Some(backup) = keys_backup
-            && let Err(err) = to.secrets.restore(backup)
-        {
+        if let Err(err) = to.secrets.restore(keys_backup) {
             log::warn!("secrets not restored: {err}");
         }
         return Err(e);
@@ -394,5 +398,23 @@ mod tests {
         assert!(b.secrets.has_aqua_key().unwrap(), "元からあったキーは残る");
         let policy = command_policy::load(&batch::knowledge_root(&b).unwrap());
         assert!(!policy.allow.contains(&"mytool".to_owned()), "コマンド権限も戻る");
+    }
+
+    #[test]
+    fn bedrock_models_are_copied_even_without_keys() {
+        let (_da, a) = ctx("a");
+        let (_db, b) = ctx("b");
+        a.secrets.set_aws_models(r#"["global.anthropic.claude-sonnet-5-5"]"#).unwrap();
+        a.secrets.set_tts_key("tts-a").unwrap();
+        let report = copy(&a, &b, CopyOptions::default()).unwrap();
+        assert_eq!(report.keys, 0, "キーの件数には含めない");
+        assert_eq!(b.secrets.get_aws_models().unwrap().as_deref(), Some(r#"["global.anthropic.claude-sonnet-5-5"]"#));
+        assert!(!b.secrets.has_tts_key().unwrap(), "キーは写さない");
+        assert!(!b.secrets.has_aws().unwrap(), "AWSの認証情報は写さない");
+        // コピー元に一覧が無ければ、コピー先の一覧はそのまま
+        let (_dc, c) = ctx("c");
+        b.secrets.set_aws_models("[\"keep\"]").unwrap();
+        copy(&c, &b, CopyOptions::default()).unwrap();
+        assert_eq!(b.secrets.get_aws_models().unwrap().as_deref(), Some("[\"keep\"]"));
     }
 }

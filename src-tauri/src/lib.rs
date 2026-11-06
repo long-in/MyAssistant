@@ -14,52 +14,11 @@ use tauri::{Manager, RunEvent};
 /// 終了時バッチの待ち時間上限。
 const EXIT_BATCH_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// macOS のメニューバー。OS の言語に関わらず英語表記に固定する。
-fn app_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
-  use tauri::menu::{Menu, PredefinedMenuItem as P, Submenu};
-  let app_sub = Submenu::with_items(
-    app,
-    "MyAssistant",
-    true,
-    &[
-      &P::about(app, Some("About MyAssistant"), None)?,
-      &P::separator(app)?,
-      &P::services(app, Some("Services"))?,
-      &P::separator(app)?,
-      &P::hide(app, Some("Hide MyAssistant"))?,
-      &P::hide_others(app, Some("Hide Others"))?,
-      &P::separator(app)?,
-      &P::quit(app, Some("Quit MyAssistant"))?,
-    ],
-  )?;
-  let edit = Submenu::with_items(
-    app,
-    "Edit",
-    true,
-    &[
-      &P::undo(app, Some("Undo"))?,
-      &P::redo(app, Some("Redo"))?,
-      &P::separator(app)?,
-      &P::cut(app, Some("Cut"))?,
-      &P::copy(app, Some("Copy"))?,
-      &P::paste(app, Some("Paste"))?,
-      &P::select_all(app, Some("Select All"))?,
-    ],
-  )?;
-  let view = Submenu::with_items(app, "View", true, &[&P::fullscreen(app, Some("Enter Full Screen"))?])?;
-  let window = Submenu::with_items(
-    app,
-    "Window",
-    true,
-    &[&P::minimize(app, Some("Minimize"))?, &P::maximize(app, Some("Zoom"))?, &P::separator(app)?, &P::close_window(app, Some("Close Window"))?],
-  )?;
-  Menu::with_items(app, &[&app_sub, &edit, &view, &window])
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let app = tauri::Builder::default()
-    .menu(app_menu)
+    .menu(tray::app_menu)
+    .on_menu_event(|app, event| tray::on_app_menu_event(app, event.id().as_ref()))
     .plugin(tauri_plugin_dialog::init())
     .invoke_handler(tauri::generate_handler![
       tray::set_tray_language,
@@ -200,6 +159,8 @@ pub fn run() {
       }
 
       tray::setup(app.handle())?;
+      // メニューバーは状態の登録前に作られるため、プロジェクト一覧を含めて作り直す
+      tray::refresh(app.handle());
 
       // 整理バッチは、ワークスペースごとの間隔で独立して動かす
       services::scheduler::spawn(app.handle().clone());

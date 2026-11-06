@@ -5,7 +5,6 @@ import { Briefcase, User } from "lucide-react";
 import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PERSONAL_ID, errorMessage } from "@/lib/api";
-import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { switchTo, useWorkspace } from "@/lib/workspace";
 
@@ -21,7 +20,6 @@ function lastProject(): string | null {
 
 /** 左メニュー上部の、パーソナル / ワークの切り替えと、ワークのプロジェクト選択。`collapsed`はアイコンだけの表示。 */
 export default function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }) {
-  const t = useT();
   const router = useRouter();
   const { active, projects } = useWorkspace();
   const personal = active.id === PERSONAL_ID;
@@ -65,11 +63,11 @@ export default function WorkspaceSwitcher({ collapsed }: { collapsed: boolean })
   return (
     <div className={cn("mb-4 flex w-full flex-col gap-2 px-1", collapsed ? "items-center" : "md:px-0")}>
       <div className={cn("flex w-full rounded-md border bg-background/50 p-0.5", collapsed ? "flex-col" : "flex-col md:flex-row")}>
-        {modeButton(personal, () => void go(PERSONAL_ID), t("パーソナル"), <User className="size-3.5 shrink-0" />)}
+        {modeButton(personal, () => void go(PERSONAL_ID), "Personal", <User className="size-3.5 shrink-0" />)}
         {modeButton(
           !personal,
           openWork,
-          t("ワーク"),
+          "Work",
           <Briefcase className="size-3.5 shrink-0" style={active.project ? { color: active.project.color } : undefined} />,
         )}
       </div>
@@ -77,7 +75,7 @@ export default function WorkspaceSwitcher({ collapsed }: { collapsed: boolean })
         <Select items={items} value={active.id} onValueChange={(v) => v && void go(v as string)}>
           <SelectTrigger
             className={cn("hidden w-full", !collapsed && "md:flex")}
-            aria-label={t("プロジェクト")}
+            aria-label="Projects"
             style={{ borderColor: active.project?.color }}
           >
             <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: active.project?.color }} />
@@ -93,12 +91,26 @@ export default function WorkspaceSwitcher({ collapsed }: { collapsed: boolean })
           </SelectContent>
         </Select>
       )}
-      {!personal && active.project && collapsed && (
-        <span
-          className="size-3 rounded-full"
-          style={{ backgroundColor: active.project.color }}
-          title={active.project.name}
-        />
+      {!personal && active.project && collapsed && projects.length > 0 && (
+        // 畳んだメニューでは、色の丸を押してプロジェクトを選ぶ
+        <Select items={items} value={active.id} onValueChange={(v) => v && void go(v as string)}>
+          <SelectTrigger
+            className="size-8 justify-center rounded-full p-0 [&>svg:last-child]:hidden"
+            aria-label="Project"
+            title={active.project.name}
+            style={{ borderColor: active.project.color }}
+          >
+            <span className="size-3.5 rounded-full" style={{ backgroundColor: active.project.color }} />
+          </SelectTrigger>
+          <SelectContent>
+            {projects.map((p) => (
+              <SelectItem key={p.id} value={p.id}>
+                <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: p.color }} />
+                {p.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       )}
     </div>
   );

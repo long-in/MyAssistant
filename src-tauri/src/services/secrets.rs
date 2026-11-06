@@ -93,6 +93,17 @@ impl Secrets {
         Ok(count)
     }
 
+    /// Bedrockのモデル一覧(秘密ではない設定項目)だけを`src`から写す。キーは写さない。`src`に無ければ何もしない。
+    pub fn copy_aws_models_from(&self, src: &Secrets) -> Result<(), AppError> {
+        if std::ptr::eq(self, src) {
+            return Ok(());
+        }
+        match src.get_aws_models()? {
+            Some(models) => self.set_aws_models(&models),
+            None => Ok(()),
+        }
+    }
+
     /// 現在の保存内容を控える。`restore`で元へ戻すためのもので、中身は外から読めない。
     pub fn backup(&self) -> SecretsBackup {
         SecretsBackup(self.map().clone())

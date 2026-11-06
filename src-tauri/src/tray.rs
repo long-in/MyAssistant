@@ -1,10 +1,14 @@
 //! メニューバー(トレイ)常駐。ウィンドウを閉じてもプロセスは残し、トレイから再表示・終了する。
 
+use std::sync::Mutex;
+
 use tauri::{
   AppHandle, Emitter, Manager, WebviewWindow, WindowEvent,
-  menu::{Menu, MenuItem, PredefinedMenuItem},
+  menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
   tray::TrayIconBuilder,
 };
+
+use crate::services::workspace::{ActiveWorkspace, PERSONAL_ID, Workspaces};
 
 const MAIN_WINDOW: &str = "main";
 const MENU_SHOW: &str = "show";
@@ -17,6 +21,12 @@ const NAV_ITEMS: [(&str, &str, &str, &str); 4] = [
   ("nav-knowledge", "ナレッジ", "Knowledge", "/knowledge"),
   ("nav-shortcuts", "ショートカット", "Shortcuts", "/shortcuts"),
 ];
+
+/// ワークスペース項目のメニュー ID の接頭辞。続きは `personal` またはプロジェクトの ID。
+const WORKSPACE_PREFIX: &str = "ws:";
+
+/// トレイメニューの表示言語(`set_tray_language` で受け取った値)。メニューを作り直すときに使う。
+static LANG: Mutex<String> = Mutex::new(String::new());
 
 /// フロントエンドへ画面遷移を依頼するイベント名。ペイロードは遷移先パス。
 const NAVIGATE_EVENT: &str = "navigate";
@@ -36,6 +46,10 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     .on_menu_event(|app, event| match event.id.as_ref() {
       MENU_SHOW => show_main(app),
       MENU_QUIT => app.exit(0),
+      id if id.starts_with(WORKSPACE_PREFIX) => {
+        show_main(app);
+        on_app_menu_event(app, id);
+      }
       id => {
         if let Some((_, _, _, path)) = NAV_ITEMS.iter().find(|(item, ..)| *item == id) {
           show_main(app);
@@ -62,6 +76,12 @@ fn build_menu(app: &AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry>> {
   let en = lang == "en";
   let pick = |ja: &'static str, en_label: &'static str| if en { en_label } else { ja };
   let menu = Menu::new(app)?;
+  // いまのワークスペース(表示のみ)と、直接切り替えるためのProjects。ワークスペース関連の表記は英語に固定する
+  let (active, _) = workspace_state(app);
+  let name = active.project.as_ref().map_or("Personal", |p| p.name.as_str());
+  menu.append(&MenuItem::with_id(app, "ws-current", format!("Workspace: {name}"), false, None::<&str>)?)?;
+  menu.append(&projects_submenu(app)?)?;
+  menu.append(&PredefinedMenuItem::separator(app)?)?;
   menu.append(&MenuItem::with_id(app, MENU_SHOW, pick("MyAssistant を開く", "Open MyAssistant"), true, None::<&str>)?)?;
   menu.append(&PredefinedMenuItem::separator(app)?)?;
   for (id, ja, en_label, _) in NAV_ITEMS {
@@ -75,9 +95,103 @@ fn build_menu(app: &AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry>> {
 /// フロントエンドの表示言語に合わせて、トレイメニューを作り直す。
 #[tauri::command]
 pub fn set_tray_language(app: AppHandle, lang: String) -> Result<(), String> {
+  *LANG.lock().unwrap_or_else(|e| e.into_inner()) = lang.clone();
   let menu = build_menu(&app, &lang).map_err(|e| e.to_string())?;
   let tray = app.tray_by_id("main").ok_or("tray not found")?;
   tray.set_menu(Some(menu)).map_err(|e| e.to_string())
+}
+
+/// 選択中のワークスペースと、プロジェクト一覧。状態の登録前(起動の途中)はパーソナルだけ。
+fn workspace_state(app: &AppHandle) -> (ActiveWorkspace, Vec<crate::services::workspace::Project>) {
+  match app.try_state::<Workspaces>() {
+    Some(ws) => (ws.active_info(), ws.list()),
+    None => (ActiveWorkspace { id: PERSONAL_ID.to_owned(), project: None }, Vec::new()),
+  }
+}
+
+/// 「Projects」サブメニュー。パーソナルと各プロジェクトを並べ、選択中にチェックを付ける。クリックで、そのワークスペースへ切り替える。
+fn projects_submenu(app: &AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
+  let (active, projects) = workspace_state(app);
+  let personal = CheckMenuItem::with_id(app, format!("{WORKSPACE_PREFIX}{PERSONAL_ID}"), "Personal", true, active.id == PERSONAL_ID, None::<&str>)?;
+  let items = projects
+    .iter()
+    .map(|p| CheckMenuItem::with_id(app, format!("{WORKSPACE_PREFIX}{}", p.id), &p.name, true, active.id == p.id, None::<&str>))
+    .collect::<tauri::Result<Vec<_>>>()?;
+  let separator = PredefinedMenuItem::separator(app)?;
+  let mut all: Vec<&dyn IsMenuItem<tauri::Wry>> = vec![&personal];
+  if !items.is_empty() {
+    all.push(&separator);
+    all.extend(items.iter().map(|i| i as &dyn IsMenuItem<tauri::Wry>));
+  }
+  Submenu::with_items(app, "Projects", true, &all)
+}
+
+/// アプリのメニューバーと、トレイのメニューを作り直す。ワークスペースの切り替えや、プロジェクトの追加・名称変更・削除のあとに呼ぶ。
+pub fn refresh(app: &AppHandle) {
+  let lang = LANG.lock().unwrap_or_else(|e| e.into_inner()).clone();
+  match (build_menu(app, &lang), app.tray_by_id("main")) {
+    (Ok(menu), Some(tray)) => {
+      let _ = tray.set_menu(Some(menu));
+    }
+    (Err(e), _) => log::warn!("tray menu not rebuilt: {e}"),
+    _ => {}
+  }
+  match app_menu(app) {
+    Ok(menu) => {
+      let _ = app.set_menu(menu);
+    }
+    Err(e) => log::warn!("app menu not rebuilt: {e}"),
+  }
+}
+
+/// アプリのメニューバーの項目が選ばれたとき。「Projects」の項目なら、そのワークスペースへ切り替える。
+pub fn on_app_menu_event(app: &AppHandle, id: &str) {
+  if let Some(workspace_id) = id.strip_prefix(WORKSPACE_PREFIX) {
+    crate::commands::workspace::switch_from_menu(app, workspace_id);
+  }
+}
+
+/// macOS のメニューバー。OS の言語に関わらず英語表記に固定する。「Projects」から、パーソナルや各プロジェクトへ直接切り替えられる。
+pub fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+  use tauri::menu::{PredefinedMenuItem as P, Submenu};
+  let app_sub = Submenu::with_items(
+    app,
+    "MyAssistant",
+    true,
+    &[
+      &P::about(app, Some("About MyAssistant"), None)?,
+      &P::separator(app)?,
+      &P::services(app, Some("Services"))?,
+      &P::separator(app)?,
+      &P::hide(app, Some("Hide MyAssistant"))?,
+      &P::hide_others(app, Some("Hide Others"))?,
+      &P::separator(app)?,
+      &P::quit(app, Some("Quit MyAssistant"))?,
+    ],
+  )?;
+  let edit = Submenu::with_items(
+    app,
+    "Edit",
+    true,
+    &[
+      &P::undo(app, Some("Undo"))?,
+      &P::redo(app, Some("Redo"))?,
+      &P::separator(app)?,
+      &P::cut(app, Some("Cut"))?,
+      &P::copy(app, Some("Copy"))?,
+      &P::paste(app, Some("Paste"))?,
+      &P::select_all(app, Some("Select All"))?,
+    ],
+  )?;
+  let view = Submenu::with_items(app, "View", true, &[&P::fullscreen(app, Some("Enter Full Screen"))?])?;
+  let window = Submenu::with_items(
+    app,
+    "Window",
+    true,
+    &[&P::minimize(app, Some("Minimize"))?, &P::maximize(app, Some("Zoom"))?, &P::separator(app)?, &P::close_window(app, Some("Close Window"))?],
+  )?;
+  let projects = projects_submenu(app)?;
+  Menu::with_items(app, &[&app_sub, &edit, &view, &projects, &window])
 }
 
 /// メインウィンドウを前面に出す。Dock アイコンも復帰させる。

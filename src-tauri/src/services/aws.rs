@@ -15,7 +15,7 @@ use aws_sdk_sts::error::{ProvideErrorMetadata, SdkError};
 use aws_types::region::Region;
 use serde::Serialize;
 use serde_json::{Value, json};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::oneshot;
 
 use super::workspace::WorkspaceCtx;
@@ -293,7 +293,7 @@ pub struct AwsState {
 }
 
 fn session(ctx: &WorkspaceCtx) -> MutexGuard<'_, Option<Session>> {
-    ctx.aws.session.lock().unwrap_or_else(|p| p.into_inner())
+    ctx.shared.aws.session.lock().unwrap_or_else(|p| p.into_inner())
 }
 
 fn clear_session(ctx: &WorkspaceCtx) {
@@ -322,14 +322,24 @@ struct MfaPrompt {
     mfa_serial: String,
     /// 直前のコードが拒否されたときの理由。
     error: Option<String>,
+    /// どのワークスペース(`personal`またはプロジェクトID)が求めているか。コードはこのIDで返す。
+    workspace_id: String,
+    /// プロジェクトの名称とイメージカラー(パーソナルは`None`)。入力欄で、どのプロジェクトのコードかを示す。
+    workspace_name: Option<String>,
+    workspace_color: Option<String>,
 }
 
 fn pending(ctx: &WorkspaceCtx) -> MutexGuard<'_, Option<oneshot::Sender<String>>> {
-    ctx.aws.pending_mfa.lock().unwrap_or_else(|p| p.into_inner())
+    ctx.shared.aws.pending_mfa.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-async fn ask_mfa(ctx: &WorkspaceCtx, prompt: MfaPrompt) -> Result<String, AppError> {
+async fn ask_mfa(ctx: &WorkspaceCtx, mut prompt: MfaPrompt) -> Result<String, AppError> {
     let app = APP.get().ok_or_else(|| AppError::AwsConfig("not initialized".into()))?;
+    if let Some(ws) = app.try_state::<super::workspace::Workspaces>()
+        && let Some(p) = ws.list().into_iter().find(|p| p.id == ctx.id)
+    {
+        (prompt.workspace_name, prompt.workspace_color) = (Some(p.name), Some(p.color));
+    }
     let (tx, rx) = oneshot::channel();
     *pending(ctx) = Some(tx);
     app.emit(MFA_EVENT, prompt).map_err(|e| AppError::AwsConfig(e.to_string()))?;
@@ -447,6 +457,9 @@ async fn assume_with_prompt(ctx: &WorkspaceCtx, profile: &str, a: &AssumeRole, r
                     profile: profile.to_owned(),
                     mfa_serial: serial.clone(),
                     error: last_error.take(),
+                    workspace_id: ctx.id.clone(),
+                    workspace_name: None,
+                    workspace_color: None,
                 })
                 .await?,
             ),
@@ -478,7 +491,7 @@ async fn credentials(ctx: &WorkspaceCtx) -> Result<(Keys, String), AppError> {
         Source::AssumeRole(a) => match cached(ctx, &name) {
             Some(keys) => keys,
             None => {
-                let _guard = ctx.aws.refresh.lock().await;
+                let _guard = ctx.shared.aws.refresh.lock().await;
                 match cached(ctx, &name) {
                     Some(keys) => keys,
                     None => assume_with_prompt(ctx, &name, &a, &region).await?,

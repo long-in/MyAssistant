@@ -15,14 +15,17 @@ import { Input } from "@/components/ui/input";
  */
 export default function MfaModal() {
   const t = useT();
-  const [prompt, setPrompt] = useState<AwsMfaPrompt | null>(null);
+  // 複数のワークスペースが同時にコードを求めることがあるので、順に出す(同じワークスペースの再要求は置き換える)
+  const [queue, setQueue] = useState<AwsMfaPrompt[]>([]);
+  const prompt = queue[0] ?? null;
+  const done = () => setQueue((q) => q.slice(1));
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     const un = listen<AwsMfaPrompt>(AWS_MFA_EVENT, (e) => {
       setCode("");
-      setPrompt(e.payload);
+      setQueue((q) => [...q.filter((p) => p.workspace_id !== e.payload.workspace_id), e.payload]);
     });
     return () => {
       un.then((f) => f());
@@ -34,8 +37,8 @@ export default function MfaModal() {
   const submit = async () => {
     setBusy(true);
     try {
-      await submitAwsMfa(code);
-      setPrompt(null);
+      await submitAwsMfa(prompt.workspace_id, code);
+      done();
     } catch (e) {
       toast.error(reportError(e));
     } finally {
@@ -43,8 +46,8 @@ export default function MfaModal() {
     }
   };
   const cancel = () => {
-    cancelAwsMfa().catch(() => {});
-    setPrompt(null);
+    cancelAwsMfa(prompt.workspace_id).catch(() => {});
+    done();
   };
 
   return (
@@ -63,6 +66,11 @@ export default function MfaModal() {
           <ShieldCheck className="size-4 text-primary" />
           {t("MFAコードを入力")}
         </h2>
+        <p className="mt-2 flex items-center gap-2 text-xs font-medium" style={{ color: prompt.workspace_color ?? undefined }}>
+          {prompt.workspace_color && <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: prompt.workspace_color }} />}
+          {"Workspace: "}
+          {prompt.workspace_name ?? "Personal"}
+        </p>
         <p className="mt-2 text-xs text-muted-foreground">
           {t("AWSプロファイル「{profile}」のスイッチロールにMFAが必要です。", { profile: prompt.profile })}
         </p>

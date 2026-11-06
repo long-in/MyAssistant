@@ -47,7 +47,6 @@ pub struct WorkspaceCtx {
     pub dir: PathBuf,
     pub db: Db,
     pub secrets: Secrets,
-    pub aws: AwsState,
     pub debug: DebugLog,
     /// 同じワークスペースを別々に開いた複数の`WorkspaceCtx`の間で共有する状態。
     pub shared: Arc<Shared>,
@@ -61,6 +60,8 @@ pub struct Shared {
     pub batch: BatchGuard,
     /// 削除された(または削除中の)プロジェクトの印。裏で動く処理は、書き込む前にこれを確かめて止まる。
     deleted: AtomicBool,
+    /// AWSの一時クレデンシャルとMFA入力待ち。バッチのために一時的に開いたものが待っているMFAにも、IDから答えられるようにする。
+    pub aws: AwsState,
 }
 
 impl WorkspaceCtx {
@@ -77,7 +78,6 @@ impl WorkspaceCtx {
             dir: dir.to_owned(),
             db: Db::open(&dir.join("timeline.db"))?,
             secrets: Secrets::open(dir)?,
-            aws: AwsState::default(),
             debug: DebugLog::default(),
             shared,
         })
@@ -106,12 +106,18 @@ pub struct ActiveWorkspace {
     pub project: Option<Project>,
 }
 
-/// 名称を整える。前後の空白を除き、1〜`NAME_MAX_CHARS`文字で、制御文字を含まないこと。
+/// プロジェクト名にできない名称(切り替えやバッジで、パーソナル・ワークと紛らわしくなるもの)。大文字小文字・前後の空白は無視して比べる。
+const RESERVED_NAMES: [&str; 4] = ["パーソナル", "ワーク", "personal", "work"];
+
+/// 名称を整える。前後の空白を除き、1〜`NAME_MAX_CHARS`文字で、制御文字を含まず、予約名でないこと。
 fn clean_name(name: &str) -> Result<String, AppError> {
     let name = name.trim();
     let chars = name.chars().count();
     if chars == 0 || chars > NAME_MAX_CHARS || name.chars().any(char::is_control) {
         return Err(AppError::InvalidProject("name".into()));
+    }
+    if RESERVED_NAMES.contains(&name.to_lowercase().as_str()) {
+        return Err(AppError::ReservedName);
     }
     Ok(name.to_owned())
 }
@@ -862,5 +868,18 @@ mod tests {
         ws.delete(&id).unwrap();
         assert!(matches!(transient.ensure_alive(), Err(AppError::ProjectNotFound)));
         assert!(matches!(ws.open_for_batch(&id), Err(AppError::ProjectNotFound)));
+    }
+
+    #[test]
+    fn reserved_names_are_refused() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path());
+        for name in ["パーソナル", "ワーク", "Personal", "personal", "  WORK  ", "wOrK"] {
+            assert!(matches!(ws.create(name, PALETTE[0]), Err(AppError::ReservedName)), "{name:?}");
+        }
+        // 予約名を含むだけの名称は使える。更新で予約名へ変えることもできない
+        assert!(ws.create("Work Tools", PALETTE[0]).is_ok());
+        let p = ws.create("A", PALETTE[1]).unwrap();
+        assert!(matches!(ws.update(&p.id, "Personal", PALETTE[1]), Err(AppError::ReservedName)));
     }
 }

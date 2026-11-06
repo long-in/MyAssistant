@@ -1,7 +1,9 @@
+use tauri::State;
+
 use crate::{
     services::{
         aws::{self, ProfileInfo, Status},
-        workspace::Ctx,
+        workspace::{Ctx, Workspaces},
     },
     utils::error::AppError,
 };
@@ -58,12 +60,16 @@ pub fn remove_aws_model(ctx: Ctx, model: String) -> Result<Status, AppError> {
 }
 
 /// 入力されたMFAコードを、待っているBedrock呼び出しへ渡す。
+/// コードは、求めたワークスペース(`workspace_id`)へ返す。選択中とは限らない(裏のプロジェクトが求めることがある)。
 #[tauri::command]
-pub fn submit_aws_mfa(ctx: Ctx, code: String) -> Result<(), AppError> {
+pub fn submit_aws_mfa(ws: State<'_, Workspaces>, workspace_id: String, code: String) -> Result<(), AppError> {
+    let ctx = ws.resolve(&workspace_id)?;
     aws::submit_mfa(&ctx, &code)
 }
 
 #[tauri::command]
-pub fn cancel_aws_mfa(ctx: Ctx) {
-    aws::cancel_mfa(&ctx);
+pub fn cancel_aws_mfa(ws: State<'_, Workspaces>, workspace_id: String) {
+    if let Ok(ctx) = ws.resolve(&workspace_id) {
+        aws::cancel_mfa(&ctx);
+    }
 }

@@ -93,6 +93,9 @@ pub enum AppError {
     /// 指定した保存先が、別のワークスペースの保存先(ナレッジ・デバッグログ)と重なっている。
     #[error("path overlaps another workspace's location")]
     PathInUse,
+    /// 名称がパーソナル・ワークの表示名と紛らわしいため使えない。
+    #[error("project name is reserved")]
+    ReservedName,
     /// 指定した名称を、別のプロジェクトがすでに使っている。
     #[error("project name already in use")]
     NameInUse,
@@ -156,6 +159,7 @@ impl AppError {
             Self::MfaRequired => "mfa_required",
             Self::InvalidProject(_) => "invalid_project",
             Self::PathInUse => "path_in_use",
+            Self::ReservedName => "reserved_name",
             Self::NameInUse => "name_in_use",
             Self::ColorInUse => "color_in_use",
             Self::ProjectLimit => "project_limit",
