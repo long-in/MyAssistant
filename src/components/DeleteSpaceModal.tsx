@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Loader2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -51,7 +52,8 @@ export default function DeleteSpaceModal({ space, onClose, onDeleted }: Props) {
     }
   };
 
-  return (
+  // 呼び出し元(設定画面のカードなど)の`backdrop-filter`・`clip-path`の中では、`fixed`が画面でなくカードを基準にして切り取られるため、bodyへ描画する
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/40 p-6 backdrop-blur-sm">
       <div
         role="dialog"
@@ -103,6 +105,7 @@ export default function DeleteSpaceModal({ space, onClose, onDeleted }: Props) {
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
