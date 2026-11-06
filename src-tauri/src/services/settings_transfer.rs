@@ -9,7 +9,7 @@ use serde_json::Value;
 use super::{
     aws, batch,
     command_policy::{self, Policy},
-    debug_log, profile, proofread, tuning, wake,
+    debug_log, profile, pronunciation, proofread, tuning, wake,
     workspace::WorkspaceCtx,
 };
 use crate::{
@@ -175,6 +175,8 @@ pub struct CopyOptions {
     pub include_keys: bool,
     /// パーソナルデータ(名前・誕生日など)もコピーする。
     pub include_profile: bool,
+    /// 読み上げ辞書(ユーザー登録の語)もコピーする(コピー先の辞書は置き換わる)。
+    pub include_dictionary: bool,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -183,10 +185,12 @@ pub struct CopyReport {
     pub settings: usize,
     /// コピーしたキーの件数。
     pub keys: usize,
+    /// コピーした読み上げ辞書の語数(コピーしなかったときは0)。
+    pub words: usize,
 }
 
 /// `from`の設定を`to`へコピーする。`from`は変更しない。
-/// 対象は書き出しと同じ項目とコマンド権限で、ナレッジの保存先・会話・要約・ナレッジ本体・読み上げ辞書は含めない。
+/// 対象は書き出しと同じ項目とコマンド権限で、ナレッジの保存先・会話・要約・ナレッジ本体は含めない。読み上げ辞書は選んだときだけ写す。
 /// 先に全項目を検証し(何も書かない)、失敗しうるファイル書き込み(キー・コマンド権限)を行ってから、設定をトランザクションで書く。
 /// 途中で失敗したら、書いたキーとコマンド権限を元へ戻し、`to`は変わらない。
 /// キーの生値はRust内で写し、画面には件数だけ返す。
@@ -200,6 +204,9 @@ pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result
         file.settings.remove(profile::KEY);
     }
     let v = validate(&file)?;
+    // 辞書は、書き込みの前に整形・検証しておく(上限を超えるなら、何も書かずに失敗する)
+    let words = if opts.include_dictionary { Some(pronunciation::normalize(pronunciation::load_user(&from.dir))?) } else { None };
+    let prev_dictionary = words.as_ref().map(|_| std::fs::read(to.dir.join(pronunciation::DICTIONARY_FILE)).ok());
 
     // キーは選んだときだけ写す。Bedrockのモデル一覧は秘密ではない設定項目なので、キーなしでも写す(失敗したら戻す)
     let keys_backup = to.secrets.backup();
@@ -217,6 +224,9 @@ pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result
             let root = policy_root.as_ref().map_err(|e| AppError::Io(e.to_string()))?;
             command_policy::save(root, policy).map_err(AppError::Io)?;
         }
+        if let Some(words) = &words {
+            pronunciation::save_user(&to.dir, words.clone())?;
+        }
         v.write(&to.db)
     })();
     if let Err(e) = written {
@@ -226,6 +236,16 @@ pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result
         {
             log::warn!("command policy not restored: {err}");
         }
+        if let Some(prev) = &prev_dictionary {
+            let file = to.dir.join(pronunciation::DICTIONARY_FILE);
+            let restored = match prev {
+                Some(bytes) => std::fs::write(&file, bytes),
+                None => std::fs::remove_file(&file),
+            };
+            if let Err(err) = restored {
+                log::warn!("dictionary not restored: {err}");
+            }
+        }
         if let Err(err) = to.secrets.restore(keys_backup) {
             log::warn!("secrets not restored: {err}");
         }
@@ -234,7 +254,7 @@ pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result
     if opts.include_keys {
         aws::reset(to); // 差し替えたAWS設定で取り直すため、古い一時クレデンシャルは捨てる
     }
-    Ok(CopyReport { settings: v.report().applied, keys })
+    Ok(CopyReport { settings: v.report().applied, keys, words: words.map_or(0, |w| w.len()) })
 }
 
 #[cfg(test)]
@@ -349,10 +369,35 @@ mod tests {
         a.db.set_setting(profile::KEY, json).unwrap();
         a.secrets.set_tts_key("tts-a").unwrap();
         a.secrets.set_key(crate::services::secrets::Provider::Anthropic, "ka").unwrap();
-        let report = copy(&a, &b, CopyOptions { include_keys: true, include_profile: true }).unwrap();
+        let report = copy(&a, &b, CopyOptions { include_keys: true, include_profile: true, ..Default::default() }).unwrap();
         assert_eq!(report.keys, 2);
         assert_eq!(b.db.get_setting(profile::KEY).unwrap().as_deref(), Some(json));
         assert_eq!(b.secrets.get_tts_key().unwrap().as_deref(), Some("tts-a"));
+    }
+
+    #[test]
+    fn dictionary_is_copied_only_when_asked_and_rolled_back_on_failure() {
+        use crate::services::pronunciation::{load_user, save_user, Entry};
+        let e = |w: &str, r: &str| Entry { word: w.into(), reading: r.into() };
+        let (_da, a) = ctx("a");
+        let (_db, b) = ctx("b");
+        a.db.set_setting(chat::SHELL_ACCESS_KEY, "0").unwrap();
+        save_user(&a.dir, vec![e("Figma", "フィグマ")]).unwrap();
+        save_user(&b.dir, vec![e("Zoom", "ズーム")]).unwrap();
+        // 選ばなければ、コピー先の辞書は変わらない
+        let r = copy(&a, &b, CopyOptions::default()).unwrap();
+        assert_eq!(r.words, 0);
+        assert_eq!(load_user(&b.dir), vec![e("Zoom", "ズーム")]);
+        // 選ぶと、コピー先の辞書が置き換わる。コピー元は変わらない
+        let r = copy(&a, &b, CopyOptions { include_dictionary: true, ..Default::default() }).unwrap();
+        assert_eq!(r.words, 1);
+        assert_eq!(load_user(&b.dir), vec![e("Figma", "フィグマ")]);
+        assert_eq!(load_user(&a.dir), vec![e("Figma", "フィグマ")]);
+        // 設定の書き込みに失敗したら、辞書も元へ戻る
+        save_user(&a.dir, vec![e("Miro", "ミロ")]).unwrap();
+        b.db.break_settings_for_test();
+        assert!(copy(&a, &b, CopyOptions { include_dictionary: true, ..Default::default() }).is_err());
+        assert_eq!(load_user(&b.dir), vec![e("Figma", "フィグマ")]);
     }
 
     #[test]
@@ -363,7 +408,7 @@ mod tests {
         b.db.set_setting(chat::SHELL_ACCESS_KEY, "1").unwrap();
         a.db.set_setting(chat::WEB_ACCESS_KEY, "yes").unwrap(); // 不正な値
         a.secrets.set_tts_key("tts-a").unwrap();
-        assert!(copy(&a, &b, CopyOptions { include_keys: true, include_profile: true }).is_err());
+        assert!(copy(&a, &b, CopyOptions { include_keys: true, include_profile: true, ..Default::default() }).is_err());
         assert_eq!(b.db.get_setting(chat::WEB_ACCESS_KEY).unwrap(), None);
         assert!(!b.secrets.has_tts_key().unwrap(), "キーも写さない");
     }
@@ -376,7 +421,7 @@ mod tests {
         a.secrets.set_tts_key("tts-a").unwrap();
         // コピー先のキー保管庫を書けなくする(保存先に同名のフォルダがある)
         std::fs::create_dir(b.dir.join("secrets.json")).unwrap();
-        assert!(copy(&a, &b, CopyOptions { include_keys: true, include_profile: false }).is_err());
+        assert!(copy(&a, &b, CopyOptions { include_keys: true, include_profile: false, ..Default::default() }).is_err());
         assert_eq!(b.db.get_setting(chat::SHELL_ACCESS_KEY).unwrap(), None, "設定は書かれない");
         assert!(!b.secrets.has_tts_key().unwrap(), "メモリ上のキーも変わらない");
     }
@@ -393,7 +438,7 @@ mod tests {
         b.secrets.set_aqua_key("aqua-b").unwrap();
         // 設定の書き込みを失敗させる(設定テーブルを壊す)
         b.db.break_settings_for_test();
-        assert!(copy(&a, &b, CopyOptions { include_keys: true, include_profile: false }).is_err());
+        assert!(copy(&a, &b, CopyOptions { include_keys: true, include_profile: false, ..Default::default() }).is_err());
         assert!(!b.secrets.has_tts_key().unwrap(), "コピーしたキーは戻る");
         assert!(b.secrets.has_aqua_key().unwrap(), "元からあったキーは残る");
         let policy = command_policy::load(&batch::knowledge_root(&b).unwrap());

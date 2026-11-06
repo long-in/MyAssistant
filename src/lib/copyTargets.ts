@@ -12,6 +12,8 @@ export type CopyRequest = {
   includeKeys: boolean;
   /** パーソナルデータもコピーする。 */
   includeProfile: boolean;
+  /** 読み上げ辞書もコピーする(コピー先の辞書は置き換わる)。 */
+  includeDictionary: boolean;
 };
 
 export const copyTargets = (spaces: Space[]): CopyTarget[] => [

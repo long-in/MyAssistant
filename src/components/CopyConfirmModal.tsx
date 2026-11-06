@@ -48,7 +48,7 @@ export default function CopyConfirmModal({ request, targets, onClose, onCopied }
   const run = async () => {
     setBusy(true);
     try {
-      const report = await copyWorkspaceSettings(request.from, request.to, request.includeKeys, request.includeProfile);
+      const report = await copyWorkspaceSettings(request.from, request.to, request.includeKeys, request.includeProfile, request.includeDictionary);
       onCopied(report, request);
     } catch (e) {
       toast.error(errorMessage(e));
@@ -84,12 +84,14 @@ export default function CopyConfirmModal({ request, targets, onClose, onCopied }
           <li>{t("Bedrockのモデル一覧")}</li>
           {request.includeKeys && <li className="font-medium text-destructive">{t("APIキー(Anthropic・AWS・Google・Aqua)")}</li>}
           {request.includeProfile && <li className="font-medium text-destructive">{t("パーソナルデータ")}</li>}
+          {request.includeDictionary && <li className="font-medium text-destructive">{t("読み上げ辞書(コピー先の辞書は置き換わる)")}</li>}
         </ul>
         <p className="mt-3 text-xs font-medium text-muted-foreground">{t("コピーしないもの")}</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          {t("ナレッジ・会話・読み上げ辞書、ナレッジとデバッグログの保存先")}
+          {t("ナレッジ・会話、ナレッジとデバッグログの保存先")}
           {request.includeKeys ? "" : t("、APIキー")}
           {request.includeProfile ? "" : t("、パーソナルデータ")}
+          {request.includeDictionary ? "" : t("、読み上げ辞書")}
           {t("。")}
         </p>
 

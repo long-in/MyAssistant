@@ -6,12 +6,14 @@ import { Switch } from "@/components/ui/switch";
 type Props = {
   includeKeys: boolean;
   includeProfile: boolean;
+  includeDictionary: boolean;
   onKeys: (v: boolean) => void;
   onProfile: (v: boolean) => void;
+  onDictionary: (v: boolean) => void;
 };
 
-/** 設定のコピーで、既定ではコピーしないもの(APIキー・パーソナルデータ)を、選んだときだけ含めるスイッチ。 */
-export default function CopyOptions({ includeKeys, includeProfile, onKeys, onProfile }: Props) {
+/** 設定のコピーで、既定ではコピーしないもの(APIキー・パーソナルデータ・読み上げ辞書)を、選んだときだけ含めるスイッチ。 */
+export default function CopyOptions({ includeKeys, includeProfile, includeDictionary, onKeys, onProfile, onDictionary }: Props) {
   const t = useT();
   return (
     <>
@@ -32,6 +34,15 @@ export default function CopyOptions({ includeKeys, includeProfile, onKeys, onPro
           </span>
         </span>
         <Switch checked={includeProfile} onCheckedChange={onProfile} />
+      </label>
+      <label className="flex items-center justify-between gap-4 text-sm">
+        <span>
+          {t("読み上げ辞書もコピーする")}
+          <span className="block text-xs text-muted-foreground">
+            {t("登録した読みを、コピー先にも写します(コピー先の辞書は置き換わります)。")}
+          </span>
+        </span>
+        <Switch checked={includeDictionary} onCheckedChange={onDictionary} />
       </label>
     </>
   );

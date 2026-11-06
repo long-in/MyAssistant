@@ -17,6 +17,7 @@ import {
   createSpace,
   errorMessage,
   updateSpace,
+  type CopyReport,
   type DeleteReport,
   type Space,
 } from "@/lib/api";
@@ -97,8 +98,8 @@ export default function WorkspacePage() {
 
   const targets = copyTargets(spaces);
 
-  const copied = (r: { settings: number; keys: number }, req: CopyRequest) => {
-    toast.success(t("設定を{count}件コピーしました。", { count: r.settings }) + (r.keys > 0 ? t("(APIキー{keys}件)", { keys: r.keys }) : ""));
+  const copied = (r: CopyReport, req: CopyRequest) => {
+    toast.success(t("設定を{count}件コピーしました。", { count: r.settings }) + (r.keys > 0 ? t("(APIキー{keys}件)", { keys: r.keys }) : "") + (r.words > 0 ? t("(読み上げ辞書{words}語)", { words: r.words }) : ""));
     if (req.to === active.id) bumpSettingsVersion(); // 選択中のスペースへコピーしたら、設定画面などを読み直す
   };
 

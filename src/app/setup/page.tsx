@@ -612,7 +612,7 @@ function CopyIntoSpace() {
           targets={targets}
           onClose={() => setRequest(null)}
           onCopied={(r) => {
-            toast.success(t("設定を{count}件コピーしました。", { count: r.settings }) + (r.keys > 0 ? t("(APIキー{keys}件)", { keys: r.keys }) : ""));
+            toast.success(t("設定を{count}件コピーしました。", { count: r.settings }) + (r.keys > 0 ? t("(APIキー{keys}件)", { keys: r.keys }) : "") + (r.words > 0 ? t("(読み上げ辞書{words}語)", { words: r.words }) : ""));
             bumpSettingsVersion(); // コピー先は選択中のスペースなので、設定画面を読み直す
           }}
         />

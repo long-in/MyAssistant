@@ -682,8 +682,8 @@ export type DeleteReport = { active: ActiveWorkspace; keptKnowledge: string | nu
 export const deleteSpace = (id: string, deleteKnowledge: boolean) =>
   invoke<DeleteReport>("delete_space", { id, deleteKnowledge });
 /** コピーした設定の項目数と、コピーしたキーの件数(キーの値は返らない)。 */
-export type CopyReport = { settings: number; keys: number };
+export type CopyReport = { settings: number; keys: number; words: number };
 /** `from`の設定を`to`へコピーする(`personal`またはスペースID)。コピー先の既存の設定は上書きされる。 */
-export const copyWorkspaceSettings = (from: string, to: string, includeKeys: boolean, includeProfile: boolean) =>
-  invoke<CopyReport>("copy_workspace_settings", { from, to, includeKeys, includeProfile });
+export const copyWorkspaceSettings = (from: string, to: string, includeKeys: boolean, includeProfile: boolean, includeDictionary: boolean) =>
+  invoke<CopyReport>("copy_workspace_settings", { from, to, includeKeys, includeProfile, includeDictionary });
 export const switchWorkspace = (id: string) => invoke<ActiveWorkspace>("switch_workspace", { id });
