@@ -8,11 +8,8 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import CopyConfirmModal from "@/components/CopyConfirmModal";
-import CopyOptions from "@/components/CopyOptions";
 import CopySettingsCard from "@/components/CopySettingsCard";
-import SpaceChip from "@/components/SpaceChip";
 import {
   MAX_SPACES,
   PERSONAL_ID,
@@ -28,8 +25,6 @@ import { type CopyRequest, copyTargets } from "@/lib/copyTargets";
 import { cn } from "@/lib/utils";
 import { bumpSettingsVersion, refreshWorkspace, switchTo, useWorkspace } from "@/lib/workspace";
 
-/** 作成フォームで、設定をコピーしないことを表す選択肢の値。 */
-const NO_COPY = "none";
 
 export default function WorkspacePage() {
   const t = useT();
@@ -39,10 +34,6 @@ export default function WorkspacePage() {
   const [name, setName] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // 作成と同時に行う設定のコピー(コピー元。コピーしないときは`NO_COPY`)
-  const [createFrom, setCreateFrom] = useState(NO_COPY);
-  const [createKeys, setCreateKeys] = useState(false);
-  const [createProfile, setCreateProfile] = useState(false);
   // 最終確認を待っているコピー。確認のモーダルは、このページで1つだけ出す
   const [copyRequest, setCopyRequest] = useState<CopyRequest | null>(null);
   // 作ったばかりのスペース。設定のコピー先の候補にする
@@ -56,9 +47,6 @@ export default function WorkspacePage() {
     setEditing(null);
     setName("");
     setPicked(null);
-    setCreateFrom(NO_COPY);
-    setCreateKeys(false);
-    setCreateProfile(false);
   };
 
   const startEdit = (p: Space) => {
@@ -78,15 +66,13 @@ export default function WorkspacePage() {
       } else {
         const created = await createSpace(name, color);
         await refreshWorkspace();
-        // 作成後は切り替えない(画面が作り直されて、入力中の内容や選択が失われるため)。開くのは、一覧の「Open」から
+        // 作成後は切り替えない(画面が作り直されて、入力中の内容や選択が失われるため)。開くのは、一覧の「開く」から。
+        // 設定を引き継ぐときは、「設定のコピー」カードを使う(コピー先には、作ったスペースが選ばれている)
         setJustCreated(created.id);
-        if (createFrom !== NO_COPY) {
-          // 設定のコピーを選んでいたら、作成のあとに最終確認を出す(取りやめても、スペースは作成済みのまま)
-          setCopyRequest({ from: createFrom, to: created.id, includeKeys: createKeys, includeProfile: createProfile });
-          toast.success(t("スペースを作成しました。"));
-        } else {
-          toast.success(t("スペースを作成しました。"), { description: t("設定を引き継ぐには、下の「設定のコピー」を使ってください。") });
-        }
+        toast.success(t("スペースを作成しました。"), {
+          description: t("設定を引き継ぐには、下の「設定のコピー」を使ってください。"),
+        });
+        requestAnimationFrame(() => document.getElementById("copy-settings")?.scrollIntoView({ behavior: "smooth", block: "center" }));
         reset();
       }
     } catch (e) {
@@ -179,36 +165,6 @@ export default function WorkspacePage() {
                 );
               })}
             </div>
-            {!editing && (
-              <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-3">
-                <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="text-muted-foreground">{t("設定のコピー元")}</span>
-                  <Select
-                    items={[{ value: NO_COPY, label: t("コピーしない") }, ...targets.map((t) => ({ value: t.id, label: t.name }))]}
-                    value={createFrom}
-                    onValueChange={(v) => v && setCreateFrom(v as string)}
-                  >
-                    <SelectTrigger className="min-w-40" aria-label={t("設定のコピー元(任意)")}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={NO_COPY}>{t("コピーしない")}</SelectItem>
-                      {targets.map((t) => (
-                        <SelectItem key={t.id} value={t.id}>
-                          <SpaceChip name={t.name} color={t.color} />
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {createFrom !== NO_COPY && (
-                  <>
-                    <CopyOptions includeKeys={createKeys} includeProfile={createProfile} onKeys={setCreateKeys} onProfile={setCreateProfile} />
-                    <p className="text-xs text-muted-foreground">{t("スペースの作成後に、もう一度確認します。")}</p>
-                  </>
-                )}
-              </div>
-            )}
             <div className="flex items-center gap-2">
               <Button onClick={() => void submit()} disabled={!canSubmit}>
                 {editing ? <Check /> : <Plus />}
