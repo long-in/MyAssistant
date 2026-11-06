@@ -507,4 +507,5 @@ export const EN: Record<string, string> = {
   "APIキーもコピー先に保存されます。": "API keys are also saved in the destination. ",
   "設定を{count}件コピーしました。": "Copied {count} settings.",
   "(APIキー{keys}件)": " ({keys} API keys)",
+  "その場所は、ほかのワークスペースのナレッジまたはデバッグログの保存先と重なっています。別の場所を選んでください。": "That location overlaps the knowledge or debug log location of another workspace. Choose a different one.",
 };
