@@ -15,15 +15,15 @@ import { cn } from "@/lib/utils";
 import { startWorkspaceSync, useWorkspace } from "@/lib/workspace";
 
 const NAV = [
-  { href: "/", label: "チャット", icon: MessageSquare },
-  { href: "/knowledge", label: "ナレッジベース", icon: BookOpen },
-  { href: "/setup", label: "設定", icon: Settings },
-  { href: "/shortcuts", label: "ショートカット", icon: Keyboard },
+  { href: "/", label: "Chat", icon: MessageSquare },
+  { href: "/knowledge", label: "Knowledge base", icon: BookOpen },
+  { href: "/setup", label: "Settings", icon: Settings },
+  { href: "/shortcuts", label: "Shortcuts", icon: Keyboard },
 ] as const;
 
-const PROJECTS_NAV = { href: "/workspace", label: "プロジェクト", icon: FolderKanban } as const;
+const PROJECTS_NAV = { href: "/workspace", label: "Projects", icon: FolderKanban } as const;
 
-const DEBUG_NAV = { href: "/debug", label: "デバッグ", icon: Bug } as const;
+const DEBUG_NAV = { href: "/debug", label: "Debug", icon: Bug } as const;
 
 const NAV_SHORTCUTS: Partial<Record<ShortcutId, string>> = {
   chat: "/",
@@ -152,7 +152,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <Link
               key={href}
               href={href}
-              title={t(label)}
+              title={label}
               className={cn(
                 "relative flex items-center justify-center gap-2 rounded-sm px-3 py-2 text-sm font-medium text-muted-foreground transition-all hover:bg-primary/10 hover:text-foreground",
                 !collapsed && "md:justify-start",
@@ -160,7 +160,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               )}
             >
               <Icon className="size-4 shrink-0" />
-              <span className={cn("hidden", !collapsed && "md:inline")}>{t(label)}</span>
+              <span className={cn("hidden", !collapsed && "md:inline")}>{label}</span>
             </Link>
           );
         })}
@@ -168,15 +168,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <button
           type="button"
           onClick={toggleCollapsed}
-          title={t(collapsed ? "展開する" : "折りたたむ")}
-          aria-label={t(collapsed ? "展開する" : "折りたたむ")}
+          title={collapsed ? "Expand" : "Collapse"}
+          aria-label={collapsed ? "Expand" : "Collapse"}
           className={cn(
             "flex items-center justify-center gap-2 rounded-sm px-3 py-2 text-sm text-muted-foreground transition-all hover:bg-primary/10 hover:text-foreground",
             collapsed ? "mt-auto" : "mt-2 md:justify-start",
           )}
         >
           {collapsed ? <PanelLeftOpen className="size-4 shrink-0" /> : <PanelLeftClose className="size-4 shrink-0" />}
-          <span className={cn("hidden", !collapsed && "md:inline")}>{t("折りたたむ")}</span>
+          <span className={cn("hidden", !collapsed && "md:inline")}>Collapse</span>
         </button>
       </nav>
       <main className="min-w-0 flex-1 overflow-hidden">
