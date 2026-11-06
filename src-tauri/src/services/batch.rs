@@ -250,10 +250,11 @@ pub async fn run_guarded(app: &AppHandle) -> Result<Option<BatchReport>, AppErro
         let usage_db = app.state::<Db>();
         let report = run(&db, &root, |prompt| {
             let usage_db = usage_db.clone();
+            let model = target.model.clone();
             async move {
                 let msg = [ChatMessage { role: "user".into(), content: prompt }];
-                let done = llm_client::complete(target.provider, target.model, None, &msg).await?;
-                let _ = usage_db.record_usage(target.provider.as_str(), target.model, done.input_tokens, done.output_tokens);
+                let done = llm_client::complete(target.provider, &model, None, &msg).await?;
+                let _ = usage_db.record_usage(target.provider.as_str(), &model, done.input_tokens, done.output_tokens);
                 Ok(done.text)
             }
         })
@@ -289,7 +290,7 @@ mod tests {
     async fn classifies_writes_and_marks_processed() {
         let db = db();
         let u = db.insert_log("s1", "user", "Tauriのセットアップ方法は?", None, None).unwrap();
-        let a = db.insert_log("s1", "assistant", "npm create tauri-app です", Some("openai"), Some("m")).unwrap();
+        let a = db.insert_log("s1", "assistant", "npm create tauri-app です", Some("anthropic"), Some("m")).unwrap();
         let root = tempfile::tempdir().unwrap();
         let prompts = Mutex::new(Vec::new());
         let reply = format!(
@@ -347,9 +348,13 @@ mod tests {
         assert_eq!(effective_route(&db, &[]).unwrap(), None);
         let sonnet = Route { provider: "anthropic".into(), model: "claude-sonnet-5-5".into() };
         assert_eq!(effective_route(&db, &[Provider::Anthropic]).unwrap(), Some(sonnet));
+        db.set_setting(BATCH_ROUTE_KEY, r#"{"provider":"anthropic","model":"claude-haiku-5-5"}"#).unwrap();
+        let saved = Route { provider: "anthropic".into(), model: "claude-haiku-5-5".into() };
+        assert_eq!(effective_route(&db, &[Provider::Anthropic, Provider::Bedrock]).unwrap(), Some(saved));
+        // 廃止したプロバイダーの保存値は既定に戻る
         db.set_setting(BATCH_ROUTE_KEY, r#"{"provider":"openai","model":"gpt-4o"}"#).unwrap();
-        let saved = Route { provider: "openai".into(), model: "gpt-4o".into() };
-        assert_eq!(effective_route(&db, &[Provider::Anthropic, Provider::Openai]).unwrap(), Some(saved));
+        let sonnet = Route { provider: "anthropic".into(), model: "claude-sonnet-5-5".into() };
+        assert_eq!(effective_route(&db, &[Provider::Anthropic]).unwrap(), Some(sonnet));
     }
 
     #[test]

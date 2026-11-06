@@ -9,7 +9,7 @@ use crate::{
         audio::Recorder,
         batch, debug_log, knowledge,
         llm_router::{self, Route},
-        proofread, pronunciation, secrets, stt,
+        proofread, pronunciation, secrets, settings_transfer::MAX_FILE_BYTES, stt,
         stt::SttEngine,
         stt_aqua, stt_google, tts,
         tts::Voice,
@@ -336,6 +336,17 @@ pub async fn stop_recording_and_check_wake(
     Ok(WakeCheck { woke: true, text })
 }
 
+/// 起動ワードの登録用に、録音を止めて文字起こしした生の認識結果を返す。
+/// 起動ワードの判定も校正(LLM)も通さない。短すぎる・無音などは通常の録音と同じエラーで返す。
+#[tauri::command]
+pub async fn transcribe_wake_sample(
+    app: AppHandle,
+    recorder: State<'_, Recorder>,
+    db: State<'_, Db>,
+) -> Result<String, AppError> {
+    transcribe_recording(&app, &recorder, &db, false).await
+}
+
 /// 直近`keep_ms`ミリ秒の入力だけを残して録音バッファを切り詰める(常時待機用)。
 #[tauri::command]
 pub fn trim_recording(recorder: State<'_, Recorder>, keep_ms: u32) {
@@ -363,6 +374,27 @@ pub fn get_tts_dictionary(app: AppHandle) -> Result<pronunciation::Listing, AppE
 #[tauri::command]
 pub fn set_tts_dictionary(app: AppHandle, entries: Vec<pronunciation::Entry>) -> Result<Vec<pronunciation::Entry>, AppError> {
     pronunciation::save_user(&app_data(&app)?, entries)
+}
+
+/// ユーザー辞書を`dest`のJSONファイルへ書き出す。取り込みにそのまま使える形式。組み込みの読みは含めない。
+#[tauri::command]
+pub fn export_tts_dictionary(app: AppHandle, dest: String) -> Result<usize, AppError> {
+    let dest = super::settings_transfer::json_path(&dest)?;
+    let entries = pronunciation::load_user(&app_data(&app)?);
+    std::fs::write(&dest, pronunciation::to_json(&entries)?).map_err(|e| AppError::Io(e.to_string()))?;
+    Ok(entries.len())
+}
+
+/// JSONファイルの語を、ユーザー辞書へまとめて取り込む。ファイル内で重複する語は後の項目で上書きし、登録済みの同じ語も上書きする。
+#[tauri::command]
+pub fn import_tts_dictionary(app: AppHandle, src: String) -> Result<pronunciation::ImportReport, AppError> {
+    let src = super::settings_transfer::json_path(&src)?;
+    let meta = std::fs::metadata(&src).map_err(|e| AppError::Io(e.to_string()))?;
+    if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
+        return Err(AppError::InvalidDictionary("ファイルが大きすぎます".into()));
+    }
+    let text = std::fs::read_to_string(&src).map_err(|e| AppError::Io(e.to_string()))?;
+    pronunciation::import_user(&app_data(&app)?, pronunciation::parse_import(&text)?)
 }
 
 fn app_data(app: &AppHandle) -> Result<std::path::PathBuf, AppError> {

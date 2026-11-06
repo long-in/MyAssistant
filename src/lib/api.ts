@@ -1,7 +1,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { tr } from "@/lib/i18n";
 
-export const PROVIDERS = ["anthropic", "openai"] as const;
+export const PROVIDERS = ["anthropic", "bedrock"] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export type KeyStatus = Record<Provider, boolean>;
 
@@ -10,7 +10,7 @@ export type AppError = { code: string; message: string; source?: string | null }
 /** エラーの発生元APIの表示名。 */
 export const SOURCE_LABELS: Record<string, string> = {
   anthropic: "Anthropic (Claude)",
-  openai: "OpenAI (GPT)",
+  bedrock: "Amazon Bedrock (Claude)",
   google_tts: "Google Cloud Text-to-Speech",
   google_stt: "Google Cloud Speech-to-Text",
   aqua_stt: "Aqua Voice",
@@ -19,7 +19,7 @@ export const SOURCE_LABELS: Record<string, string> = {
 
 export const PROVIDER_LABELS: Record<Provider, string> = {
   anthropic: "Anthropic (Claude)",
-  openai: "OpenAI (GPT)",
+  bedrock: "Amazon Bedrock (Claude)",
 };
 
 export const ERROR_MESSAGES: Record<string, string> = {
@@ -57,6 +57,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   invalid_version: "バージョンには英数字と . _ - のみ使えます(64文字まで)。",
   path_not_allowed: "ナレッジディレクトリ外のパスにはアクセスできません。",
   io_error: "ファイルの読み書きに失敗しました。",
+  mfa_required: "MFAコードが入力されませんでした。もう一度お試しください。",
+  invalid_dictionary: "読み上げ辞書のJSONを取り込めませんでした。[{\"word\": \"語\", \"reading\": \"読み\"}] の形式で、ファイルは1MB以下にしてください。",
   invalid_settings: "設定ファイルの形式が正しくありません。このアプリが書き出したファイルを選んでください。",
 };
 
@@ -65,6 +67,8 @@ export function errorMessage(e: unknown): string {
   const body =
     code === "provider_rejected" && message
       ? tr("拒否されました: {message}", { message })
+      : code === "aws_config_error" && message
+        ? tr("AWSの設定に問題があります: {message}", { message })
       : tr((code && ERROR_MESSAGES[code]) || "予期しないエラーが発生しました。");
   const label = source ? SOURCE_LABELS[source] : undefined;
   return label ? `[${label}] ${body}` : body;
@@ -79,6 +83,50 @@ export const saveApiKey = (provider: Provider, key: string) =>
 
 export const deleteApiKey = (provider: Provider) =>
   invoke<void>("delete_api_key", { provider });
+
+/** `~/.aws/config`・`credentials`の貼り付け内容から読み取ったプロファイル。キーの値は含まれない。 */
+export type AwsProfile = {
+  name: string;
+  region: string | null;
+  role: boolean;
+  mfa: boolean;
+  usable: boolean;
+  /** 使えない場合の理由(英語の短い説明)。 */
+  reason: string | null;
+};
+
+export type AwsStatus = {
+  registered: boolean;
+  profiles: AwsProfile[];
+  selected: string | null;
+  /** 一時クレデンシャルの期限(UNIX秒)。未取得ならnull。 */
+  session_expires_at: number | null;
+  /** 登録済みのBedrockモデルID(推論プロファイルIDやARNも可)。モデル選択に並ぶ。 */
+  models: string[];
+  /** 初期候補のうち、未登録のもの。 */
+  suggested_models: string[];
+};
+
+/** MFAコードの入力を求めるイベント(Bedrock呼び出しはコードが届くまで待つ)。 */
+export const AWS_MFA_EVENT = "aws-mfa-required";
+export type AwsMfaPrompt = { profile: string; mfa_serial: string; error: string | null };
+
+export const getAwsStatus = () => invoke<AwsStatus>("get_aws_status");
+/** 貼り付け中の内容から読み取れるプロファイル一覧(保存しない)。 */
+export const previewAwsConfig = (config: string, credentials: string) =>
+  invoke<AwsProfile[]>("preview_aws_config", { config, credentials });
+/** 貼り付けた内容と使うプロファイルをRust側で検証して保存する。保存後、内容はフロントエンドへ戻らない。 */
+export const saveAwsConfig = (config: string, credentials: string, profile: string) =>
+  invoke<AwsStatus>("save_aws_config", { config, credentials, profile });
+/** Bedrockの推論プロファイルから`global.anthropic.`のIDを取得する(登録はしない)。MFAが必要なら`AWS_MFA_EVENT`が飛ぶ。 */
+export const fetchAwsModels = () => invoke<string[]>("fetch_aws_models");
+export const addAwsModel = (model: string) => invoke<AwsStatus>("add_aws_model", { model });
+export const removeAwsModel = (model: string) => invoke<AwsStatus>("remove_aws_model", { model });
+export const selectAwsProfile = (name: string) => invoke<AwsStatus>("select_aws_profile", { name });
+/** 認証からモデル呼び出しまで通しで確認する。MFAが必要なら`AWS_MFA_EVENT`が飛び、コード入力まで待つ。 */
+export const testAwsConnection = () => invoke<AwsStatus>("test_aws_connection");
+export const submitAwsMfa = (code: string) => invoke<void>("submit_aws_mfa", { code });
+export const cancelAwsMfa = () => invoke<void>("cancel_aws_mfa");
 
 export type Route = { provider: Provider; model: string };
 
@@ -170,6 +218,11 @@ export const getDefaultCommandPolicy = () => invoke<CommandPolicy>("get_default_
 export const getDebugMode = () => invoke<boolean>("get_debug_mode");
 export const setDebugMode = (enabled: boolean) => invoke<void>("set_debug_mode", { enabled });
 
+/** デバッグログの現在の出力先。 */
+export const getDebugLogDir = () => invoke<string>("get_debug_log_dir");
+/** 出力先を変更する(絶対パス)。`null`でナレッジ配下の既定に戻す。既存ログは移動しない。 */
+export const setDebugLogDir = (path: string | null) => invoke<string>("set_debug_log_dir", { path });
+
 export type DebugLogFile = { name: string; bytes: number };
 /** デバッグログのファイル一覧(新しい日付が先頭)。 */
 export const listDebugLogs = () => invoke<DebugLogFile[]>("list_debug_logs");
@@ -255,6 +308,8 @@ export type WakeCheck = { woke: boolean; text: string };
 /** 録音を止めて文字起こしし、起動ワードを含むか判定する。`text`は起動ワードに続く依頼(校正済み。なければ空)。 */
 export const stopRecordingAndCheckWake = (sessionId?: string) =>
   invoke<WakeCheck>("stop_recording_and_check_wake", { sessionId });
+/** 起動ワード登録用に、録音を止めて文字起こしした生の認識結果を返す(判定・校正なし)。 */
+export const transcribeWakeSample = () => invoke<string>("transcribe_wake_sample");
 /** 直近`keepMs`ミリ秒の入力だけを残して録音バッファを切り詰める(常時待機用)。 */
 export const trimRecording = (keepMs: number) => invoke<void>("trim_recording", { keepMs });
 
@@ -318,6 +373,11 @@ export type TtsDictionary = { builtin: DictionaryEntry[]; user: DictionaryEntry[
 export const getTtsDictionary = () => invoke<TtsDictionary>("get_tts_dictionary");
 /** ユーザー辞書を丸ごと保存し、整形後(空欄・大文字小文字違いの重複を除いた)の内容を返す。 */
 export const setTtsDictionary = (entries: DictionaryEntry[]) => invoke<DictionaryEntry[]>("set_tts_dictionary", { entries });
+export type DictionaryImportReport = { entries: DictionaryEntry[]; added: number; updated: number };
+/** ユーザー辞書をJSONファイルへ書き出し、書き出した語数を返す。 */
+export const exportTtsDictionary = (dest: string) => invoke<number>("export_tts_dictionary", { dest });
+/** JSONファイルの語をユーザー辞書へ取り込む。重複する語は取り込み側で上書きする。 */
+export const importTtsDictionary = (src: string) => invoke<DictionaryImportReport>("import_tts_dictionary", { src });
 
 export const ttsKeyRegistered = () => invoke<boolean>("tts_key_registered");
 export const saveTtsKey = (key: string) => invoke<void>("save_tts_key", { key });
@@ -503,6 +563,15 @@ export const loadBatchRoute = () => invoke<Route | null>("load_batch_route");
 export const saveBatchRoute = (route: Route) => invoke<void>("save_batch_route", { route });
 export const listKnowledge = () => invoke<KnowledgeFile[]>("list_knowledge");
 export const readKnowledge = (path: string) => invoke<string>("read_knowledge", { path });
+/** Markdown以外のファイル一覧(閲覧専用)。 */
+export const listOtherKnowledge = () => invoke<KnowledgeFile[]>("list_other_knowledge");
+export const readOtherKnowledge = (path: string) => invoke<string>("read_other_knowledge", { path });
+export const listKnowledgeDirs = () => invoke<string[]>("list_knowledge_dirs");
+export const writeKnowledge = (path: string, content: string) => invoke<void>("write_knowledge", { path, content });
+export const createKnowledgeFile = (path: string) => invoke<string>("create_knowledge_file", { path });
+export const createKnowledgeDir = (path: string) => invoke<void>("create_knowledge_dir", { path });
+export const renameKnowledge = (from: string, to: string) => invoke<void>("rename_knowledge", { from, to });
+export const deleteKnowledge = (path: string) => invoke<void>("delete_knowledge", { path });
 export type TransferReport = { files: number; skipped: number; dest: string | null };
 /** ナレッジ全体を選んだフォルダ直下の新しいフォルダへ書き出す。 */
 export const exportKnowledge = (dest: string) => invoke<TransferReport>("export_knowledge", { dest });

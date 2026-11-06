@@ -12,7 +12,7 @@ use crate::{
 };
 
 /// ダイアログで選ばれた、拡張子`.json`の絶対パスのみ受け付ける。
-fn json_path(path: &str) -> Result<PathBuf, AppError> {
+pub(super) fn json_path(path: &str) -> Result<PathBuf, AppError> {
     let p = PathBuf::from(path.trim());
     if !p.is_absolute() || p.extension().and_then(|e| e.to_str()) != Some("json") {
         return Err(AppError::PathNotAllowed);

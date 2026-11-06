@@ -10,13 +10,23 @@
 | プロンプトインジェクション | 外部由来の文章は「参考データ」として渡し、中の指示には従わせない | 各プロンプト |
 | コミット | `secrets.json`、`timeline.db`、`.env*` をコミットしない | — |
 
+## AWS 認証(`aws.rs`)
+
+- 設定画面に貼り付けた `~/.aws/config` と `~/.aws/credentials` の本文を、`secrets.json` に保持する。フロントエンドへはプロファイル名・リージョン・MFA の要否だけを返し、キーは返さない。
+- 使うプロファイルは、貼り付けた内容から読み取った候補(`preview_aws_config`。保存しない)の中から、保存前に利用者が選ぶ。候補が1つならそれが選ばれ、複数なら選ぶまで保存できない。保存済みの選択が使えなくなっても、他のプロファイルへ黙って切り替えず、未選択として扱う。
+- `role_arn` + `source_profile` のプロファイルは、`sts:AssumeRole`(MFA 付き)で一時クレデンシャルを得る。一時クレデンシャルは**メモリ上だけ**に置き、期限の 60 秒前に取り直す。ディスクにも保存しない。
+- MFA コードが必要なときは、Rust が `aws-mfa-required` イベントを送って入力を待つ(上限 180 秒、誤入力は 3 回まで再入力)。呼び出し側(対話・整理など)はコードが届くまで待ち、届けばそのまま続行する。同時に複数の呼び出しが来ても入力は 1 回にまとめる。
+- 対応するのは「アクセスキーを持つプロファイル」と「そのプロファイルを `source_profile` にした 1 段のロール」。SSO・`credential_process`・`credential_source`・ロールの連鎖は未対応。貼り付けフォームでは、選べないプロファイルをその理由(`source_profile` の参照先が無い、未対応の方式など)付きで表示する。
+- Bedrock にはサーバーツール(検索・ページ取得)が無いため、Web 検索は使えない。ファイル操作とコマンド実行(承認付き)は Anthropic 直接と同じ。
+- 使う Bedrock のモデルは利用者が登録する(モデル ID・推論プロファイル ID・ARN。`secrets.json` の `aws_models`)。初回の保存時だけ、`global.anthropic.claude-haiku-5-5`、`global.anthropic.claude-sonnet-5-5`、`global.anthropic.claude-opus-5-5` を候補として登録する。実際の ID はアカウントで `aws bedrock list-inference-profiles` を見て確認する。設定画面の「Bedrockからglobalのモデルを取得」で、推論プロファイル一覧(`bedrock:ListInferenceProfiles`)から `global.anthropic.` で始まる ID を取得して選べる(`list-foundation-models` は接頭辞なしの基盤モデル ID しか返さないため、推論プロファイル側を使う)。登録したモデルがモデル選択に並び、選択値はその ID そのものになる。
+
 ## API キー(`secrets.rs`)
 
 - 保存先は、アプリデータの `secrets.json`(所有者のみ読み書き可の権限 0600)。**平文の JSON** であり、OS のキーチェーンは使っていない。この点は設定画面にも明記している。
 - 取得関数(`get_key` / `get_aqua_key` / `get_tts_key`)は Rust 内部の HTTP クライアント専用で、**Tauri コマンドとして公開しない**。コマンドとして出すのは登録有無・保存・削除だけ。
 - 保存は一時ファイルへ書いてからリネームする(書き込み途中の破損を避ける)。
 - 保存前に疎通確認を行い、成功したときだけ保存する(モデル一覧取得・音声一覧取得・認証のみの確認。いずれも読み取り専用で課金されない)。
-- キーの種類: Anthropic、OpenAI、Google Cloud(TTS と Google STT で共通)、Aqua Voice(Google とは別)。
+- キーの種類: Anthropic、Amazon Bedrock(下記)、Google Cloud(TTS と Google STT で共通)、Aqua Voice(Google とは別)。
 - エラーの `message` には API キーを含めない。キーはリクエストヘッダーにのみ載り、デバッグログの本文にも含まれない。
 - 設定のエクスポートには含めない。
 
@@ -60,7 +70,8 @@
 
 | 送信先 | 送るもの |
 | --- | --- |
-| Anthropic / OpenAI | 発話、直近の会話、要約、パーソナルデータ(有効時)、関連ナレッジの要約、ツール結果。整理バッチ・校正・要約でも会話の内容 |
+| Anthropic | 発話、直近の会話、要約、パーソナルデータ(有効時)、関連ナレッジの要約、ツール結果。整理バッチ・校正・要約でも会話の内容 |
+| Amazon Bedrock | Anthropic と同様(AWS の指定リージョンへ送信) |
 | Anthropic(Web 検索・取得) | 検索語・URL(ナレッジや会話の内容を含めないよう指示) |
 | Google Cloud | 応答テキスト(TTS)、録音(Google STT を選んだときのみ) |
 | Aqua Voice | 録音(Aqua を選んだときのみ) |

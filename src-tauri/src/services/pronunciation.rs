@@ -92,6 +92,39 @@ pub fn save_user(app_data: &Path, entries: Vec<Entry>) -> Result<Vec<Entry>, App
     Ok(entries)
 }
 
+/// 一括取り込みの結果。`entries`は取り込み後のユーザー辞書全体。
+#[derive(Debug, Serialize)]
+pub struct ImportReport {
+    pub entries: Vec<Entry>,
+    /// 新しく追加した語数。
+    pub added: usize,
+    /// 登録済みの語の読みを置き換えた語数。
+    pub updated: usize,
+}
+
+/// 書き出し・取り込みで使うJSON(`[{"word": "...", "reading": "..."}]`)へ整形する。
+pub fn to_json(entries: &[Entry]) -> Result<String, AppError> {
+    serde_json::to_string_pretty(entries).map_err(|e| AppError::Io(e.to_string()))
+}
+
+/// 取り込み用のJSONを読み、空の項目を除き、ファイル内の重複(大文字小文字違いを含む)は後の項目で上書きする。
+pub fn parse_import(text: &str) -> Result<Vec<Entry>, AppError> {
+    let entries = serde_json::from_str::<Vec<Entry>>(text)
+        .map_err(|_| AppError::InvalidDictionary("形式が正しくありません".into()))?;
+    normalize(entries)
+}
+
+/// 取り込んだ語を現在のユーザー辞書へ重ねて保存する。同じ語は取り込み側で上書きし、それ以外の登録は残す。
+/// 上限や文字数の超過で失敗した場合は、保存済みの辞書を変更しない。
+pub fn import_user(app_data: &Path, imported: Vec<Entry>) -> Result<ImportReport, AppError> {
+    let current = load_user(app_data);
+    let exists = |w: &str| current.iter().any(|c| c.word.to_lowercase() == w.to_lowercase());
+    let updated = imported.iter().filter(|e| exists(&e.word)).count();
+    let added = imported.len() - updated;
+    let entries = save_user(app_data, current.iter().cloned().chain(imported).collect())?;
+    Ok(ImportReport { entries, added, updated })
+}
+
 /// 置換する語と読みの対応。長い語から順に照合する。
 pub struct Dictionary {
     entries: Vec<(Vec<char>, String)>,
@@ -228,5 +261,46 @@ mod tests {
         assert!(save_user(dir.path(), vec![entry(&"a".repeat(65), "あ")]).is_err());
         let many = (0..501).map(|i| entry(&format!("w{i}"), "あ")).collect();
         assert!(save_user(dir.path(), many).is_err());
+    }
+
+    #[test]
+    fn parse_import_overwrites_duplicates_in_file() {
+        let got = parse_import(
+            r#"[{"word":"Figma","reading":"フィグマ"},{"word":" ","reading":"x"},{"word":"figma","reading":"フィグマー"},{"word":"Zoom","reading":"ズーム"}]"#,
+        )
+        .unwrap();
+        assert_eq!(got, vec![entry("figma", "フィグマー"), entry("Zoom", "ズーム")]);
+    }
+
+    #[test]
+    fn parse_import_rejects_bad_shape() {
+        assert!(parse_import("not json").is_err());
+        assert!(parse_import(r#"{"word":"a","reading":"b"}"#).is_err());
+        assert!(parse_import(r#"[{"word":"a"}]"#).is_err());
+    }
+
+    #[test]
+    fn import_merges_with_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        save_user(dir.path(), vec![entry("Figma", "フィグマ"), entry("Zoom", "ズーム")]).unwrap();
+        let r = import_user(dir.path(), vec![entry("FIGMA", "フィグマー"), entry("Miro", "ミロ")]).unwrap();
+        assert_eq!((r.added, r.updated), (1, 1));
+        assert_eq!(r.entries, vec![entry("Zoom", "ズーム"), entry("FIGMA", "フィグマー"), entry("Miro", "ミロ")]);
+        assert_eq!(load_user(dir.path()), r.entries);
+    }
+
+    #[test]
+    fn import_over_limit_keeps_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        save_user(dir.path(), vec![entry("Figma", "フィグマ")]).unwrap();
+        let many = (0..500).map(|i| entry(&format!("w{i}"), "あ")).collect();
+        assert!(import_user(dir.path(), many).is_err());
+        assert_eq!(load_user(dir.path()), vec![entry("Figma", "フィグマ")]);
+    }
+
+    #[test]
+    fn export_roundtrips_through_import() {
+        let json = to_json(&[entry("Figma", "フィグマ")]).unwrap();
+        assert_eq!(parse_import(&json).unwrap(), vec![entry("Figma", "フィグマ")]);
     }
 }

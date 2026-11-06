@@ -33,7 +33,7 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
 ### 対話
 
 - **LLM 対話** ([chat-flow.md](docs/chat-flow.md))
-  - Anthropic / OpenAI に対応し、使うモデルは画面で選びます。
+  - Anthropic / Amazon Bedrock(Claude)に対応し、使うモデルは画面で選びます。
   - 応答は読み上げ向けの短い話し言葉です。
   - 読み上げ後は自動で音声入力が再開し、会話を続けられます。
 - **会話の継続と切り替え** ([conversation-session.md](docs/conversation-session.md))
@@ -105,9 +105,9 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
 | プロバイダー | 軽量 | 高性能 |
 | --- | --- | --- |
 | Anthropic | Claude Haiku 5.5 | Claude Sonnet 5.5 / Claude Opus 5.5 |
-| OpenAI | GPT-4o mini | GPT-4o |
+| Amazon Bedrock | (設定画面で登録したモデル ID) | (同左) |
 
-ファイル操作・コマンド実行・インターネット検索は Claude 選択時のみ使えます。
+ファイル操作・コマンド実行は両プロバイダーで使えます。インターネット検索・ページ取得は Anthropic 直接のときだけ使えます(Bedrock には Anthropic のサーバーツールが無いため)。
 
 ### キーボードショートカット
 
@@ -164,7 +164,7 @@ npm run tauri build
 | 用途 | キー |
 | --- | --- |
 | Claude | Anthropic API キー |
-| GPT | OpenAI API キー |
+| Claude(Bedrock 経由) | `~/.aws/config` と `~/.aws/credentials` の中身(設定画面へそのまま貼り付け)。MFA 付きのスイッチロール(`role_arn` + `source_profile` + `mfa_serial`)に対応。Web 検索・ページ取得は使えない |
 | 音声出力 / Google STT | Google Cloud API キー |
 | Aqua Voice(STT) | Aqua Voice API キー |
 

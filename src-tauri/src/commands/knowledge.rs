@@ -55,9 +55,58 @@ pub fn list_knowledge(app: AppHandle) -> Result<Vec<KnowledgeFile>, AppError> {
     knowledge::list(&batch::knowledge_root(&app)?)
 }
 
+/// Markdown以外のファイル一覧(閲覧専用)。
+#[tauri::command]
+pub fn list_other_knowledge(app: AppHandle) -> Result<Vec<KnowledgeFile>, AppError> {
+    knowledge::list_other(&batch::knowledge_root(&app)?)
+}
+
+/// Markdown以外のファイルの本文(閲覧専用)。
+#[tauri::command]
+pub fn read_other_knowledge(app: AppHandle, path: String) -> Result<String, AppError> {
+    knowledge::read_other(&batch::knowledge_root(&app)?, &path)
+}
+
 #[tauri::command]
 pub fn read_knowledge(app: AppHandle, path: String) -> Result<String, AppError> {
     knowledge::read(&batch::knowledge_root(&app)?, &path)
+}
+
+fn now() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+#[tauri::command]
+pub fn list_knowledge_dirs(app: AppHandle) -> Result<Vec<String>, AppError> {
+    knowledge::list_dirs(&batch::knowledge_root(&app)?)
+}
+
+/// 既存ノートの本文を保存する。
+#[tauri::command]
+pub fn write_knowledge(app: AppHandle, path: String, content: String) -> Result<(), AppError> {
+    knowledge::write(&batch::knowledge_root(&app)?, &path, &content)
+}
+
+#[tauri::command]
+pub fn create_knowledge_file(app: AppHandle, path: String) -> Result<String, AppError> {
+    knowledge::create_file(&batch::knowledge_root(&app)?, &path, &now())
+}
+
+#[tauri::command]
+pub fn create_knowledge_dir(app: AppHandle, path: String) -> Result<(), AppError> {
+    knowledge::create_dir(&batch::knowledge_root(&app)?, &path)
+}
+
+/// ファイル・フォルダの名前変更と移動。
+#[tauri::command]
+pub fn rename_knowledge(app: AppHandle, from: String, to: String) -> Result<(), AppError> {
+    knowledge::rename(&batch::knowledge_root(&app)?, &from, &to)
+}
+
+/// ファイル、またはフォルダ(中身ごと)を削除する。確認は呼び出し側で行うこと。
+#[tauri::command]
+pub fn delete_knowledge(app: AppHandle, path: String) -> Result<(), AppError> {
+    knowledge::delete(&batch::knowledge_root(&app)?, &path)
 }
 
 /// 手動トリガー。実行中・対象なし・キー未登録の場合は`None`。

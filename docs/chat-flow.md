@@ -17,11 +17,7 @@ sequenceDiagram
   C->>LLM: (必要なら)古い会話を要約
   C->>K: 関連ノートを想起(グラフ)
   C->>C: システムプロンプトを組み立てる
-  alt Anthropic(Claude)
-    C->>LLM: ツール付きループ(agent-file-tools / command-tasks)
-  else OpenAI
-    C->>LLM: 通常の1回の補完
-  end
+  C->>LLM: ツール付きループ(agent-file-tools / command-tasks)
   C->>DB: 応答を保存、トークン使用量を記録
   C->>K: キャプチャへ1往復を追記
   C-->>FE: ChatReply { content, provider, model }
@@ -31,7 +27,7 @@ sequenceDiagram
 2. **発話の保存**: `conversation_logs` に `user` として保存する。
 3. **会話の用意**: 往復数が上限(調整項目 `history_exchanges`、既定 10)を超えていれば、古い分を要約して「要約 + 直近の会話」だけを LLM へ渡す(後述)。
 4. **システムプロンプトの組み立て**(後述)。
-5. **LLM 呼び出し**: Claude を選んでいるときだけ、ファイル操作・コマンド実行・Web 検索のツールを付けたループ(`commands/agent.rs::run_with_tools`)で呼ぶ。OpenAI は従来どおりツールなしの 1 回の呼び出し。
+5. **LLM 呼び出し**: ファイル操作・コマンド実行・Web 検索(Bedrock は除く)のツールを付けたループ(`commands/agent.rs::run_with_tools`)で呼ぶ。
 6. **後処理**: 応答を `assistant` として保存し、1 往復をナレッジの「キャプチャ」へ追記して `knowledge-updated` を通知する。LLM を使う整理はここでは行わない([knowledge.md](knowledge.md))。
 
 使用量(入力・出力トークン)は LLM 呼び出しごとに `usage_logs` へ記録する。途中で失敗しても、そこまでに使った分は残る。
@@ -43,7 +39,7 @@ sequenceDiagram
   | プロバイダー | モデル |
   | --- | --- |
   | Anthropic | `claude-haiku-5-5`、`claude-sonnet-5-5`、`claude-opus-5-5` |
-  | OpenAI | `gpt-4o-mini`、`gpt-4o` |
+  | Amazon Bedrock | 利用者が設定画面で登録したモデル ID(認証は [security.md](security.md) の「AWS 認証」) |
 
 - 自動ルーティングは無く、ユーザーが画面(`ModelSelector`)で選んだ `Route` を使う。選択は `app_settings.routing` に保存する。
 - 保存済みの選択が使えない(キーを削除した等)ときは既定へ戻す。既定は、Claude が使えれば Sonnet、なければ使えるプロバイダーのカタログ先頭。
@@ -78,8 +74,7 @@ sequenceDiagram
 
 | 状況 | 渡すもの |
 | --- | --- |
-| 起点が見つかった・Claude | `<related_knowledge>`: パス・タイトル・要約・選んだ理由の一覧。本文は渡さず、必要なときにモデルが `read_file` で読む(段階読み) |
-| 起点が見つかった・OpenAI | 同じ一覧に加え、最も関連するノート 1 件の本文末尾 1,000 文字(OpenAI はツールで本文を読めないため) |
+| 起点が見つかった | `<related_knowledge>`: パス・タイトル・要約・選んだ理由の一覧。本文は渡さず、必要なときにモデルが `read_file` で読む(段階読み) |
 | 起点が見つからない | `<previous_context>`: 直近更新された Markdown 3 件の末尾、合計 2,000 文字まで |
 
 ## 長い会話の要約(`compact.rs`)

@@ -165,7 +165,7 @@ mod tests {
     fn roundtrip_between_databases() {
         let (_da, a) = mem();
         a.set_setting(chat::SHELL_ACCESS_KEY, "0").unwrap();
-        a.set_setting(chat::ROUTE_KEY, r#"{"provider":"openai","model":"x"}"#).unwrap();
+        a.set_setting(chat::ROUTE_KEY, r#"{"provider":"anthropic","model":"x"}"#).unwrap();
         a.set_setting("knowledge_dir", "/somewhere").unwrap();
         a.set_setting("summary:abc", "{}").unwrap();
         let text = serde_json::to_string(&collect(&a, Policy::defaults(), "t".into()).unwrap()).unwrap();

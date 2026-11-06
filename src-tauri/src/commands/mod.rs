@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod aws;
 pub mod chat;
 pub mod command_policy;
 pub mod debug;

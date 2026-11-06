@@ -211,18 +211,75 @@ fn walk(root: &Path, dir: &Path, depth: u8, out: &mut Vec<KnowledgeFile>) -> Res
             let text = fs::read_to_string(&path).unwrap_or_default();
             let rel = path.strip_prefix(root).map_err(|_| AppError::PathNotAllowed)?;
             let rel_s = rel.to_string_lossy().replace('\\', "/");
-            let (title, category, updated_at) = match parse(&text) {
-                Some((fm, _)) => (fm.title, fm.category, fm.updated_at),
-                None => (
-                    path.file_stem().unwrap_or_default().to_string_lossy().into_owned(),
-                    rel.parent().map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default(),
-                    String::new(),
-                ),
+            let category = rel.parent().map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
+            let (title, updated_at) = match parse(&text) {
+                Some((fm, _)) => (fm.title, fm.updated_at),
+                None => (path.file_stem().unwrap_or_default().to_string_lossy().into_owned(), String::new()),
             };
             out.push(KnowledgeFile { path: rel_s, title, category, updated_at });
         }
     }
     Ok(())
+}
+
+/// Markdown以外のファイル一覧(最大3階層)。閲覧専用。`.`始まりとシンボリックリンクは除く。
+pub fn list_other(root: &Path) -> Result<Vec<KnowledgeFile>, AppError> {
+    fn walk_other(root: &Path, dir: &Path, depth: u8, out: &mut Vec<KnowledgeFile>) -> Result<(), AppError> {
+        if depth > 3 {
+            return Ok(());
+        }
+        for entry in fs::read_dir(dir).map_err(io)? {
+            let entry = entry.map_err(io)?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            let ft = entry.file_type().map_err(io)?;
+            let path = entry.path();
+            if ft.is_dir() {
+                walk_other(root, &path, depth + 1, out)?;
+            } else if ft.is_file() && path.extension().is_none_or(|x| x != "md") {
+                let rel = path.strip_prefix(root).map_err(|_| AppError::PathNotAllowed)?;
+                let category = rel.parent().map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
+                let updated_at = entry
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+                    .unwrap_or_default();
+                out.push(KnowledgeFile { path: rel.to_string_lossy().replace('\\', "/"), title: name, category, updated_at });
+            }
+        }
+        Ok(())
+    }
+    let mut out = Vec::new();
+    if !root.exists() {
+        return Ok(out);
+    }
+    let root = root.canonicalize().map_err(io)?;
+    walk_other(&root, &root, 0, &mut out)?;
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(out)
+}
+
+/// Markdown以外のファイルの本文(閲覧専用)。バイナリは拒否し、大きい場合は新しい側の末尾だけを行の区切りから返す。
+pub fn read_other(root: &Path, rel: &str) -> Result<String, AppError> {
+    if rel.ends_with(".md") || rel.split('/').any(|p| p.starts_with('.')) {
+        return Err(AppError::PathNotAllowed);
+    }
+    let bytes = fs::read(resolve_existing(root, rel)?).map_err(io)?;
+    if bytes.contains(&0) {
+        return Err(AppError::Io("バイナリファイルは表示できません".to_owned()));
+    }
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    if text.len() <= MAX_EDIT_BYTES {
+        return Ok(text);
+    }
+    let mut start = text.len() - MAX_EDIT_BYTES;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    let tail = &text[start..];
+    Ok(tail.split_once('\n').map_or(tail, |(_, rest)| rest).to_owned())
 }
 
 /// エクスポート・インポート・初期化の結果。
@@ -506,9 +563,177 @@ pub fn read(root: &Path, rel: &str) -> Result<String, AppError> {
     fs::read_to_string(resolve_existing(root, rel)?).map_err(io)
 }
 
+/// 編集可能なMarkdownの上限。
+const MAX_EDIT_BYTES: usize = 5 * 1024 * 1024;
+
+/// 既存ノートの本文を丸ごと置き換える。
+pub fn write(root: &Path, rel: &str, content: &str) -> Result<(), AppError> {
+    if !rel.ends_with(".md") || content.len() > MAX_EDIT_BYTES {
+        return Err(AppError::PathNotAllowed);
+    }
+    atomic_write(&resolve_existing(root, rel)?, content)
+}
+
+/// フォルダ名として安全か(`slug`で変化しない名前)。
+fn is_safe_dir_name(name: &str) -> bool {
+    !name.is_empty() && slug(name, 40) == name
+}
+
+/// 新規フォルダの相対パスを検証し、親までを作成して実パスを返す。既存なら拒否する。
+fn resolve_new_dir(root: &Path, rel: &str) -> Result<PathBuf, AppError> {
+    let names: Vec<String> = rel.split('/').map(str::to_owned).collect();
+    if names.len() > 3 || !names.iter().all(|n| is_safe_dir_name(n)) {
+        return Err(AppError::PathNotAllowed);
+    }
+    let (leaf, parents) = names.split_last().ok_or(AppError::PathNotAllowed)?;
+    let dir = ensure_dir(root, parents)?.join(leaf);
+    if dir.symlink_metadata().is_ok() {
+        return Err(AppError::Io("already_exists".to_owned()));
+    }
+    Ok(dir)
+}
+
+/// 新規ノートを作る。`rel`は`.md`付きの相対パス。既存なら拒否する。作成した相対パスを返す。
+pub fn create_file(root: &Path, rel: &str, now: &str) -> Result<String, AppError> {
+    let Some(stem) = rel.strip_suffix(".md") else {
+        return Err(AppError::PathNotAllowed);
+    };
+    let path = resolve_new_file(root, rel)?;
+    if path.symlink_metadata().is_ok() {
+        return Err(AppError::Io("already_exists".to_owned()));
+    }
+    let title = stem.rsplit('/').next().unwrap_or(stem);
+    let category = rel.rsplit_once('/').map(|(c, _)| c).unwrap_or("");
+    let fm = Frontmatter {
+        title: title.to_owned(),
+        category: category.to_owned(),
+        created_at: now.to_owned(),
+        updated_at: now.to_owned(),
+        ..Default::default()
+    };
+    atomic_write(&path, &format!("{}\n# {title}\n", fm.render()))?;
+    Ok(rel.to_owned())
+}
+
+/// 新規フォルダ(空)を作る。既存なら拒否する。
+pub fn create_dir(root: &Path, rel: &str) -> Result<(), AppError> {
+    let dir = resolve_new_dir(root, rel)?;
+    fs::create_dir(dir).map_err(io)
+}
+
+/// ファイルまたはフォルダの名前変更・移動。移動先が既存なら拒否する。
+pub fn rename(root: &Path, from: &str, to: &str) -> Result<(), AppError> {
+    let src = resolve_existing(root, from)?;
+    let dst = if src.is_dir() {
+        let dst = resolve_new_dir(root, to)?;
+        if dst.starts_with(&src) {
+            return Err(AppError::PathNotAllowed);
+        }
+        dst
+    } else {
+        if !from.ends_with(".md") || !to.ends_with(".md") {
+            return Err(AppError::PathNotAllowed);
+        }
+        let dst = resolve_new_file(root, to)?;
+        if dst.symlink_metadata().is_ok() {
+            return Err(AppError::Io("already_exists".to_owned()));
+        }
+        dst
+    };
+    fs::rename(src, dst).map_err(io)
+}
+
+/// ファイルまたはフォルダ(中身ごと)を削除する。ルート自体は削除できない。
+pub fn delete(root: &Path, rel: &str) -> Result<(), AppError> {
+    let target = resolve_existing(root, rel)?;
+    if target.is_dir() {
+        fs::remove_dir_all(target).map_err(io)
+    } else if rel.ends_with(".md") {
+        fs::remove_file(target).map_err(io)
+    } else {
+        Err(AppError::PathNotAllowed)
+    }
+}
+
+/// フォルダ一覧(空フォルダ含む、最大3階層)。`.`始まりとシンボリックリンクは除く。
+pub fn list_dirs(root: &Path) -> Result<Vec<String>, AppError> {
+    fn walk_dirs(root: &Path, dir: &Path, depth: u8, out: &mut Vec<String>) -> Result<(), AppError> {
+        if depth >= 3 {
+            return Ok(());
+        }
+        for entry in fs::read_dir(dir).map_err(io)? {
+            let entry = entry.map_err(io)?;
+            if !entry.file_type().map_err(io)?.is_dir() || entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            let path = entry.path();
+            let rel = path.strip_prefix(root).map_err(|_| AppError::PathNotAllowed)?;
+            out.push(rel.to_string_lossy().replace('\\', "/"));
+            walk_dirs(root, &path, depth + 1, out)?;
+        }
+        Ok(())
+    }
+    let mut out = Vec::new();
+    if !root.exists() {
+        return Ok(out);
+    }
+    let root = root.canonicalize().map_err(io)?;
+    walk_dirs(&root, &root, 0, &mut out)?;
+    out.sort();
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lists_and_reads_non_markdown_read_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("knowledge");
+        create_dir(&root, "debug-logs").unwrap();
+        fs::write(root.join("debug-logs/2026-01-01.jsonl"), "{\"a\":1}\n").unwrap();
+        fs::write(root.join("debug-logs/.hidden"), "x").unwrap();
+        fs::write(root.join("debug-logs/bin.dat"), [0u8, 1, 2]).unwrap();
+        create_file(&root, "debug-logs/note.md", "2026-10-29T00:00:00Z").unwrap();
+        let paths: Vec<_> = list_other(&root).unwrap().into_iter().map(|f| f.path).collect();
+        assert_eq!(paths, ["debug-logs/2026-01-01.jsonl", "debug-logs/bin.dat"]);
+        assert!(list(&root).unwrap().iter().all(|f| f.path.ends_with(".md")));
+        assert!(read_other(&root, "debug-logs/2026-01-01.jsonl").unwrap().contains("\"a\":1"));
+        assert!(read_other(&root, "debug-logs/bin.dat").is_err());
+        assert!(read_other(&root, "debug-logs/note.md").is_err());
+        assert!(read_other(&root, "debug-logs/.hidden").is_err());
+        assert!(read_other(&root, "../x.txt").is_err());
+        assert!(write(&root, "debug-logs/2026-01-01.jsonl", "x").is_err());
+        assert!(delete(&root, "debug-logs/2026-01-01.jsonl").is_err());
+    }
+
+    #[test]
+    fn crud_roundtrip_and_rejects_unsafe() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("knowledge");
+        create_dir(&root, "Dev").unwrap();
+        assert!(create_dir(&root, "Dev").is_err());
+        assert!(create_dir(&root, "../x").is_err());
+        assert!(create_dir(&root, "a b").is_err());
+        let rel = create_file(&root, "Dev/memo.md", "2026-10-29T00:00:00Z").unwrap();
+        assert!(create_file(&root, "Dev/memo.md", "x").is_err());
+        assert!(create_file(&root, "Dev/memo.txt", "x").is_err());
+        write(&root, &rel, "# edited\n").unwrap();
+        assert_eq!(read(&root, &rel).unwrap(), "# edited\n");
+        assert!(write(&root, "../x.md", "x").is_err());
+        rename(&root, "Dev/memo.md", "Dev/note.md").unwrap();
+        create_dir(&root, "Ops").unwrap();
+        rename(&root, "Dev/note.md", "Ops/note.md").unwrap();
+        assert_eq!(list(&root).unwrap()[0].category, "Ops");
+        assert!(rename(&root, "Ops", "Ops/Sub").is_err());
+        rename(&root, "Ops", "Ops2").unwrap();
+        assert_eq!(list_dirs(&root).unwrap(), ["Dev", "Ops2"]);
+        delete(&root, "Ops2").unwrap();
+        assert!(list(&root).unwrap().is_empty());
+        assert!(delete(&root, "").is_err());
+        assert!(delete(&root, "..").is_err());
+    }
 
     fn entry<'a>(cat: &'a str, file: &'a str, content: &'a str, ids: &'a [String]) -> Entry<'a> {
         Entry { category: cat, filename: file, title: "T", tags: &[], content, source_log_ids: ids }

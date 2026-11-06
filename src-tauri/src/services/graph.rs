@@ -397,15 +397,6 @@ pub fn render(hits: &[Hit], max_chars: usize) -> String {
     out
 }
 
-/// 本文の末尾(最新の追記)を`max_chars`文字まで返す。ツールを使えない経路で最上位の1件だけ同梱する。
-pub fn excerpt(root: &Path, path: &str, max_chars: usize) -> Option<String> {
-    let text = knowledge::read(root, path).ok()?;
-    let body = knowledge::parse(&text).map_or(text.as_str(), |(_, b)| b).trim();
-    let skip = body.chars().count().saturating_sub(max_chars);
-    let tail = body.char_indices().nth(skip).map_or(body, |(i, _)| &body[i..]);
-    (!tail.is_empty()).then(|| tail.to_owned())
-}
-
 /// 索引のキャッシュ。ナレッジの指紋が変わったときだけ作り直す(Obsidian等での直接編集にも追従する)。
 #[derive(Default)]
 pub struct GraphCache(Mutex<Option<(u64, Arc<Graph>)>>);
@@ -516,7 +507,6 @@ mod tests {
         assert!(hits[0].summary.chars().count() <= SUMMARY_CHARS + 1);
         assert!(render(&hits, 10).is_empty());
         assert!(render(&hits, 1000).starts_with("- Dev/a.md | Alpha"));
-        assert!(excerpt(&root, "Dev/a.md", 10).unwrap().chars().count() <= 10);
 
         note(&root, "Dev", "b", "Beta", &[], "x", &[]);
         let g2 = cache.get(&root).unwrap();

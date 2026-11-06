@@ -230,7 +230,7 @@ mod tests {
     fn logs_roundtrip_in_order_and_unprocessed() {
         let db = mem();
         db.insert_log("s", "user", "hi", None, None).unwrap();
-        db.insert_log("s", "assistant", "hello", Some("openai"), Some("gpt-4o")).unwrap();
+        db.insert_log("s", "assistant", "hello", Some("anthropic"), Some("claude-sonnet-5-5")).unwrap();
         db.insert_log("other", "user", "x", None, None).unwrap();
         let rows = db.recent_messages("s", 10).unwrap();
         assert_eq!(rows.iter().map(|r| r.content.as_str()).collect::<Vec<_>>(), ["hi", "hello"]);

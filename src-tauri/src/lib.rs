@@ -22,10 +22,22 @@ pub fn run() {
       tray::set_tray_language,
       commands::agent::agent_approve,
       commands::agent::agent_cancel,
+      commands::aws::get_aws_status,
+      commands::aws::preview_aws_config,
+      commands::aws::save_aws_config,
+      commands::aws::select_aws_profile,
+      commands::aws::fetch_aws_models,
+      commands::aws::add_aws_model,
+      commands::aws::remove_aws_model,
+      commands::aws::test_aws_connection,
+      commands::aws::submit_aws_mfa,
+      commands::aws::cancel_aws_mfa,
       commands::command_policy::get_command_policy,
       commands::command_policy::get_default_command_policy,
       commands::command_policy::set_command_policy,
       commands::debug::delete_debug_logs,
+      commands::debug::get_debug_log_dir,
+      commands::debug::set_debug_log_dir,
       commands::debug::list_debug_logs,
       commands::debug::read_debug_log,
       commands::settings::get_key_status,
@@ -69,6 +81,7 @@ pub fn run() {
       commands::voice::stop_recording_and_transcribe,
       commands::voice::stop_recording_and_check_wake,
       commands::voice::trim_recording,
+      commands::voice::transcribe_wake_sample,
       commands::voice::get_wake_config,
       commands::voice::set_wake_config,
       commands::voice::voice_phrases_status,
@@ -77,6 +90,8 @@ pub fn run() {
       commands::voice::synthesize_speech,
       commands::voice::get_tts_dictionary,
       commands::voice::set_tts_dictionary,
+      commands::voice::export_tts_dictionary,
+      commands::voice::import_tts_dictionary,
       commands::voice::get_tts_engine,
       commands::voice::set_tts_engine,
       commands::voice::get_voicevox_style,
@@ -98,6 +113,14 @@ pub fn run() {
       commands::knowledge::set_knowledge_dir,
       commands::knowledge::list_knowledge,
       commands::knowledge::read_knowledge,
+      commands::knowledge::list_other_knowledge,
+      commands::knowledge::read_other_knowledge,
+      commands::knowledge::list_knowledge_dirs,
+      commands::knowledge::write_knowledge,
+      commands::knowledge::create_knowledge_file,
+      commands::knowledge::create_knowledge_dir,
+      commands::knowledge::rename_knowledge,
+      commands::knowledge::delete_knowledge,
       commands::knowledge::export_knowledge,
       commands::knowledge::import_knowledge,
       commands::knowledge::reset_knowledge,
@@ -111,6 +134,7 @@ pub fn run() {
       services::legacy_data::migrate(&dir);
       std::fs::create_dir_all(&dir)?;
       services::secrets::init(&dir)?;
+      services::aws::init(app.handle());
       app.manage(db::Db::open(&dir.join("timeline.db"))?);
       app.manage(commands::chat::SessionContexts::default());
       app.manage(services::graph::GraphCache::default());
