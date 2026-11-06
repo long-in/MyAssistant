@@ -252,6 +252,8 @@ export const EN: Record<string, string> = {
   "定型音声を作成": "Create fixed phrases",
   "作成済み": "Created",
   "未作成": "Not created",
+  "再生": "Play",
+  "停止": "Stop",
   "追加できませんでした。2〜20文字で、すでにある語(ひらがな・カタカナの違いを除く)とは別の語にしてください。登録は10個までです。": "Could not add it. Use 2–20 characters that differ from existing words (ignoring hiragana/katakana differences). Up to 10 can be registered.",
   "常時音声待機": "Always-on voice standby",
   "対話画面を開いている間マイクを開いたままにし、起動ワードを含む発話があると「用件は、なんでしょうか」と応えて依頼を待ちます。「タチコマ、今日の予定は」のように続けて話すと、そのまま依頼として送ります。": "While the conversation screen is open, the microphone stays on, and when you say something containing a wake word, the assistant answers and waits for your request. If you continue speaking, like \"Tachikoma, what's on today?\", it is sent as the request as-is.",

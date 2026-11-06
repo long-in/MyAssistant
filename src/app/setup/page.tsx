@@ -3,7 +3,7 @@
 import { LANGS, setLang, tr, useLang, useT, type Lang } from "@/lib/i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Check, ChevronDown, Download, KeyRound, Loader2, Mic, Pencil, Plus, Square, Trash2, Upload, X } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, Download, KeyRound, Loader2, Mic, Pencil, Play, Plus, Square, Trash2, Upload, X } from "lucide-react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -100,8 +100,12 @@ import {
   setDebugMode,
   setShellAccess,
   setWebAccess,
+  playBase64Mp3,
+  stopSpeech,
   ttsKeyRegistered,
+  voicePhraseAudio,
   voicePhrasesStatus,
+  waitForSpeechEnd,
 } from "@/lib/api";
 
 type KeyRowProps = {
@@ -890,6 +894,9 @@ function VoicePhrases({ ready, engine, style }: { ready: boolean; engine: TtsEng
   const t = useT();
   const [phrases, setPhrases] = useState<VoicePhrase[]>([]);
   const [busy, setBusy] = useState(false);
+  // 再生中の定型音声のid
+  const [playing, setPlaying] = useState<string | null>(null);
+  useEffect(() => () => stopSpeech(), []); // 画面を離れたら再生を止める
   useEffect(() => {
     voicePhrasesStatus()
       .then(setPhrases)
@@ -907,6 +914,26 @@ function VoicePhrases({ ready, engine, style }: { ready: boolean; engine: TtsEng
       voicePhrasesStatus().then(setPhrases).catch(() => {});
     } finally {
       setBusy(false);
+    }
+  };
+
+  /** 作成した音声を確認のために再生する。再生中に押すと止める。 */
+  const toggle = async (id: VoicePhrase["id"]) => {
+    if (playing === id) {
+      stopSpeech();
+      setPlaying(null);
+      return;
+    }
+    setPlaying(id);
+    try {
+      const audio = await voicePhraseAudio(id as Parameters<typeof voicePhraseAudio>[0]);
+      if (!audio) throw new Error(t("未作成"));
+      await playBase64Mp3(audio);
+      await waitForSpeechEnd();
+    } catch (e) {
+      toast.error(reportError(e));
+    } finally {
+      setPlaying((cur) => (cur === id ? null : cur));
     }
   };
 
@@ -930,6 +957,16 @@ function VoicePhrases({ ready, engine, style }: { ready: boolean; engine: TtsEng
           <li key={p.id} className="flex items-center gap-2">
             <Badge variant={p.ready ? "default" : "outline"}>{p.ready ? t("作成済み") : t("未作成")}</Badge>
             <span className="text-muted-foreground">{p.text}</span>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              disabled={!p.ready}
+              aria-label={playing === p.id ? t("停止") : t("再生")}
+              title={playing === p.id ? t("停止") : t("再生")}
+              onClick={() => toggle(p.id)}
+            >
+              {playing === p.id ? <Square /> : <Play />}
+            </Button>
           </li>
         ))}
       </ul>
