@@ -55,6 +55,9 @@ const AWS_PROFILE_ACCOUNT: &str = "aws_profile";
 /// 使うBedrockのモデルID一覧(JSON配列)。秘密ではないが、プロファイルと同じ理由で同じストアに置く。
 const AWS_MODELS_ACCOUNT: &str = "aws_models";
 
+/// `Secrets::backup`で控えた内容。中身はこのモジュールの外へ出さない。
+pub struct SecretsBackup(HashMap<String, String>);
+
 /// 1つのワークスペース(`secrets.json`)分のキー保管庫。ワークスペースごとに別インスタンスを持つ。
 pub struct Secrets {
     path: PathBuf,
@@ -82,9 +85,25 @@ impl Secrets {
         let snapshot = src.map().clone();
         let count = snapshot.len();
         let mut map = self.map();
-        map.extend(snapshot);
-        write_private(&self.path, &map)?;
+        // 書き込みに成功してからメモリへ反映する(失敗したときに、メモリだけ新しい内容になるのを避ける)
+        let mut merged = map.clone();
+        merged.extend(snapshot);
+        write_private(&self.path, &merged)?;
+        *map = merged;
         Ok(count)
+    }
+
+    /// 現在の保存内容を控える。`restore`で元へ戻すためのもので、中身は外から読めない。
+    pub fn backup(&self) -> SecretsBackup {
+        SecretsBackup(self.map().clone())
+    }
+
+    /// `backup`で控えた内容へ戻す。
+    pub fn restore(&self, backup: SecretsBackup) -> Result<(), AppError> {
+        let mut map = self.map();
+        write_private(&self.path, &backup.0)?;
+        *map = backup.0;
+        Ok(())
     }
 
     fn map(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {

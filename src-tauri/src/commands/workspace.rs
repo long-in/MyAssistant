@@ -1,6 +1,7 @@
 use tauri::{AppHandle, Emitter, State};
 
 use crate::{
+    commands::chat::SessionContexts,
     services::{
         debug_log,
         settings_transfer::{self, CopyOptions, CopyReport},
@@ -51,11 +52,20 @@ pub fn update_project(
 
 /// プロジェクトを、データごと削除する。元に戻せないため、呼び出し側で確認を取ること。選択中ならパーソナルへ戻る。
 #[tauri::command]
-pub fn delete_project(app: AppHandle, ws: State<'_, Workspaces>, id: String) -> Result<ActiveWorkspace, AppError> {
-    let was_active = ws.active_info().id == id;
-    ws.delete(&id)?;
+pub fn delete_project(
+    app: AppHandle,
+    ws: State<'_, Workspaces>,
+    contexts: State<'_, SessionContexts>,
+    id: String,
+) -> Result<ActiveWorkspace, AppError> {
+    // 選択中だったかは、削除と同じロックの中で判定される(確認と削除の間に切り替えられても食い違わない)
+    let was_active = ws.delete(&id)?;
+    contexts.forget_workspace(&id);
     if was_active {
         refresh_after_switch(&app, &ws);
+    } else {
+        // 一覧が変わったことは、選択中でなくても画面へ知らせる
+        let _ = app.emit(WORKSPACE_CHANGED_EVENT, ws.active_info());
     }
     Ok(ws.active_info())
 }
@@ -81,12 +91,12 @@ pub fn copy_workspace_settings(
     include_profile: bool,
 ) -> Result<CopyReport, AppError> {
     let (src, dst) = (ws.resolve(&from)?, ws.resolve(&to)?);
-    let report = settings_transfer::copy(&src, &dst, CopyOptions { include_keys, include_profile })?;
-    // 選択中のワークスペースへコピーしたときは、デバッグログの出力先などを新しい設定に合わせる
+    let result = settings_transfer::copy(&src, &dst, CopyOptions { include_keys, include_profile });
+    // 選択中のワークスペースへコピーしたときは、結果にかかわらず、デバッグログの出力先などを現在の設定に合わせる
     if ws.active().id == dst.id {
         refresh_after_switch(&app, &ws);
     }
-    Ok(report)
+    result
 }
 
 /// デバッグログの出力先を切替先に合わせ、画面へ通知する。

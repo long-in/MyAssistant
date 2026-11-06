@@ -21,8 +21,20 @@ pub const DIR_KEY: &str = "debug_log_dir";
 /// ナレッジ直下に作る既定のログ用ディレクトリ名。
 pub const DIR_NAME: &str = "debug-logs";
 
-/// 有効なときだけ出力先ディレクトリが入る。
-static LOG_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+/// ワークスペースごとの出力先。有効なときだけディレクトリが入る。
+/// ワークスペースが別なら出力先も別で、裏で動く処理も自分のワークスペースのログにだけ書く。
+#[derive(Default)]
+pub struct DebugLog(Mutex<Option<PathBuf>>);
+
+impl DebugLog {
+    fn dir(&self) -> Option<PathBuf> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    fn set(&self, dir: Option<PathBuf>) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = dir;
+    }
+}
 
 /// デバッグモードの設定値。未設定は無効。
 pub fn is_enabled(db: &Db) -> Result<bool, AppError> {
@@ -65,17 +77,17 @@ pub fn refresh(ctx: &WorkspaceCtx) -> Result<(), AppError> {
     } else {
         Some(path::ensure_dir(&batch::knowledge_root(ctx)?, &[DIR_NAME.to_owned()])?)
     };
-    *LOG_DIR.lock().unwrap_or_else(|e| e.into_inner()) = dir;
+    ctx.debug.set(dir);
     Ok(())
 }
 
-pub fn enabled() -> bool {
-    LOG_DIR.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+pub fn enabled(ctx: &WorkspaceCtx) -> bool {
+    ctx.debug.dir().is_some()
 }
 
 /// 1件を追記する。無効なときは何もせず、書き込みに失敗しても本来の処理は止めない。
-pub fn record(kind: &str, data: Value) {
-    let Some(dir) = LOG_DIR.lock().unwrap_or_else(|e| e.into_inner()).clone() else {
+pub fn record(ctx: &WorkspaceCtx, kind: &str, data: Value) {
+    let Some(dir) = ctx.debug.dir() else {
         return;
     };
     let now = chrono::Local::now();
@@ -91,9 +103,9 @@ fn append(dir: &Path, day: &str, line: &Value) -> std::io::Result<()> {
 }
 
 /// APIの1往復を記録する。`response`が本文として読めなかったときは文字列のまま渡す。
-pub fn record_api(api: &str, url: &str, request: &Value, status: u16, response: &Value) {
-    if enabled() {
-        record("api", json!({ "api": api, "url": url, "request": request, "status": status, "response": response }));
+pub fn record_api(ctx: &WorkspaceCtx, api: &str, url: &str, request: &Value, status: u16, response: &Value) {
+    if enabled(ctx) {
+        record(ctx, "api", json!({ "api": api, "url": url, "request": request, "status": status, "response": response }));
     }
 }
 

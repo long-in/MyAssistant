@@ -253,13 +253,13 @@ async fn transcribe_recording(
         .map_err(|e| AppError::Stt(e.to_string()))?
     };
     if speech == Some(false) {
-        debug_log::record("transcription", serde_json::json!({ "engine": engine, "seconds": seconds, "skipped": "no speech (VAD)" }));
+        debug_log::record(ctx, "transcription", serde_json::json!({ "engine": engine, "seconds": seconds, "skipped": "no speech (VAD)" }));
         return Err(AppError::NoAudio);
     }
     let text = if engine == "google" {
-        stt_google::transcribe(&ctx.secrets, &samples, &language).await?
+        stt_google::transcribe(ctx, &samples, &language).await?
     } else if engine == "aqua" {
-        stt_aqua::transcribe(&ctx.secrets, &samples, &language).await?
+        stt_aqua::transcribe(ctx, &samples, &language).await?
     } else {
         let model = model_path(app)?;
         let app = app.clone();
@@ -272,6 +272,7 @@ async fn transcribe_recording(
         .map_err(|e| AppError::Stt(e.to_string()))??
     };
     debug_log::record(
+        ctx,
         "transcription",
         serde_json::json!({ "engine": engine, "language": language, "seconds": seconds, "prompt": prompt, "text": text }),
     );
@@ -490,7 +491,7 @@ fn pronounced(ctx: &WorkspaceCtx, text: &str) -> String {
 /// 現在のエンジンで`text`を音声化する。Google CloudはMP3、VOICEVOXはWAV。
 async fn synthesize_bytes(app: &AppHandle, ctx: &WorkspaceCtx, voice: Voice, text: &str) -> Result<Vec<u8>, AppError> {
     match voice {
-        Voice::Google => STANDARD.decode(tts::synthesize(&ctx.secrets, &pronounced(ctx, text)).await?).map_err(|_| AppError::BadResponse),
+        Voice::Google => STANDARD.decode(tts::synthesize(ctx, &pronounced(ctx, text)).await?).map_err(|_| AppError::BadResponse),
         Voice::Voicevox(style) => {
             if text.trim().is_empty() {
                 return Err(AppError::EmptyText);
@@ -533,7 +534,7 @@ pub fn voice_phrase_audio(app: AppHandle, ctx: Ctx, id: String) -> Result<Option
 pub async fn synthesize_speech(app: AppHandle, ctx: Ctx, text: String) -> Result<String, AppError> {
     let voice = current_voice(&ctx.db)?;
     if voice == Voice::Google {
-        return tts::synthesize(&ctx.secrets, &pronounced(&ctx, &text)).await;
+        return tts::synthesize(&ctx, &pronounced(&ctx, &text)).await;
     }
     Ok(STANDARD.encode(synthesize_bytes(&app, &ctx, voice, &text).await?))
 }

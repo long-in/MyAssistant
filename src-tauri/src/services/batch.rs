@@ -233,6 +233,8 @@ pub fn knowledge_root(ctx: &WorkspaceCtx) -> Result<std::path::PathBuf, AppError
 
 /// 実LLMを使うバッチ。多重実行・APIキー未登録・未処理ログなしの場合は`None`を返す。
 pub async fn run_guarded(ctx: &WorkspaceCtx) -> Result<Option<BatchReport>, AppError> {
+    // 削除済みのプロジェクトは処理しない
+    ctx.ensure_alive()?;
     let guard = &ctx.batch;
     if guard.0.swap(true, Ordering::SeqCst) {
         return Ok(None);
@@ -251,8 +253,11 @@ pub async fn run_guarded(ctx: &WorkspaceCtx) -> Result<Option<BatchReport>, AppE
         let report = run(db, &root, |prompt| {
             let model = target.model.clone();
             async move {
+                // LLMの呼び出しの前後で削除を確かめ、削除されたプロジェクトへ整理結果を書かせない
+                ctx.ensure_alive()?;
                 let msg = [ChatMessage { role: "user".into(), content: prompt }];
                 let done = llm_client::complete(ctx, target.provider, &model, None, &msg).await?;
+                ctx.ensure_alive()?;
                 let _ = db.record_usage(target.provider.as_str(), &model, done.input_tokens, done.output_tokens);
                 Ok(done.text)
             }
@@ -364,5 +369,17 @@ mod tests {
             .map(|i| PendingLog { id: i.to_string(), session_id: "s".into(), role: "user".into(), content: "あ".repeat(7000), created_at: String::new() })
             .collect();
         assert_eq!(segments(logs).len(), 3);
+    }
+
+    #[tokio::test]
+    async fn deleted_workspace_is_not_processed() {
+        use crate::services::workspace::{PALETTE, PERSONAL_ID, Workspaces};
+        let d = tempfile::tempdir().unwrap();
+        let ws = Workspaces::new(d.path(), WorkspaceCtx::open(PERSONAL_ID, d.path()).unwrap());
+        let p = ws.create("A", PALETTE[0]).unwrap();
+        let ctx = ws.get(&p.id).unwrap(); // 裏のバッチが持っている
+        ws.delete(&p.id).unwrap();
+        assert!(matches!(run_guarded(&ctx).await, Err(AppError::ProjectNotFound)));
+        assert!(!d.path().join("workspaces").join(&p.id).exists(), "削除後に作り直されない");
     }
 }

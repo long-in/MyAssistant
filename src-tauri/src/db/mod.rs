@@ -196,6 +196,29 @@ impl Db {
         Ok(())
     }
 
+    /// 複数の設定を1つのトランザクションで書く。途中で失敗したら、どれも書かれない。
+    pub fn set_settings(&self, items: &[(&str, &str)]) -> Result<(), AppError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        for (key, value) in items {
+            tx.execute(
+                "INSERT INTO app_settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = ?2, updated_at = CURRENT_TIMESTAMP",
+                params![key, value],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// テスト用: 設定の書き込みだけを失敗させる(読み取りはできる)。
+    #[cfg(test)]
+    pub fn break_settings_for_test(&self) {
+        self.conn()
+            .execute_batch("CREATE TRIGGER fail_writes BEFORE INSERT ON app_settings BEGIN SELECT RAISE(ABORT, 'broken'); END;")
+            .unwrap();
+    }
+
     pub fn get_setting(&self, key: &str) -> Result<Option<String>, AppError> {
         match self.conn().query_row(
             "SELECT value FROM app_settings WHERE key = ?1",

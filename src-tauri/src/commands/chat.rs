@@ -116,7 +116,14 @@ pub fn save_base_instructions(ctx: Ctx, text: String) -> Result<(), AppError> {
 
 /// セッションごとの訂正履歴の節。最初の発話時に1回だけナレッジから作り、以降は使い回す。
 #[derive(Default)]
-pub struct SessionContexts(Mutex<HashMap<String, Option<String>>>);
+pub struct SessionContexts(Mutex<HashMap<(String, String), Option<String>>>);
+
+impl SessionContexts {
+    /// 削除したワークスペースの分を捨てる。
+    pub fn forget_workspace(&self, workspace_id: &str) {
+        self.0.lock().unwrap_or_else(|p| p.into_inner()).retain(|(w, _), _| w != workspace_id);
+    }
+}
 
 fn restore_corrections(ctx: &WorkspaceCtx) -> Option<String> {
     let root = batch::knowledge_root(ctx).ok()?;
@@ -176,8 +183,8 @@ pub fn add_stt_correction(
     let now = chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
     let saved = knowledge::add_correction(&batch::knowledge_root(&ctx)?, &heard, &correct, &now)?;
     if saved {
-        // 進行中のセッションにも次の発話から反映する
-        contexts.0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+        // 進行中のセッションにも次の発話から反映する(このワークスペースの分だけ)
+        contexts.forget_workspace(&ctx.id);
     }
     Ok(saved)
 }
@@ -241,7 +248,7 @@ pub async fn send_chat(
         .0
         .lock()
         .unwrap_or_else(|p| p.into_inner())
-        .entry(session_id.clone())
+        .entry((ctx.id.clone(), session_id.clone()))
         .or_insert_with(|| restore_corrections(&ctx))
         .clone();
     let tuning = tuning::load(&ctx.db)?;
@@ -281,6 +288,8 @@ pub async fn send_chat(
     let system = system.as_deref().unwrap_or_default();
     let out = agent_cmd::run_with_tools(&ctx, &agents, &root, target.provider, &target.model, system, web_access(&ctx.db)?.then_some((tuning.web_search_max, tuning.web_fetch_max)), shell_access(&ctx.db)?, prior, text, &on_event, record_usage).await?;
     let content = out.text;
+    // 実行中に削除されたプロジェクトへは、応答もキャプチャも書かない
+    ctx.ensure_alive()?;
     ctx.db.insert_log(&session_id, "assistant", &content, Some(target.provider.as_str()), Some(&target.model))?;
     // 会話内容は確認なしでキャプチャ(チャプター)として書き出す。整理は画面の「今すぐ整理」で行う
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
@@ -291,4 +300,27 @@ pub async fn send_chat(
         Err(e) => log::warn!("capture failed: {e}"),
     }
     Ok(ChatReply { content, provider: target.provider.as_str(), model: target.model.clone() })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_contexts_are_per_workspace() {
+        let contexts = SessionContexts::default();
+        let key = |w: &str, s: &str| (w.to_owned(), s.to_owned());
+        {
+            let mut map = contexts.0.lock().unwrap();
+            map.insert(key("personal", "s1"), Some("personal corrections".into()));
+            map.insert(key("p1", "s1"), Some("project corrections".into())); // 同じセッションIDでも別のワークスペース
+            map.insert(key("p1", "s2"), None);
+        }
+        // 別のワークスペースの分は混ざらない
+        assert_eq!(contexts.0.lock().unwrap().get(&key("p1", "s1")).unwrap().as_deref(), Some("project corrections"));
+        contexts.forget_workspace("p1");
+        let map = contexts.0.lock().unwrap();
+        assert_eq!(map.len(), 1);
+        assert!(map.contains_key(&key("personal", "s1")));
+    }
 }

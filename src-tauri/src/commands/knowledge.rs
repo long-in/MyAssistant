@@ -35,14 +35,17 @@ pub fn set_knowledge_dir(ws: State<'_, Workspaces>, ctx: Ctx, path: Option<Strin
         }
         None => batch::default_knowledge_root(&ctx),
     };
-    // 他のワークスペースのナレッジ・デバッグログの場所と重なる場所は使えない(フォルダを作る前に確かめる)
-    ws.ensure_paths_free(&ctx.id, &root)?;
-    std::fs::create_dir_all(&root).map_err(|e| AppError::Io(e.to_string()))?;
-    let root = root.canonicalize().map_err(|e| AppError::Io(e.to_string()))?;
-    // 書き込めない場所を保存しないよう、実際に書き込めるか確認する
-    check_writable(&root)?;
-    let resolved = root.to_string_lossy().into_owned();
-    ctx.db.set_setting(batch::KNOWLEDGE_DIR_KEY, if path.is_some() { &resolved } else { "" })?;
+    // 他のワークスペースのナレッジ・デバッグログの場所やアプリのデータと重なる場所は使えない。
+    // 確認から保存までを他の保存先の変更と交差させないよう、まとめて行う(フォルダを作る前に確かめる)
+    let resolved = ws.set_location(&ctx.id, &root, || {
+        std::fs::create_dir_all(&root).map_err(|e| AppError::Io(e.to_string()))?;
+        let root = root.canonicalize().map_err(|e| AppError::Io(e.to_string()))?;
+        // 書き込めない場所を保存しないよう、実際に書き込めるか確認する
+        check_writable(&root)?;
+        let resolved = root.to_string_lossy().into_owned();
+        ctx.db.set_setting(batch::KNOWLEDGE_DIR_KEY, if path.is_some() { &resolved } else { "" })?;
+        Ok(resolved)
+    })?;
     debug_log::refresh(&ctx)?;
     Ok(resolved)
 }

@@ -84,7 +84,7 @@ export default function WorkspacePage() {
 
   const remove = async (p: Project) => {
     const ok = await ask(
-      t("プロジェクト「{name}」を削除します。会話・ナレッジ・設定・APIキーもすべて削除され、元に戻せません。続行しますか?", { name: p.name }),
+      t("プロジェクト「{name}」を削除します。会話・設定・APIキーと、既定の場所のナレッジがすべて削除され、元に戻せません。独自に指定したナレッジの保存先は削除されません。続行しますか?", { name: p.name }),
       { title: t("プロジェクトの削除"), kind: "warning" },
     );
     if (!ok) return;

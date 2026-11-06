@@ -74,6 +74,8 @@ flowchart LR
 | `secrets` | API キー・AWS 設定の保管庫(`secrets.json`) |
 | `aws` | AWS の一時クレデンシャルと MFA 入力待ち |
 | `batch` | 整理バッチの多重実行防止 |
+| `debug` | デバッグログの出力先(ワークスペースごと) |
+| (削除の印) | 削除されたプロジェクトを、裏の処理が確かめて止まるための印(`ensure_alive`) |
 
 コマンドは引数 `ctx: Ctx` で選択中のワークスペースを受け取る。処理の途中で切り替わっても、受け取った `ctx` を使い続けるため、DB・キー・ナレッジが混ざらない。詳細は [workspace.md](workspace.md)。
 

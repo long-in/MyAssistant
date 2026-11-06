@@ -122,14 +122,20 @@ pub fn parse(text: &str) -> Result<SettingsFile, AppError> {
     Ok(file)
 }
 
-/// 検証を通った項目を書き込む。ファイルに無い項目は変更せず、未知の項目は読み飛ばす。
-/// 戻り値の2番目は、反映するコマンド権限(あれば)。
-pub fn apply(db: &Db, file: &SettingsFile) -> Result<(Report, Option<Policy>), AppError> {
+/// 検証を通った項目。書き込みはまだ行っていない。
+struct Validated {
+    accepted: Vec<(&'static str, String)>,
+    skipped: usize,
+    policy: Option<Policy>,
+}
+
+/// 全項目を検証する(何も書かない)。ファイルに無い項目は対象外、未知の項目は読み飛ばす。
+fn validate(file: &SettingsFile) -> Result<Validated, AppError> {
     let mut accepted = Vec::new();
     let mut skipped = 0;
     for (key, value) in &file.settings {
         match ENTRIES.iter().find(|(k, _)| *k == key) {
-            Some((k, kind)) if valid(*kind, value) => accepted.push((*k, value.as_str())),
+            Some((k, kind)) if valid(*kind, value) => accepted.push((*k, value.clone())),
             Some(_) => return Err(AppError::InvalidSettings(format!("{key}の値が不正です"))),
             None => skipped += 1,
         }
@@ -139,11 +145,27 @@ pub fn apply(db: &Db, file: &SettingsFile) -> Result<(Report, Option<Policy>), A
         .as_ref()
         .map(|p| p.cleaned().map_err(AppError::InvalidSettings))
         .transpose()?;
-    for (k, v) in &accepted {
-        db.set_setting(k, v)?;
+    Ok(Validated { accepted, skipped, policy })
+}
+
+impl Validated {
+    /// 設定を1つのトランザクションで書く(途中で失敗したら、どれも書かれない)。
+    fn write(&self, db: &Db) -> Result<(), AppError> {
+        let items: Vec<(&str, &str)> = self.accepted.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        db.set_settings(&items)
     }
-    let applied = accepted.len() + usize::from(policy.is_some());
-    Ok((Report { applied, skipped }, policy))
+
+    fn report(&self) -> Report {
+        Report { applied: self.accepted.len() + usize::from(self.policy.is_some()), skipped: self.skipped }
+    }
+}
+
+/// 検証を通った項目を書き込む。ファイルに無い項目は変更せず、未知の項目は読み飛ばす。
+/// 戻り値の2番目は、反映するコマンド権限(あれば)。
+pub fn apply(db: &Db, file: &SettingsFile) -> Result<(Report, Option<Policy>), AppError> {
+    let v = validate(file)?;
+    v.write(db)?;
+    Ok((v.report(), v.policy))
 }
 
 /// ワークスペース間の設定コピーの対象。
@@ -165,7 +187,9 @@ pub struct CopyReport {
 
 /// `from`の設定を`to`へコピーする。`from`は変更しない。
 /// 対象は書き出しと同じ項目とコマンド権限で、ナレッジの保存先・会話・要約・ナレッジ本体・読み上げ辞書は含めない。
-/// 設定の検証に失敗したら何も書かない。キーの生値はRust内で写し、画面には件数だけ返す。
+/// 先に全項目を検証し(何も書かない)、失敗しうるファイル書き込み(キー・コマンド権限)を行ってから、設定をトランザクションで書く。
+/// 途中で失敗したら、書いたキーとコマンド権限を元へ戻し、`to`は変わらない。
+/// キーの生値はRust内で写し、画面には件数だけ返す。
 pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result<CopyReport, AppError> {
     if from.id == to.id {
         return Err(AppError::InvalidProject("same workspace".into()));
@@ -175,19 +199,38 @@ pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result
     if !opts.include_profile {
         file.settings.remove(profile::KEY);
     }
-    let (report, policy) = apply(&to.db, &file)?;
-    if let Some(policy) = policy {
-        // 保存先のフォルダは、作ったばかりのワークスペースに無くても`save`が作る
-        command_policy::save(&batch::knowledge_root(to)?, &policy).map_err(AppError::Io)?;
+    let v = validate(&file)?;
+
+    let keys_backup = opts.include_keys.then(|| to.secrets.backup());
+    let keys = if opts.include_keys { to.secrets.copy_from(&from.secrets)? } else { 0 };
+    let policy_root = batch::knowledge_root(to);
+    let prev_policy = v.policy.as_ref().and_then(|_| policy_root.as_ref().ok()).map(|root| command_policy::load(root));
+    let written = (|| {
+        if let Some(policy) = &v.policy {
+            // 保存先のフォルダは、作ったばかりのワークスペースに無くても`save`が作る
+            let root = policy_root.as_ref().map_err(|e| AppError::Io(e.to_string()))?;
+            command_policy::save(root, policy).map_err(AppError::Io)?;
+        }
+        v.write(&to.db)
+    })();
+    if let Err(e) = written {
+        // 元へ戻す(戻せなければ警告だけ残す)。コピー先の設定は書かれていない
+        if let (Some(prev), Ok(root)) = (&prev_policy, &policy_root)
+            && let Err(err) = command_policy::save(root, prev)
+        {
+            log::warn!("command policy not restored: {err}");
+        }
+        if let Some(backup) = keys_backup
+            && let Err(err) = to.secrets.restore(backup)
+        {
+            log::warn!("secrets not restored: {err}");
+        }
+        return Err(e);
     }
-    let keys = if opts.include_keys {
-        let n = to.secrets.copy_from(&from.secrets)?;
+    if opts.include_keys {
         aws::reset(to); // 差し替えたAWS設定で取り直すため、古い一時クレデンシャルは捨てる
-        n
-    } else {
-        0
-    };
-    Ok(CopyReport { settings: report.applied, keys })
+    }
+    Ok(CopyReport { settings: v.report().applied, keys })
 }
 
 #[cfg(test)]
@@ -319,5 +362,37 @@ mod tests {
         assert!(copy(&a, &b, CopyOptions { include_keys: true, include_profile: true }).is_err());
         assert_eq!(b.db.get_setting(chat::WEB_ACCESS_KEY).unwrap(), None);
         assert!(!b.secrets.has_tts_key().unwrap(), "キーも写さない");
+    }
+
+    #[test]
+    fn key_copy_failure_leaves_destination_untouched() {
+        let (_da, a) = ctx("a");
+        let (_db, b) = ctx("b");
+        a.db.set_setting(chat::SHELL_ACCESS_KEY, "0").unwrap();
+        a.secrets.set_tts_key("tts-a").unwrap();
+        // コピー先のキー保管庫を書けなくする(保存先に同名のフォルダがある)
+        std::fs::create_dir(b.dir.join("secrets.json")).unwrap();
+        assert!(copy(&a, &b, CopyOptions { include_keys: true, include_profile: false }).is_err());
+        assert_eq!(b.db.get_setting(chat::SHELL_ACCESS_KEY).unwrap(), None, "設定は書かれない");
+        assert!(!b.secrets.has_tts_key().unwrap(), "メモリ上のキーも変わらない");
+    }
+
+    #[test]
+    fn policy_and_keys_are_rolled_back_when_settings_write_fails() {
+        let (_da, a) = ctx("a");
+        let (_db, b) = ctx("b");
+        let custom = tempfile::tempdir().unwrap();
+        a.db.set_setting("knowledge_dir", &custom.path().to_string_lossy()).unwrap();
+        command_policy::add_allow(custom.path(), &["mytool".to_owned()]).unwrap();
+        a.db.set_setting(chat::SHELL_ACCESS_KEY, "0").unwrap(); // 書き込む設定がないと、失敗が起きない
+        a.secrets.set_tts_key("tts-a").unwrap();
+        b.secrets.set_aqua_key("aqua-b").unwrap();
+        // 設定の書き込みを失敗させる(設定テーブルを壊す)
+        b.db.break_settings_for_test();
+        assert!(copy(&a, &b, CopyOptions { include_keys: true, include_profile: false }).is_err());
+        assert!(!b.secrets.has_tts_key().unwrap(), "コピーしたキーは戻る");
+        assert!(b.secrets.has_aqua_key().unwrap(), "元からあったキーは残る");
+        let policy = command_policy::load(&batch::knowledge_root(&b).unwrap());
+        assert!(!policy.allow.contains(&"mytool".to_owned()), "コマンド権限も戻る");
     }
 }

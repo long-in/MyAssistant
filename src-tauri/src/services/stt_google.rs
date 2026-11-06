@@ -4,7 +4,7 @@ use std::time::Duration;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 
-use super::{audio::WHISPER_RATE, debug_log, secrets::Secrets};
+use super::{audio::WHISPER_RATE, debug_log, workspace::WorkspaceCtx};
 use crate::utils::error::AppError;
 
 /// 同期認識の上限は約1分。余裕を見て超えたら送らない。
@@ -55,15 +55,15 @@ fn extract_transcript(body: &Value) -> String {
         .unwrap_or_default()
 }
 
-pub async fn transcribe(secrets: &Secrets, samples: &[f32], language: &str) -> Result<String, AppError> {
-    transcribe_inner(secrets, samples, language).await.map_err(|e| e.with_source("google_stt"))
+pub async fn transcribe(ctx: &WorkspaceCtx, samples: &[f32], language: &str) -> Result<String, AppError> {
+    transcribe_inner(ctx, samples, language).await.map_err(|e| e.with_source("google_stt"))
 }
 
-async fn transcribe_inner(secrets: &Secrets, samples: &[f32], language: &str) -> Result<String, AppError> {
+async fn transcribe_inner(ctx: &WorkspaceCtx, samples: &[f32], language: &str) -> Result<String, AppError> {
     if samples.len() > MAX_SECONDS * WHISPER_RATE as usize {
         return Err(AppError::TooLong);
     }
-    let key = secrets.get_tts_key()?.ok_or_else(|| AppError::KeyMissing("google_tts".into()))?;
+    let key = ctx.secrets.get_tts_key()?.ok_or_else(|| AppError::KeyMissing("google_tts".into()))?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -79,10 +79,10 @@ async fn transcribe_inner(secrets: &Secrets, samples: &[f32], language: &str) ->
         .map_err(AppError::from_reqwest)?;
     let status = res.status();
     let raw = res.text().await.unwrap_or_default();
-    if debug_log::enabled() {
+    if debug_log::enabled(ctx) {
         let mut logged = request.clone();
         debug_log::redact_at(&mut logged, "/audio/content");
-        debug_log::record_api("google_stt", url, &logged, status.as_u16(), &debug_log::parse_body(&raw));
+        debug_log::record_api(ctx, "google_stt", url, &logged, status.as_u16(), &debug_log::parse_body(&raw));
     }
     if !status.is_success() {
         return Err(AppError::from_google(status.as_u16(), &raw));

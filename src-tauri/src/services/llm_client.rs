@@ -33,10 +33,10 @@ fn usage_of(body: &Value) -> (u64, u64) {
 }
 
 /// 応答を読み、デバッグモードなら往復を記録する。成功以外のステータスはエラーにする。
-async fn read_json(api: &str, url: &str, request: &Value, res: reqwest::Response) -> Result<Value, AppError> {
+async fn read_json(ctx: &WorkspaceCtx, api: &str, url: &str, request: &Value, res: reqwest::Response) -> Result<Value, AppError> {
     let status = res.status();
     let text = res.text().await.map_err(|_| AppError::BadResponse)?;
-    debug_log::record_api(api, url, request, status.as_u16(), &debug_log::parse_body(&text));
+    debug_log::record_api(ctx, api, url, request, status.as_u16(), &debug_log::parse_body(&text));
     if !status.is_success() {
         return Err(AppError::from_status(status.as_u16()));
     }
@@ -137,10 +137,10 @@ pub async fn complete_with_tools(
                     .await
                     .map_err(|e| {
                         // 応答が無いまま失敗した場合も、どの要求で止まったかをデバッグログに残す
-                        debug_log::record_api(provider.as_str(), url, &request, 0, &Value::String(e.to_string()));
+                        debug_log::record_api(ctx, provider.as_str(), url, &request, 0, &Value::String(e.to_string()));
                         AppError::from_reqwest(e)
                     })?;
-                read_json(provider.as_str(), url, &request, res).await?
+                read_json(ctx, provider.as_str(), url, &request, res).await?
             }
         };
         parse_tool_turn(&body).ok_or_else(|| {
@@ -161,11 +161,11 @@ async fn invoke_bedrock(ctx: &WorkspaceCtx, model: &str, request: &Value, timeou
     let label = format!("bedrock-runtime InvokeModel {model}");
     match aws::invoke_model(ctx, model, &body, timeout).await {
         Ok(response) => {
-            debug_log::record_api("bedrock", &label, &body, 200, &response);
+            debug_log::record_api(ctx, "bedrock", &label, &body, 200, &response);
             Ok(response)
         }
         Err(e) => {
-            debug_log::record_api("bedrock", &label, &body, 0, &Value::String(e.to_string()));
+            debug_log::record_api(ctx, "bedrock", &label, &body, 0, &Value::String(e.to_string()));
             Err(e)
         }
     }
@@ -226,7 +226,7 @@ async fn complete_inner(
                 .send()
                 .await
                 .map_err(AppError::from_reqwest)?;
-            read_json(provider.as_str(), url, &request, res).await?
+            read_json(ctx, provider.as_str(), url, &request, res).await?
         }
     };
     let (input_tokens, output_tokens) = usage_of(&response);

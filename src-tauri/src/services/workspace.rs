@@ -7,7 +7,10 @@ use std::{
     collections::HashMap,
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, RwLock},
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use serde::{Deserialize, Serialize};
@@ -16,7 +19,7 @@ use tauri::{
     ipc::{CommandArg, CommandItem, InvokeError},
 };
 
-use super::{aws::AwsState, batch, batch::BatchGuard, debug_log, secrets::Secrets};
+use super::{aws::AwsState, batch, batch::BatchGuard, debug_log, debug_log::DebugLog, secrets::Secrets};
 use crate::{db::Db, utils::error::AppError};
 
 /// パーソナルワークスペースのID。保存先は従来どおりアプリデータ直下。
@@ -46,6 +49,9 @@ pub struct WorkspaceCtx {
     pub secrets: Secrets,
     pub aws: AwsState,
     pub batch: BatchGuard,
+    pub debug: DebugLog,
+    /// 削除された(または削除中の)プロジェクトの印。裏で動く処理は、書き込む前にこれを確かめて止まる。
+    deleted: AtomicBool,
 }
 
 impl WorkspaceCtx {
@@ -59,7 +65,14 @@ impl WorkspaceCtx {
             secrets: Secrets::open(dir)?,
             aws: AwsState::default(),
             batch: BatchGuard::default(),
+            debug: DebugLog::default(),
+            deleted: AtomicBool::new(false),
         })
+    }
+
+    /// 削除されていないことを確かめる。バッチや会話が、削除済みのプロジェクトへ書き込まないようにする。
+    pub fn ensure_alive(&self) -> Result<(), AppError> {
+        if self.deleted.load(Ordering::SeqCst) { Err(AppError::ProjectNotFound) } else { Ok(()) }
     }
 }
 
@@ -116,6 +129,9 @@ fn ensure_unique(projects: &[Project], name: &str, color: &str, except: Option<&
 pub struct Workspaces {
     /// アプリデータディレクトリ(パーソナルの保存先でもある)。
     root: PathBuf,
+    /// 一覧・読み込み・選択・保存先の変更を1つずつ行うための外側のロック。
+    /// 削除と切り替え・読み込みが交差して、存在しないワークスペースを選んだり、削除済みを開き直したりしないようにする。
+    op: Mutex<()>,
     loaded: RwLock<HashMap<String, Arc<WorkspaceCtx>>>,
     active: RwLock<String>,
     projects: Mutex<Vec<Project>>,
@@ -129,10 +145,15 @@ impl Workspaces {
         let id = personal.id.clone();
         Self {
             root: root.to_owned(),
+            op: Mutex::new(()),
             loaded: RwLock::new(HashMap::from([(id.clone(), Arc::new(personal))])),
             active: RwLock::new(id),
             projects: Mutex::new(projects),
         }
+    }
+
+    fn op(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.op.lock().unwrap_or_else(|p| p.into_inner())
     }
 
     fn projects(&self) -> std::sync::MutexGuard<'_, Vec<Project>> {
@@ -143,14 +164,18 @@ impl Workspaces {
         self.root.join(DIR_NAME).join(id)
     }
 
-    /// 現在選択中のワークスペース。
+    fn personal(&self) -> Arc<WorkspaceCtx> {
+        self.get(PERSONAL_ID).expect("personal is always loaded")
+    }
+
+    /// 現在選択中のワークスペース。見つからなければ(削除と交差したときなど)パーソナルを返す。
     pub fn active(&self) -> Arc<WorkspaceCtx> {
         let id = self.active.read().unwrap_or_else(|p| p.into_inner()).clone();
-        self.get(&id).expect("the active workspace is always loaded")
+        self.get(&id).unwrap_or_else(|| self.personal())
     }
 
     pub fn active_info(&self) -> ActiveWorkspace {
-        let id = self.active.read().unwrap_or_else(|p| p.into_inner()).clone();
+        let id = self.active().id.clone();
         let project = self.projects().iter().find(|p| p.id == id).cloned();
         ActiveWorkspace { id, project }
     }
@@ -166,17 +191,22 @@ impl Workspaces {
 
     /// すべてのプロジェクトを読み込んで返す(バックグラウンド処理の巡回用)。開けないものは警告して飛ばす。
     pub fn load_all(&self) -> Vec<Arc<WorkspaceCtx>> {
+        let _op = self.op();
+        self.load_all_locked()
+    }
+
+    fn load_all_locked(&self) -> Vec<Arc<WorkspaceCtx>> {
         let ids: Vec<String> = self.projects().iter().map(|p| p.id.clone()).collect();
         for id in ids {
-            if let Err(e) = self.load(&id) {
+            if let Err(e) = self.load_locked(&id) {
                 log::warn!("project {id} not loaded: {e}");
             }
         }
         self.all()
     }
 
-    /// プロジェクトを(未読み込みなら)開く。一覧に無いIDは開かない。
-    fn load(&self, id: &str) -> Result<Arc<WorkspaceCtx>, AppError> {
+    /// プロジェクトを(未読み込みなら)開く。一覧に無いIDは開かない。`op`を持った状態で呼ぶ。
+    fn load_locked(&self, id: &str) -> Result<Arc<WorkspaceCtx>, AppError> {
         if let Some(ctx) = self.get(id) {
             return Ok(ctx);
         }
@@ -184,22 +214,31 @@ impl Workspaces {
             return Err(AppError::ProjectNotFound);
         }
         let ctx = Arc::new(WorkspaceCtx::open(id, &self.project_dir(id))?);
-        // 別スレッドが先に開いていたらそちらを使う
-        let mut loaded = self.loaded.write().unwrap_or_else(|p| p.into_inner());
-        Ok(loaded.entry(id.to_owned()).or_insert(ctx).clone())
+        // デバッグログの出力先は、開いたときに決める(裏で動く処理も自分のワークスペースのログへ書く)
+        if let Err(e) = debug_log::refresh(&ctx) {
+            log::warn!("debug log init failed for project {id}: {e}");
+        }
+        self.loaded.write().unwrap_or_else(|p| p.into_inner()).insert(id.to_owned(), ctx.clone());
+        Ok(ctx)
     }
 
     /// IDからワークスペースを得る(プロジェクトは未読み込みなら開く)。一覧に無いIDは`ProjectNotFound`。
     pub fn resolve(&self, id: &str) -> Result<Arc<WorkspaceCtx>, AppError> {
-        if id == PERSONAL_ID { Ok(self.get(PERSONAL_ID).expect("personal is always loaded")) } else { self.load(id) }
+        let _op = self.op();
+        if id == PERSONAL_ID { Ok(self.personal()) } else { self.load_locked(id) }
     }
 
-    /// `candidate`(ナレッジやデバッグログの保存先にしたい場所)が、`id`以外のワークスペースの保存先と重ならないことを確かめる。
-    /// 相手の保存先は、現在の場所と既定の場所(「既定に戻す」で使われうる場所)の両方で、ナレッジとデバッグログが対象。
-    /// 同じ場所、親子関係(含む・含まれる)のどちらも重なりとして拒否する。
-    pub fn ensure_paths_free(&self, id: &str, candidate: &Path) -> Result<(), AppError> {
+    /// `candidate`(ナレッジやデバッグログの保存先にしたい場所)が使えることを確かめる。`op`を持った状態で呼ぶ。
+    /// - アプリのデータ(アプリデータ全体・`workspaces/`・ほかのワークスペースのDBやキー)に触れる場所は、自分の既定のナレッジの中を除いて拒否する。
+    /// - `id`以外のワークスペースの保存先(現在の場所と既定の場所の両方で、ナレッジとデバッグログ)と、同じ場所・親子関係で重なる場所は拒否する。
+    fn check_paths_free(&self, id: &str, candidate: &Path) -> Result<(), AppError> {
         let candidate = canonical_lenient(candidate);
-        for other in self.load_all().into_iter().filter(|c| c.id != id) {
+        let own = if id == PERSONAL_ID { Some(self.personal()) } else { self.get(id) };
+        let own_default = own.map(|c| canonical_lenient(&batch::default_knowledge_root(&c)));
+        if overlaps(&candidate, &canonical_lenient(&self.root)) && !own_default.is_some_and(|d| candidate.starts_with(d)) {
+            return Err(AppError::PathInUse);
+        }
+        for other in self.load_all_locked().into_iter().filter(|c| c.id != id) {
             for claimed in claimed_paths(&other) {
                 if overlaps(&candidate, &canonical_lenient(&claimed)) {
                     return Err(AppError::PathInUse);
@@ -209,6 +248,21 @@ impl Workspaces {
         Ok(())
     }
 
+    /// 保存先を使えることを確かめる(確認のみ。テスト用)。実際に保存するときは、確認と保存を分けない`set_location`を使う。
+    #[cfg(test)]
+    pub fn ensure_paths_free(&self, id: &str, candidate: &Path) -> Result<(), AppError> {
+        let _op = self.op();
+        self.check_paths_free(id, candidate)
+    }
+
+    /// 保存先を確かめ、使えるときだけ`save`を実行する。確認から保存までを他の操作(別の保存先の変更・削除など)と交差させない。
+    /// `save`の中でこの`Workspaces`のメソッドを呼ばないこと。
+    pub fn set_location<T>(&self, id: &str, candidate: &Path, save: impl FnOnce() -> Result<T, AppError>) -> Result<T, AppError> {
+        let _op = self.op();
+        self.check_paths_free(id, candidate)?;
+        save()
+    }
+
     pub fn list(&self) -> Vec<Project> {
         self.projects().clone()
     }
@@ -216,7 +270,8 @@ impl Workspaces {
     /// プロジェクトを作る。名称・色を検証し、上限(`MAX_PROJECTS`)を超える場合は拒否する。
     pub fn create(&self, name: &str, color: &str) -> Result<Project, AppError> {
         let (name, color) = (clean_name(name)?, clean_color(color)?);
-        let mut projects = self.projects();
+        let _op = self.op();
+        let projects = self.projects();
         if projects.len() >= MAX_PROJECTS {
             return Err(AppError::ProjectLimit);
         }
@@ -227,12 +282,25 @@ impl Workspaces {
             color,
             created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         };
+        // 既存のワークスペースが、新しいプロジェクトのフォルダを含む場所を保存先にしていたら作らない
+        // (古い設定でアプリデータ全体を保存先にしている場合など。そのままではキーやDBがナレッジから見えてしまう)
+        let dir = canonical_lenient(&self.project_dir(&project.id));
+        drop(projects);
+        for other in self.load_all_locked() {
+            if claimed_paths(&other).iter().any(|c| overlaps(&dir, &canonical_lenient(c))) {
+                return Err(AppError::PathInUse);
+            }
+        }
+        let mut projects = self.projects();
         // 先にフォルダとDBを作れることを確かめてから一覧へ載せる
         let ctx = Arc::new(WorkspaceCtx::open(&project.id, &self.project_dir(&project.id))?);
         let mut next = projects.clone();
         next.push(project.clone());
         save_registry(&self.root, &next)?;
         *projects = next;
+        if let Err(e) = debug_log::refresh(&ctx) {
+            log::warn!("debug log init failed for project {}: {e}", project.id);
+        }
         self.loaded.write().unwrap_or_else(|p| p.into_inner()).insert(project.id.clone(), ctx);
         Ok(project)
     }
@@ -240,6 +308,7 @@ impl Workspaces {
     /// 名称とイメージカラーを変える。
     pub fn update(&self, id: &str, name: &str, color: &str) -> Result<Project, AppError> {
         let (name, color) = (clean_name(name)?, clean_color(color)?);
+        let _op = self.op();
         let mut projects = self.projects();
         ensure_unique(&projects, &name, &color, Some(id))?;
         let mut next = projects.clone();
@@ -254,15 +323,20 @@ impl Workspaces {
 
     /// プロジェクトを選択する。`PERSONAL_ID`でパーソナルへ戻る。
     pub fn switch(&self, id: &str) -> Result<ActiveWorkspace, AppError> {
+        let _op = self.op();
         if id != PERSONAL_ID {
-            self.load(id)?;
+            self.load_locked(id)?;
         }
         *self.active.write().unwrap_or_else(|p| p.into_inner()) = id.to_owned();
+        drop(_op);
         Ok(self.active_info())
     }
 
     /// プロジェクトを一覧とディスクから削除する。選択中ならパーソナルへ戻す。元に戻せない。
-    pub fn delete(&self, id: &str) -> Result<(), AppError> {
+    /// 選択中を切り戻したかどうかを返す。裏で動いている処理には削除の印(`ensure_alive`)が付き、書き込む前に止まる。
+    /// アプリが管理するフォルダ(`workspaces/<id>/`)だけを消す。利用者が指定したナレッジの保存先は消さない。
+    pub fn delete(&self, id: &str) -> Result<bool, AppError> {
+        let _op = self.op();
         let mut projects = self.projects();
         if !projects.iter().any(|p| p.id == id) {
             return Err(AppError::ProjectNotFound);
@@ -270,20 +344,25 @@ impl Workspaces {
         let next: Vec<Project> = projects.iter().filter(|p| p.id != id).cloned().collect();
         save_registry(&self.root, &next)?;
         *projects = next;
-        {
+        drop(projects);
+        let was_active = {
             let mut active = self.active.write().unwrap_or_else(|p| p.into_inner());
-            if *active == id {
+            let was = *active == id;
+            if was {
                 *active = PERSONAL_ID.to_owned();
             }
+            was
+        };
+        if let Some(ctx) = self.loaded.write().unwrap_or_else(|p| p.into_inner()).remove(id) {
+            ctx.deleted.store(true, Ordering::SeqCst);
         }
-        self.loaded.write().unwrap_or_else(|p| p.into_inner()).remove(id);
         // `id`は一覧にあったもの(生成したUUID)だけなので、`workspaces/`配下の1フォルダに限られる
         if let Err(e) = std::fs::remove_dir_all(self.project_dir(id))
             && e.kind() != std::io::ErrorKind::NotFound
         {
             log::warn!("project dir not removed: {e}");
         }
-        Ok(())
+        Ok(was_active)
     }
 }
 
@@ -590,5 +669,125 @@ mod tests {
         assert!(ws.ensure_paths_free(&b.id, &a_default).is_err());
         // 自分の保存先は、自分からは使える
         assert!(ws.ensure_paths_free(&a.id, kx.path()).is_ok());
+    }
+
+    #[test]
+    fn debug_logs_stay_in_their_own_workspace() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path());
+        let p = ws.create("A", PALETTE[0]).unwrap();
+        let personal = ws.get(PERSONAL_ID).unwrap();
+        let project = ws.get(&p.id).unwrap();
+        // パーソナルだけデバッグモードを有効にする
+        personal.db.set_setting(debug_log::ENABLED_KEY, "1").unwrap();
+        debug_log::refresh(&personal).unwrap();
+        debug_log::refresh(&project).unwrap();
+        // プロジェクトを選択している間も、パーソナルの裏の処理はパーソナルのログへ書く
+        ws.switch(&p.id).unwrap();
+        debug_log::record(&personal, "api", serde_json::json!({ "from": "personal" }));
+        debug_log::record(&project, "api", serde_json::json!({ "from": "project" }));
+        let files = |c: &WorkspaceCtx| std::fs::read_dir(debug_log::log_dir(c).unwrap()).map(|r| r.count()).unwrap_or(0);
+        assert_eq!(files(&personal), 1);
+        assert_eq!(files(&project), 0, "無効なワークスペースには書かない");
+        assert!(debug_log::enabled(&personal) && !debug_log::enabled(&project));
+    }
+
+    #[test]
+    fn app_data_is_never_a_storage_location() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path()); // プロジェクトが1件も無くても拒否する
+        for bad in [d.path().to_owned(), d.path().join(DIR_NAME), d.path().join(DIR_NAME).join("anything"), d.path().join("models")] {
+            assert!(matches!(ws.ensure_paths_free(PERSONAL_ID, &bad), Err(AppError::PathInUse)), "{bad:?}");
+        }
+        assert!(ws.ensure_paths_free(PERSONAL_ID, d.path().parent().unwrap()).is_err(), "アプリデータを含む親も拒否");
+        // 自分の既定のナレッジ(とその中)は使える
+        assert!(ws.ensure_paths_free(PERSONAL_ID, &d.path().join("knowledge")).is_ok());
+        assert!(ws.ensure_paths_free(PERSONAL_ID, &d.path().join("knowledge").join("sub")).is_ok());
+        let p = ws.create("A", PALETTE[0]).unwrap();
+        let own = d.path().join(DIR_NAME).join(&p.id).join("knowledge");
+        assert!(ws.ensure_paths_free(&p.id, &own).is_ok());
+        assert!(ws.ensure_paths_free(&p.id, &d.path().join(DIR_NAME).join(&p.id)).is_err(), "自分のDB・キーのフォルダは不可");
+    }
+
+    #[test]
+    fn creating_a_project_is_refused_when_an_existing_location_would_contain_it() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path());
+        // 古い設定で、パーソナルがアプリデータ全体をナレッジの保存先にしている
+        ws.get(PERSONAL_ID).unwrap().db.set_setting(batch::KNOWLEDGE_DIR_KEY, &d.path().to_string_lossy()).unwrap();
+        assert!(matches!(ws.create("A", PALETTE[0]), Err(AppError::PathInUse)));
+        assert!(ws.list().is_empty(), "一覧もフォルダも作らない");
+        assert!(!d.path().join(DIR_NAME).exists());
+    }
+
+    #[test]
+    fn set_location_saves_only_when_the_check_passes() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path());
+        let p = ws.create("A", PALETTE[0]).unwrap();
+        let other = d.path().join(DIR_NAME).join(&p.id).join("knowledge");
+        let mut ran = false;
+        let r: Result<(), _> = ws.set_location(PERSONAL_ID, &other, || {
+            ran = true;
+            Ok(())
+        });
+        assert!(r.is_err() && !ran, "重なるなら保存の処理を実行しない");
+        let free = tempfile::tempdir().unwrap();
+        assert_eq!(ws.set_location(PERSONAL_ID, free.path(), || Ok(7)).unwrap(), 7);
+    }
+
+    #[test]
+    fn deleted_projects_are_marked_and_the_active_one_falls_back() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path());
+        let a = ws.create("A", PALETTE[0]).unwrap();
+        let b = ws.create("B", PALETTE[1]).unwrap();
+        let held = ws.get(&a.id).unwrap(); // 裏の処理が持っている
+        ws.switch(&a.id).unwrap();
+        assert!(held.ensure_alive().is_ok());
+        assert!(ws.delete(&a.id).unwrap(), "選択中だった");
+        assert!(matches!(held.ensure_alive(), Err(AppError::ProjectNotFound)), "裏の処理は削除に気づいて止まる");
+        assert_eq!(ws.active().id, PERSONAL_ID);
+        assert!(!ws.delete(&b.id).unwrap(), "選択中ではなかった");
+        // 削除済みのIDは、選択も読み込みもできず、一覧から開き直されない
+        assert!(matches!(ws.switch(&a.id), Err(AppError::ProjectNotFound)));
+        assert!(ws.load_all().iter().all(|c| c.id == PERSONAL_ID));
+        assert!(!d.path().join(DIR_NAME).join(&a.id).exists());
+    }
+
+    #[test]
+    fn active_never_panics_even_if_its_context_is_gone() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path());
+        let a = ws.create("A", PALETTE[0]).unwrap();
+        ws.switch(&a.id).unwrap();
+        // 読み込み済みの一覧から消えた状態(削除と交差した場合)でも、パーソナルを返す
+        ws.loaded.write().unwrap().remove(&a.id);
+        assert_eq!(ws.active().id, PERSONAL_ID);
+        assert_eq!(ws.active_info().id, PERSONAL_ID);
+    }
+
+    #[test]
+    fn concurrent_switch_and_delete_never_leave_a_ghost() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = Arc::new(workspaces(d.path()));
+        for round in 0..20 {
+            let p = ws.create(&format!("p{round}"), PALETTE[round % 2]).unwrap();
+            let (w1, w2, id1, id2) = (ws.clone(), ws.clone(), p.id.clone(), p.id.clone());
+            let t1 = std::thread::spawn(move || {
+                let _ = w1.switch(&id1);
+                let _ = w1.active();
+            });
+            let t2 = std::thread::spawn(move || {
+                let _ = w2.delete(&id2);
+            });
+            t1.join().unwrap();
+            t2.join().unwrap();
+            // どの順序でも、削除済みのプロジェクトが選択・読み込み・フォルダとして残らない
+            assert!(ws.list().is_empty());
+            assert_eq!(ws.active().id, PERSONAL_ID);
+            assert!(ws.get(&p.id).is_none());
+            assert!(!d.path().join(DIR_NAME).join(&p.id).exists());
+        }
     }
 }
