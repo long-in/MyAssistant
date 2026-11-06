@@ -24,6 +24,8 @@ pub fn run() {
       tray::set_tray_language,
       commands::agent::agent_approve,
       commands::agent::agent_cancel,
+      commands::agent::agent_resume,
+      commands::agent::agent_detach,
       commands::aws::get_aws_status,
       commands::aws::preview_aws_config,
       commands::aws::save_aws_config,
@@ -149,7 +151,6 @@ pub fn run() {
       app.manage(services::workspace::Workspaces::new(&dir, personal));
       app.manage(commands::chat::SessionContexts::default());
       app.manage(services::graph::GraphCache::default());
-      app.manage(commands::agent::AgentState::default());
       app.manage(services::audio::Recorder::default());
       app.manage(services::stt::SttEngine::default());
       app.manage(services::vad::VadEngine::default());

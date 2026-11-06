@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter, State, ipc::Channel};
 
 use crate::{
-    commands::agent::{self as agent_cmd, AgentState},
+    commands::agent as agent_cmd,
     db::{Db, UsageRow},
     services::{
         agent::AgentEvent,
@@ -16,7 +16,7 @@ use crate::{
         profile,
         secrets::Provider,
         tuning,
-        workspace::{Ctx, WorkspaceCtx},
+        workspace::{Ctx, WorkspaceCtx, active},
     },
     utils::error::AppError,
 };
@@ -227,7 +227,6 @@ pub async fn send_chat(
     ctx: Ctx,
     contexts: State<'_, SessionContexts>,
     graphs: State<'_, GraphCache>,
-    agents: State<'_, AgentState>,
     session_id: String,
     text: String,
     route: Route,
@@ -237,6 +236,26 @@ pub async fn send_chat(
     if text.is_empty() {
         return Err(AppError::EmptyMessage);
     }
+    // 進捗・承認待ち・結果は、ワークスペースごとの記録にも残す。切り替えても依頼は止まらず、戻ったときに続きから再開できる
+    let agent = &ctx.shared.agent;
+    agent.begin(&session_id, text, on_event);
+    let result = send_chat_inner(&app, &ctx, &contexts, &graphs, session_id, text, route).await;
+    agent.finish(match &result {
+        Ok(reply) => Ok(serde_json::to_value(reply).unwrap_or(Value::Null)),
+        Err(e) => Err(serde_json::to_value(e).unwrap_or(Value::Null)),
+    });
+    result
+}
+
+async fn send_chat_inner(
+    app: &AppHandle,
+    ctx: &WorkspaceCtx,
+    contexts: &SessionContexts,
+    graphs: &GraphCache,
+    session_id: String,
+    text: &str,
+    route: Route,
+) -> Result<ChatReply, AppError> {
     let available: Vec<Provider> = Provider::ALL
         .into_iter()
         .filter(|p| ctx.secrets.has_key(*p).unwrap_or(false))
@@ -286,7 +305,21 @@ pub async fn send_chat(
     prior.pop();
     let root = batch::knowledge_root(&ctx)?;
     let system = system.as_deref().unwrap_or_default();
-    let out = agent_cmd::run_with_tools(&ctx, &agents, &root, target.provider, &target.model, system, web_access(&ctx.db)?.then_some((tuning.web_search_max, tuning.web_fetch_max)), shell_access(&ctx.db)?, prior, text, &on_event, record_usage).await?;
+    let out = agent_cmd::run_with_tools(
+        ctx,
+        &root,
+        target.provider,
+        &target.model,
+        system,
+        web_access(&ctx.db)?.then_some((tuning.web_search_max, tuning.web_fetch_max)),
+        shell_access(&ctx.db)?,
+        prior,
+        text,
+        &|event| ctx.shared.agent.emit(event),
+        record_usage,
+        || active(app).id == ctx.id,
+    )
+    .await?;
     let content = out.text;
     // 実行中に削除されたプロジェクトへは、応答もキャプチャも書かない
     ctx.ensure_alive()?;

@@ -62,7 +62,6 @@ flowchart LR
 | `Workspaces` | ワークスペース(パーソナル + プロジェクト)の一覧、読み込み済みの `WorkspaceCtx`、選択中の ID |
 | `SessionContexts` | 会話ごとの訂正履歴の節のキャッシュ(セッション ID で識別) |
 | `GraphCache` | ナレッジのグラフ索引のキャッシュ(ルートのパスで識別。1 件分) |
-| `AgentState` | 承認の応答口と、実行中の依頼の中断トークン |
 | `Recorder` | マイク録音 |
 | `SttEngine` / `VadEngine` | Whisper / Silero VAD のロード済みモデル |
 
@@ -75,6 +74,7 @@ flowchart LR
 | `aws` | AWS の一時クレデンシャルと MFA 入力待ち |
 | `batch` | 整理バッチの多重実行防止 |
 | `debug` | デバッグログの出力先(ワークスペースごと) |
+| `agent` | 作業の依頼の実行状態(承認の応答口・中断・進捗と結果の記録)。切り替えても止まらない |
 | (削除の印) | 削除されたプロジェクトを、裏の処理が確かめて止まるための印(`ensure_alive`) |
 
 コマンドは引数 `ctx: Ctx` で選択中のワークスペースを受け取る。処理の途中で切り替わっても、受け取った `ctx` を使い続けるため、DB・キー・ナレッジが混ざらない。詳細は [workspace.md](workspace.md)。

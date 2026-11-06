@@ -19,7 +19,7 @@ use tauri::{
     ipc::{CommandArg, CommandItem, InvokeError},
 };
 
-use super::{aws::AwsState, batch, batch::BatchGuard, debug_log, debug_log::DebugLog, secrets::Secrets};
+use super::{agent_run::AgentState, aws::AwsState, batch, batch::BatchGuard, debug_log, debug_log::DebugLog, secrets::Secrets};
 use crate::{db::Db, utils::error::AppError};
 
 /// パーソナルワークスペースのID。保存先は従来どおりアプリデータ直下。
@@ -60,6 +60,8 @@ pub struct Shared {
     pub batch: BatchGuard,
     /// 削除された(または削除中の)プロジェクトの印。裏で動く処理は、書き込む前にこれを確かめて止まる。
     deleted: AtomicBool,
+    /// 作業の依頼の実行状態(承認待ち・中断・進捗の記録)。切り替えても止めず、戻ったときに続きから再開する。
+    pub agent: AgentState,
     /// AWSの一時クレデンシャルとMFA入力待ち。バッチのために一時的に開いたものが待っているMFAにも、IDから答えられるようにする。
     pub aws: AwsState,
 }
@@ -404,6 +406,8 @@ impl Workspaces {
         // 読み込み済みでも、バッチのために一時的に開かれたものでも、同じ共有状態の印で止まる
         if let Some(shared) = self.shared.lock().unwrap_or_else(|p| p.into_inner()).remove(id) {
             shared.deleted.store(true, Ordering::SeqCst);
+            // 実行中の依頼は中断する(動いているコマンドも止まり、承認待ちは拒否になる)
+            shared.agent.abort();
         }
         self.loaded.write().unwrap_or_else(|p| p.into_inner()).remove(id);
         // `id`は一覧にあったもの(生成したUUID)だけなので、`workspaces/`配下の1フォルダに限られる
@@ -881,5 +885,26 @@ mod tests {
         assert!(ws.create("Work Tools", PALETTE[0]).is_ok());
         let p = ws.create("A", PALETTE[1]).unwrap();
         assert!(matches!(ws.update(&p.id, "Personal", PALETTE[1]), Err(AppError::ReservedName)));
+    }
+
+    #[tokio::test]
+    async fn deleting_a_project_aborts_its_running_request() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path());
+        let p = ws.create("A", PALETTE[0]).unwrap();
+        let shared = ws.get(&p.id).unwrap().shared.clone();
+        let token = crate::services::cancel::CancelToken::default();
+        shared.agent.set_cancel(token.clone());
+        let rx = shared.agent.register_approval("t1");
+        ws.delete(&p.id).unwrap();
+        token.cancelled().await; // 中断されている
+        assert!(rx.await.is_err(), "承認待ちは拒否として終わる");
+        // 別のプロジェクトの依頼には影響しない
+        let q = ws.create("B", PALETTE[1]).unwrap();
+        let other = ws.get(&q.id).unwrap().shared.clone();
+        let rx2 = other.agent.register_approval("t2");
+        ws.delete(&p.id).unwrap_err();
+        other.agent.answer("t2", true);
+        assert!(rx2.await.unwrap());
     }
 }

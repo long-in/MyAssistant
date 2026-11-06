@@ -27,11 +27,14 @@ import {
   type KeyStatus,
   type ModelInfo,
   type Route,
+  type RunSnapshot,
   type UsageRow,
   DEFAULT_TUNING,
   type Tuning,
   type WakeConfig,
   agentApprove,
+  agentDetach,
+  agentResume,
   agentCancel,
   cancelRecording,
   downloadSttModel,
@@ -215,6 +218,10 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
     mounted.current = true;
     return () => {
       mounted.current = false;
+      // 待っている送信・会話のループを打ち切る(離れたあとに返答が届いても、読み上げたり、やり取りへ加えたりしない。
+      // 依頼そのものは止まらず、結果は戻ったときに受け取る)
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- DOMではなくカウンタ。離れる時点の最新の値を進める
+      resetEpoch.current++;
       // ワークスペースの切り替えで作り直されるとき、読み上げと録音を止める(切替先へ音声を持ち越さない)
       stopSpeech();
       void cancelRecording().catch(() => {});
@@ -246,7 +253,61 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
     if (e.type === "tool_call") setActivity(t(TOOL_ACTIVITY[e.name] ?? "ファイルを操作しています…"));
     else if (e.type === "tool_result") setActivity(null);
     else if (e.type === "approval") showApproval(e);
+    else if (e.type === "finished") finishResumed(e);
   };
+
+  /** 切り替えから戻って続きを受けていた依頼が終わった。結果をやり取りに加える(読み上げはしない)。 */
+  const finishResumed = (e: Extract<AgentEvent, { type: "finished" }>) => {
+    setBusy(false);
+    setActivity(null);
+    showApproval(null);
+    refreshUsage();
+    const { reply, error } = e;
+    if (error) fail(error);
+    if (reply) {
+      setTurns((ts) =>
+        ts.map((x, i) => (i === ts.length - 1 && !x.reply ? { ...x, reply: reply.content, replyAt: new Date(), via: reply.model } : x)),
+      );
+    }
+  };
+
+  /** 切り替えて離れている間の依頼を、続きから再開する(実行中なら進捗と承認待ちを戻し、終わっていれば結果を見せる)。 */
+  const restoreRun = (snap: RunSnapshot) => {
+    if (!snap.running && !snap.finished) return;
+    const userAt = new Date();
+    const turn: Turn = { user: snap.user_text, userAt };
+    if (snap.finished) {
+      // 離れている間に終わっていた。結果だけを見せる
+      const { reply, error } = snap.finished;
+      if (error) fail(error);
+      if (reply) setTurns([{ ...turn, reply: reply.content, replyAt: new Date(), via: reply.model }]);
+      refreshUsage();
+      return;
+    }
+    setBusy(true);
+    setTurns([turn]);
+    setLog(snap.events.reduce(applyAgentEvent, emptyLog));
+    // 離れている間に求められた承認は、回答を待っている。戻ったので、ここで答えられる
+    if (snap.pending) showApproval({ type: "approval", ...snap.pending });
+  };
+  const agentEventRef = useRef(onAgentEvent);
+  const restoreRef = useRef(restoreRun);
+  useEffect(() => {
+    agentEventRef.current = onAgentEvent;
+    restoreRef.current = restoreRun;
+  });
+
+  // このワークスペースを開いたとき、実行中だった依頼の続きを受け取る。離れるときは、依頼を止めずに接続だけ外す
+  useEffect(() => {
+    let live = true;
+    agentResume(workspaceId, (e) => live && agentEventRef.current(e))
+      .then((snap) => live && restoreRef.current(snap))
+      .catch(() => {});
+    return () => {
+      live = false;
+      agentDetach(workspaceId).catch(() => {});
+    };
+  }, [workspaceId]);
 
   const answerApproval = (approved: boolean) => {
     const a = approvalRef.current;

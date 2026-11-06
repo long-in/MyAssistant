@@ -200,7 +200,35 @@ export type AgentEvent =
       /** 個別承認が必要な理由(コマンドのみ)。 */
       reason: string;
     }
-  | { type: "command_output"; id: string; stream: "stdout" | "stderr"; text: string };
+  | { type: "command_output"; id: string; stream: "stdout" | "stderr"; text: string }
+  /** 依頼の完了。切り替えから戻って`agentResume`で接続し直した画面にだけ届く(最初の画面は`sendChat`の戻り値で受け取る)。 */
+  | { type: "finished"; reply: ChatReply | null; error: AppError | null };
+
+/** 切り替えから戻ったときに受け取る、そのワークスペースの依頼の状況。 */
+export type RunSnapshot = {
+  /** 実行中か(切り替えている間に終わっていれば偽)。 */
+  running: boolean;
+  session_id: string;
+  user_text: string;
+  /** これまでの進捗(新しい側の最大500件)。 */
+  events: AgentEvent[];
+  /** 回答待ちの承認。 */
+  pending: Omit<Extract<AgentEvent, { type: "approval" }>, "type"> | null;
+  /** 画面が見ていない間に終わった依頼の結果(一度だけ渡される)。 */
+  finished: { reply: ChatReply | null; error: AppError | null } | null;
+};
+
+/**
+ * ワークスペースへ戻ったとき、実行中だった依頼の状況を受け取り、以降の進捗(と結果)を受ける接続を張り直す。
+ * 切り替えても依頼は止まらず、承認が要るときは回答を待っている。
+ */
+export const agentResume = (workspaceId: string, onEvent: (e: AgentEvent) => void) => {
+  const channel = new Channel<AgentEvent>();
+  channel.onmessage = onEvent;
+  return invoke<RunSnapshot>("agent_resume", { workspaceId, onEvent: channel });
+};
+/** 画面がワークスペースを離れたことを知らせる。依頼は止まらず、進捗はバックエンドに記録される。 */
+export const agentDetach = (workspaceId: string) => invoke<void>("agent_detach", { workspaceId });
 
 export const agentApprove = (id: string, approved: boolean) =>
   invoke<void>("agent_approve", { id, approved });

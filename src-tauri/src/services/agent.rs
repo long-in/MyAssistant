@@ -417,6 +417,8 @@ pub enum AgentEvent {
     Approval(Approval),
     /// 実行中のコマンドの出力。`id`は`run_command`の`tool_use`のid。
     CommandOutput { id: String, stream: Stream, text: String },
+    /// 依頼の完了。切り替えから戻って接続し直した画面にだけ送る(最初の画面は、コマンドの戻り値で結果を受け取る)。`reply`か`error`のどちらか。
+    Finished { reply: Option<Value>, error: Option<Value> },
 }
 
 #[derive(Debug)]
