@@ -60,6 +60,9 @@ export const ERROR_MESSAGES: Record<string, string> = {
   mfa_required: "MFAコードが入力されませんでした。もう一度お試しください。",
   invalid_dictionary: "読み上げ辞書のJSONを取り込めませんでした。[{\"word\": \"語\", \"reading\": \"読み\"}] の形式で、ファイルは1MB以下にしてください。",
   invalid_settings: "設定ファイルの形式が正しくありません。このアプリが書き出したファイルを選んでください。",
+  invalid_project: "プロジェクトの名称(1〜40文字)またはイメージカラーが正しくありません。",
+  project_limit: "プロジェクトは30件までです。不要なプロジェクトを削除してください。",
+  project_not_found: "プロジェクトが見つかりません。",
 };
 
 export function errorMessage(e: unknown): string {
@@ -592,3 +595,25 @@ export const importSettings = (src: string) => invoke<SettingsTransferReport>("i
 
 /** トレイメニューの表示言語を切り替える。 */
 export const setTrayLanguage = (lang: string) => invoke<void>("set_tray_language", { lang });
+
+/** パーソナルワークスペースのID。 */
+export const PERSONAL_ID = "personal";
+/** 作れるプロジェクトの上限。 */
+export const MAX_PROJECTS = 30;
+/** プロジェクト名の最大文字数。 */
+export const PROJECT_NAME_MAX = 40;
+
+/** ワークの1プロジェクト(独立したエージェント)。`color`は`#rrggbb`。 */
+export type Project = { id: string; name: string; color: string; created_at: string };
+/** 現在のワークスペース。`project`はパーソナルのとき`null`。 */
+export type ActiveWorkspace = { id: string; project: Project | null };
+
+export const WORKSPACE_CHANGED_EVENT = "workspace-changed";
+
+export const listProjects = () => invoke<Project[]>("list_projects");
+export const getActiveWorkspace = () => invoke<ActiveWorkspace>("get_active_workspace");
+export const createProject = (name: string, color: string) => invoke<Project>("create_project", { name, color });
+export const updateProject = (id: string, name: string, color: string) =>
+  invoke<Project>("update_project", { id, name, color });
+export const deleteProject = (id: string) => invoke<ActiveWorkspace>("delete_project", { id });
+export const switchWorkspace = (id: string) => invoke<ActiveWorkspace>("switch_workspace", { id });

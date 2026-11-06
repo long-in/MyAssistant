@@ -2,15 +2,17 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Bug, BookOpen, Keyboard, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings } from "lucide-react";
+import { Bug, BookOpen, FolderKanban, Keyboard, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings } from "lucide-react";
 import Chat from "@/components/Chat";
 import MfaModal from "@/components/MfaModal";
-import { DEBUG_MODE_EVENT, getDebugMode, getKeyStatus, setTrayLanguage } from "@/lib/api";
+import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
+import { DEBUG_MODE_EVENT, PERSONAL_ID, getDebugMode, getKeyStatus, setTrayLanguage } from "@/lib/api";
 import { useLang, useT } from "@/lib/i18n";
 import { matchShortcut, type ShortcutId } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
+import { startWorkspaceSync, useWorkspace } from "@/lib/workspace";
 
 const NAV = [
   { href: "/", label: "チャット", icon: MessageSquare },
@@ -18,6 +20,8 @@ const NAV = [
   { href: "/setup", label: "設定", icon: Settings },
   { href: "/shortcuts", label: "ショートカット", icon: Keyboard },
 ] as const;
+
+const PROJECTS_NAV = { href: "/workspace", label: "プロジェクト", icon: FolderKanban } as const;
 
 const DEBUG_NAV = { href: "/debug", label: "デバッグ", icon: Bug } as const;
 
@@ -40,6 +44,29 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [modelSlot, setModelSlot] = useState<HTMLElement | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const onChat = pathname === "/";
+  const { active } = useWorkspace();
+  const accent = active.project?.color;
+  const workspaceId = active.id;
+  const prevWorkspace = useRef(workspaceId);
+
+  useEffect(() => {
+    startWorkspaceSync();
+  }, []);
+
+  // ワークスペースを切り替えたら、対話はキーで作り直し(会話・音声入力・待機を止める)、APIキーの有無を切替先で確かめ直す
+  useEffect(() => {
+    if (prevWorkspace.current === workspaceId) return;
+    prevWorkspace.current = workspaceId;
+    setChatReady(false);
+    if (pathname === "/workspace") router.replace("/");
+  }, [workspaceId, pathname, router]);
+
+  // プロジェクトのイメージカラーを、画面全体で参照できるようにする
+  useEffect(() => {
+    const root = document.documentElement;
+    if (accent) root.style.setProperty("--workspace-color", accent);
+    else root.style.removeProperty("--workspace-color");
+  }, [accent]);
 
   // 静的エクスポートのハイドレーション不一致を避けるため、保存値はマウント後に読む
   useEffect(() => {
@@ -102,20 +129,25 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [router]);
 
   return (
-    <div className="flex h-full">
+    <div className="relative flex h-full">
+      {accent && <div className="pointer-events-none absolute inset-x-0 top-0 z-50 h-0.5" style={{ backgroundColor: accent }} />}
       <nav
         className={cn(
           "flex w-16 shrink-0 flex-col items-center gap-1 border-r bg-sidebar/80 py-4 backdrop-blur",
           !collapsed && "md:w-52 md:items-stretch md:px-3",
         )}
       >
-        <div className={cn("mb-6 flex items-center justify-center gap-2 px-2", !collapsed && "md:justify-start")}>
-          <span className="size-2 shrink-0 rounded-full bg-primary shadow-[0_0_10px_var(--primary)]" />
+        <div className={cn("mb-4 flex items-center justify-center gap-2 px-2", !collapsed && "md:justify-start")}>
+          <span
+            className="size-2 shrink-0 rounded-full bg-primary shadow-[0_0_10px_var(--primary)]"
+            style={accent ? { backgroundColor: accent, boxShadow: `0 0 10px ${accent}` } : undefined}
+          />
           <span className={cn("hud-label hidden text-[0.8rem] font-semibold text-foreground", !collapsed && "md:inline")}>
             MyAssistant
           </span>
         </div>
-        {(debug ? [...NAV, DEBUG_NAV] : NAV).map(({ href, label, icon: Icon }) => {
+        <WorkspaceSwitcher collapsed={collapsed} />
+        {[...NAV, ...(workspaceId !== PERSONAL_ID ? [PROJECTS_NAV] : []), ...(debug ? [DEBUG_NAV] : [])].map(({ href, label, icon: Icon }) => {
           const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
           return (
             <Link
@@ -151,10 +183,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <main className="min-w-0 flex-1 overflow-hidden">
         {chatReady && (
           <div className={cn("h-full", !onChat && "hidden")}>
-            <Chat active={onChat} modelSlot={modelSlot} />
+            <Chat key={workspaceId} workspaceId={workspaceId} active={onChat} modelSlot={modelSlot} />
           </div>
         )}
-        {!onChat && children}
+        {!onChat && <div key={workspaceId} className="h-full">{children}</div>}
       </main>
       <MfaModal />
     </div>

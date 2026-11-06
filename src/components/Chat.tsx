@@ -8,6 +8,7 @@ import { createPortal } from "react-dom";
 import ModelSelector from "./ModelSelector";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import WorkspaceBadge from "@/components/WorkspaceBadge";
 import { VoiceOrb } from "./Waveforms";
 import UsageHud from "./UsageHud";
 import Subtitles from "./Subtitles";
@@ -102,18 +103,23 @@ const HIDE_WHEN_SMALL = "[@media(max-height:40rem),(max-width:40rem)]:hidden";
 const HIDE_WHEN_SMALL_FLEX = "flex [@media(max-height:40rem),(max-width:40rem)]:hidden";
 const SMALL_COLLAPSE_SUBTITLES = "h-[clamp(9rem,26vh,14rem)] [@media(max-height:40rem),(max-width:40rem)]:h-auto";
 
-/** 現在の会話のセッション。リロード・再起動で新しくなる。 */
-let currentSession = { id: crypto.randomUUID() };
+/** ワークスペースごとの現在の会話のセッション。リロード・再起動で新しくなる。切り替えて戻っても、同じ会話の続きになる。 */
+const sessions = new Map<string, { id: string }>();
+const sessionOf = (workspaceId: string) => {
+  let s = sessions.get(workspaceId);
+  if (!s) sessions.set(workspaceId, (s = { id: crypto.randomUUID() }));
+  return s;
+};
 
 /** `active`は対話画面を表示中かどうか。`modelSlot`はモデル選択を表示する左メニュー下部の要素。他の画面へ移動しても`Chat`は`AppShell`に残り、進行中の処理や待機を続ける。 */
-export default function Chat({ active, modelSlot }: { active: boolean; modelSlot: HTMLElement | null }) {
+export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: string; active: boolean; modelSlot: HTMLElement | null }) {
   const t = useT();
   const activeRef = useRef(active);
   useEffect(() => {
     activeRef.current = active;
   }, [active]);
   // 会話の切り替えは、ユーザーが明示したときだけ。コマンド実行の依頼・承認や画面移動では切り替えない(再起動後は、バックエンドが前回までの文脈をMarkdownから復元する)
-  const session = useRef(currentSession);
+  const session = useRef(sessionOf(workspaceId));
   // この会話(セッション)のやり取り。最後が現在の1件で、会話を切り替えるまで残す
   const [turns, setTurns] = useState<Turn[]>([]);
   const [busy, setBusy] = useState(false);
@@ -209,6 +215,9 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
     mounted.current = true;
     return () => {
       mounted.current = false;
+      // ワークスペースの切り替えで作り直されるとき、読み上げと録音を止める(切替先へ音声を持ち越さない)
+      stopSpeech();
+      void cancelRecording().catch(() => {});
     };
   }, []);
 
@@ -262,8 +271,9 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
 
   /** 新しい会話を始める。これまでの文脈は引き継がず、実行中の処理と読み上げは止める。 */
   const startNewConversation = (interrupt: boolean) => {
-    currentSession = { id: crypto.randomUUID() };
-    session.current = currentSession;
+    const next = { id: crypto.randomUUID() };
+    sessions.set(workspaceId, next);
+    session.current = next;
     if (interrupt) resetEpoch.current++; // 会話中のループは自分で続けるので、止めるのは外からの操作のときだけ
     stopSpeech();
     if (gate.current.busy || approvalRef.current) cancelTask();
@@ -817,7 +827,8 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
     : t("処理中…");
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="relative flex h-full flex-col">
+      <WorkspaceBadge className="pointer-events-none absolute top-4 right-4 z-10" />
       {modelSlot && createPortal(<ModelSelector route={route} models={models} keyStatus={keyStatus} onChange={changeRoute} />, modelSlot)}
       {needModel && (
         <div className="mx-6 mt-4 flex items-center justify-between gap-3 rounded-lg border bg-muted/40 p-3 text-sm">
