@@ -17,8 +17,11 @@ import ModelSelector from "@/components/ModelSelector";
 import HelpDrawer from "@/components/HelpDrawer";
 import AwsPanel from "@/components/AwsPanel";
 import DeleteSpaceModal from "@/components/DeleteSpaceModal";
+import CopySettingsCard from "@/components/CopySettingsCard";
+import CopyConfirmModal from "@/components/CopyConfirmModal";
+import { copyTargets, type CopyRequest } from "@/lib/copyTargets";
 import { PERSONAL_ID, type DeleteReport } from "@/lib/api";
-import { refreshWorkspace, useWorkspace } from "@/lib/workspace";
+import { bumpSettingsVersion, refreshWorkspace, useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
 import {
   PROVIDERS,
@@ -593,6 +596,31 @@ function LanguageSetting() {
 }
 
 /** デバッグモードのオン/オフ。ログにはAPIへ送る会話内容や文字起こしがそのまま残る。 */
+/** 選択中のスペースへ、パーソナルやほかのスペースの設定をコピーする。パーソナルには出さない。上書きの前に、確認のモーダルで必ず再確認する。 */
+function CopyIntoSpace() {
+  const t = useT();
+  const { active, spaces } = useWorkspace();
+  const [request, setRequest] = useState<CopyRequest | null>(null);
+  if (active.id === PERSONAL_ID) return null;
+  const targets = copyTargets(spaces);
+  return (
+    <>
+      <CopySettingsCard targets={targets} suggestedTo={null} fixedTo={active.id} onRequest={setRequest} />
+      {request && (
+        <CopyConfirmModal
+          request={request}
+          targets={targets}
+          onClose={() => setRequest(null)}
+          onCopied={(r) => {
+            toast.success(t("設定を{count}件コピーしました。", { count: r.settings }) + (r.keys > 0 ? t("(APIキー{keys}件)", { keys: r.keys }) : ""));
+            bumpSettingsVersion(); // コピー先は選択中のスペースなので、設定画面を読み直す
+          }}
+        />
+      )}
+    </>
+  );
+}
+
 /** 選択中のスペースの削除。パーソナルには出さない。削除の前に、確認のモーダルで必ず再確認する。 */
 function DeleteSpace() {
   const t = useT();
@@ -1968,6 +1996,7 @@ export default function Setup() {
           <TabsContent value="data" className="flex flex-col gap-6">
           <LanguageSetting />
           <SettingsTransfer />
+          <CopyIntoSpace />
           <DebugMode />
           <DeleteSpace />
           </TabsContent>

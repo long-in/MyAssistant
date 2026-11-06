@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ArrowRight, Loader2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -57,7 +58,8 @@ export default function CopyConfirmModal({ request, targets, onClose, onCopied }
     }
   };
 
-  return (
+  // どこから呼ばれても、画面全体を基準に表示する(カードの`backdrop-filter`・`clip-path`に切り取られない)
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/40 p-6 backdrop-blur-sm">
       <div
         role="dialog"
@@ -110,6 +112,7 @@ export default function CopyConfirmModal({ request, targets, onClose, onCopied }
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
