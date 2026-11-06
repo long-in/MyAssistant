@@ -77,6 +77,8 @@ pub enum AppError {
     Io(String),
     #[error("invalid settings file: {0}")]
     InvalidSettings(String),
+    #[error("invalid pronunciation dictionary: {0}")]
+    InvalidDictionary(String),
     #[error("invalid personal data: {0}")]
     InvalidProfile(String),
     /// 貼り付けたAWS設定の不備(プロファイルが無い、キーが無い、MFAコードの形式不正など)。
@@ -130,6 +132,7 @@ impl AppError {
             Self::PathNotAllowed => "path_not_allowed",
             Self::Io(_) => "io_error",
             Self::InvalidSettings(_) => "invalid_settings",
+            Self::InvalidDictionary(_) => "invalid_dictionary",
             Self::InvalidProfile(_) => "invalid_profile",
             Self::AwsConfig(_) => "aws_config_error",
             Self::MfaRequired => "mfa_required",
