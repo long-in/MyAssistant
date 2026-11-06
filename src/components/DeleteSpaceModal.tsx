@@ -57,11 +57,12 @@ export default function DeleteSpaceModal({ space, onClose, onDeleted }: Props) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="delete-space-title"
-        className="max-h-full w-full max-w-md overflow-y-auto rounded-xl border border-destructive/40 bg-card/80 p-5 text-sm shadow-2xl backdrop-blur-md"
+        className="flex max-h-full w-full max-w-md flex-col rounded-xl border border-destructive/40 bg-card/80 p-5 text-sm shadow-2xl backdrop-blur-md"
       >
-        <h2 id="delete-space-title" className="text-base font-medium">
+        <h2 id="delete-space-title" className="shrink-0 text-base font-medium">
           {t("スペースの削除")}
         </h2>
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         <div className="mt-3 flex items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 font-medium">
           <SpaceChip name={space.name} color={space.color} />
         </div>
@@ -90,8 +91,9 @@ export default function DeleteSpaceModal({ space, onClose, onDeleted }: Props) {
           <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
           <p>{t("「{name}」を削除します。元に戻せません。", { name: space.name })}</p>
         </div>
+        </div>
 
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="mt-4 flex shrink-0 justify-end gap-2 border-t pt-4">
           <Button ref={cancelRef} type="button" variant="outline" disabled={busy} onClick={onClose}>
             {t("キャンセル")}
           </Button>

@@ -63,11 +63,12 @@ export default function CopyConfirmModal({ request, targets, onClose, onCopied }
         role="dialog"
         aria-modal="true"
         aria-labelledby="copy-title"
-        className="max-h-full w-full max-w-md overflow-y-auto rounded-xl border border-destructive/40 bg-card/80 p-5 text-sm shadow-2xl backdrop-blur-md"
+        className="flex max-h-full w-full max-w-md flex-col rounded-xl border border-destructive/40 bg-card/80 p-5 text-sm shadow-2xl backdrop-blur-md"
       >
-        <h2 id="copy-title" className="text-base font-medium">
+        <h2 id="copy-title" className="shrink-0 text-base font-medium">
           {t("設定のコピー")}
         </h2>
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         <div className="mt-3 flex items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 font-medium">
           <SpaceChip name={from.name} color={from.color} />
           <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
@@ -97,8 +98,9 @@ export default function CopyConfirmModal({ request, targets, onClose, onCopied }
             {to.id === PERSONAL_ID ? " " + t("コピー先は、既存のパーソナルです。") : ""}
           </p>
         </div>
+        </div>
 
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="mt-4 flex shrink-0 justify-end gap-2 border-t pt-4">
           <Button ref={cancelRef} type="button" variant="outline" disabled={busy} onClick={onClose}>
             {t("キャンセル")}
           </Button>
