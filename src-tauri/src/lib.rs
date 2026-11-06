@@ -128,6 +128,7 @@ pub fn run() {
       commands::knowledge::load_batch_route,
       commands::knowledge::save_batch_route,
       commands::workspace::list_projects,
+      commands::workspace::list_project_colors,
       commands::workspace::get_active_workspace,
       commands::workspace::create_project,
       commands::workspace::update_project,

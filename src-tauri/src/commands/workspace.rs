@@ -3,7 +3,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::{
     services::{
         debug_log,
-        workspace::{ActiveWorkspace, Project, WORKSPACE_CHANGED_EVENT, Workspaces},
+        workspace::{ActiveWorkspace, PALETTE, Project, WORKSPACE_CHANGED_EVENT, Workspaces},
     },
     utils::error::AppError,
 };
@@ -12,6 +12,12 @@ use crate::{
 #[tauri::command]
 pub fn list_projects(ws: State<'_, Workspaces>) -> Vec<Project> {
     ws.list()
+}
+
+/// プロジェクトに選べるイメージカラー(30色)。
+#[tauri::command]
+pub fn list_project_colors() -> Vec<&'static str> {
+    PALETTE.to_vec()
 }
 
 /// 現在選択中のワークスペース。

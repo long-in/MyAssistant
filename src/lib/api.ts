@@ -61,6 +61,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   invalid_dictionary: "読み上げ辞書のJSONを取り込めませんでした。[{\"word\": \"語\", \"reading\": \"読み\"}] の形式で、ファイルは1MB以下にしてください。",
   invalid_settings: "設定ファイルの形式が正しくありません。このアプリが書き出したファイルを選んでください。",
   invalid_project: "プロジェクトの名称(1〜40文字)またはイメージカラーが正しくありません。",
+  color_in_use: "その色は、ほかのプロジェクトがすでに使っています。別の色を選んでください。",
   project_limit: "プロジェクトは30件までです。不要なプロジェクトを削除してください。",
   project_not_found: "プロジェクトが見つかりません。",
 };
@@ -610,6 +611,8 @@ export type ActiveWorkspace = { id: string; project: Project | null };
 
 export const WORKSPACE_CHANGED_EVENT = "workspace-changed";
 
+/** プロジェクトに選べるイメージカラー(30色)。 */
+export const listProjectColors = () => invoke<string[]>("list_project_colors");
 export const listProjects = () => invoke<Project[]>("list_projects");
 export const getActiveWorkspace = () => invoke<ActiveWorkspace>("get_active_workspace");
 export const createProject = (name: string, color: string) => invoke<Project>("create_project", { name, color });

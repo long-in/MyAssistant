@@ -25,6 +25,13 @@ pub const PERSONAL_ID: &str = "personal";
 pub const MAX_PROJECTS: usize = 30;
 /// プロジェクト名の最大文字数。
 pub const NAME_MAX_CHARS: usize = 40;
+/// プロジェクトに選べるイメージカラー(`#rrggbb`)。上限(`MAX_PROJECTS`)と同数で、プロジェクト同士で重複させない。
+/// 色相をずらした明るい15色と暗い15色(明るさの違いと色相差で見分けやすくする)。
+pub const PALETTE: [&str; MAX_PROJECTS] = [
+    "#e61919", "#e66b19", "#e6bd19", "#bde619", "#6be619", "#19e619", "#19e66b", "#19e6bd", "#19bde6", "#196be6",
+    "#1919e6", "#6b19e6", "#bd19e6", "#e619bd", "#e6196b", "#a5381d", "#a56e1d", "#a5a51d", "#6ea51d", "#38a51d",
+    "#1da538", "#1da56e", "#1da5a5", "#1d6ea5", "#1d38a5", "#381da5", "#6e1da5", "#a51da5", "#a51d6e", "#a51d38",
+];
 /// ワークスペースが切り替わったことを画面へ知らせるイベント名。
 pub const WORKSPACE_CHANGED_EVENT: &str = "workspace-changed";
 
@@ -83,14 +90,21 @@ fn clean_name(name: &str) -> Result<String, AppError> {
     Ok(name.to_owned())
 }
 
-/// `#rrggbb`だけを受け付け、小文字へそろえる。
+/// `PALETTE`の色だけを受け付け、小文字へそろえる。
 fn clean_color(color: &str) -> Result<String, AppError> {
-    let c = color.trim();
-    let ok = c.len() == 7 && c.starts_with('#') && c[1..].bytes().all(|b| b.is_ascii_hexdigit());
-    if !ok {
+    let c = color.trim().to_ascii_lowercase();
+    if !PALETTE.contains(&c.as_str()) {
         return Err(AppError::InvalidProject("color".into()));
     }
-    Ok(c.to_ascii_lowercase())
+    Ok(c)
+}
+
+/// `color`を、`except`以外のプロジェクトがすでに使っていれば拒否する。
+fn ensure_color_free(projects: &[Project], color: &str, except: Option<&str>) -> Result<(), AppError> {
+    if projects.iter().any(|p| p.color == color && Some(p.id.as_str()) != except) {
+        return Err(AppError::ColorInUse);
+    }
+    Ok(())
 }
 
 /// 読み込み済みのワークスペースと、現在選択中のID、プロジェクト一覧。
@@ -181,6 +195,7 @@ impl Workspaces {
         if projects.len() >= MAX_PROJECTS {
             return Err(AppError::ProjectLimit);
         }
+        ensure_color_free(&projects, &color, None)?;
         let project = Project {
             id: uuid::Uuid::new_v4().to_string(),
             name,
@@ -201,6 +216,7 @@ impl Workspaces {
     pub fn update(&self, id: &str, name: &str, color: &str) -> Result<Project, AppError> {
         let (name, color) = (clean_name(name)?, clean_color(color)?);
         let mut projects = self.projects();
+        ensure_color_free(&projects, &color, Some(id))?;
         let mut next = projects.clone();
         let target = next.iter_mut().find(|p| p.id == id).ok_or(AppError::ProjectNotFound)?;
         target.name = name;
@@ -318,8 +334,8 @@ mod tests {
     fn contexts_do_not_share_data() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
-        let a = ws.create("A", "#112233").unwrap();
-        let b = ws.create("B", "#445566").unwrap();
+        let a = ws.create("A", PALETTE[0]).unwrap();
+        let b = ws.create("B", PALETTE[1]).unwrap();
         ws.switch(&a.id).unwrap();
         ws.active().db.set_setting("k", "a").unwrap();
         ws.active().secrets.set_tts_key("key-a").unwrap();
@@ -336,14 +352,14 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
         for name in ["", "   ", "a\nb", &"あ".repeat(NAME_MAX_CHARS + 1)] {
-            assert!(matches!(ws.create(name, "#000000"), Err(AppError::InvalidProject(_))), "{name:?}");
+            assert!(matches!(ws.create(name, PALETTE[0]), Err(AppError::InvalidProject(_))), "{name:?}");
         }
-        for color in ["", "red", "#12345", "#1234567", "#12345g", "112233"] {
+        for color in ["", "red", "#12345", "#1234567", "#12345g", "112233", "#000000", "#ffffff"] {
             assert!(matches!(ws.create("x", color), Err(AppError::InvalidProject(_))), "{color:?}");
         }
-        let p = ws.create("  営業  ", "#ABCDEF").unwrap();
-        assert_eq!((p.name.as_str(), p.color.as_str()), ("営業", "#abcdef"));
-        assert!(ws.create(&"あ".repeat(NAME_MAX_CHARS), "#000000").is_ok());
+        let p = ws.create("  営業  ", &PALETTE[0].to_uppercase()).unwrap();
+        assert_eq!((p.name.as_str(), p.color.as_str()), ("営業", PALETTE[0]));
+        assert!(ws.create(&"あ".repeat(NAME_MAX_CHARS), PALETTE[1]).is_ok());
     }
 
     #[test]
@@ -351,12 +367,12 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
         for i in 0..MAX_PROJECTS {
-            ws.create(&format!("p{i}"), "#000000").unwrap();
+            ws.create(&format!("p{i}"), PALETTE[i]).unwrap();
         }
-        assert!(matches!(ws.create("over", "#000000"), Err(AppError::ProjectLimit)));
-        let first = ws.list()[0].id.clone();
+        assert!(matches!(ws.create("over", PALETTE[0]), Err(AppError::ProjectLimit)));
+        let (first, first_color) = (ws.list()[0].id.clone(), ws.list()[0].color.clone());
         ws.delete(&first).unwrap();
-        assert!(ws.create("again", "#000000").is_ok());
+        assert!(ws.create("again", &first_color).is_ok());
     }
 
     #[test]
@@ -364,16 +380,16 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let id = {
             let ws = workspaces(d.path());
-            let p = ws.create("A", "#112233").unwrap();
+            let p = ws.create("A", PALETTE[0]).unwrap();
             ws.get(&p.id).unwrap().db.set_setting("k", "v").unwrap();
-            ws.update(&p.id, "A2", "#223344").unwrap();
+            ws.update(&p.id, "A2", PALETTE[2]).unwrap();
             p.id
         };
         let ws = workspaces(d.path());
         assert!(ws.get(&id).is_none(), "not loaded until needed");
         assert_eq!(ws.list()[0].name, "A2");
         let info = ws.switch(&id).unwrap();
-        assert_eq!(info.project.unwrap().color, "#223344");
+        assert_eq!(info.project.unwrap().color, PALETTE[2]);
         assert_eq!(ws.active().db.get_setting("k").unwrap().as_deref(), Some("v"));
     }
 
@@ -389,7 +405,7 @@ mod tests {
     fn delete_removes_data_and_falls_back_to_personal() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
-        let p = ws.create("A", "#112233").unwrap();
+        let p = ws.create("A", PALETTE[0]).unwrap();
         ws.switch(&p.id).unwrap();
         assert!(d.path().join(DIR_NAME).join(&p.id).exists());
         ws.delete(&p.id).unwrap();
@@ -410,5 +426,32 @@ mod tests {
         let ws = workspaces(d.path());
         assert!(ws.list().is_empty());
         assert!(registry_path(d.path()).with_extension("json.corrupt").exists());
+    }
+
+    #[test]
+    fn palette_has_30_distinct_valid_colors() {
+        let set: std::collections::HashSet<_> = PALETTE.iter().collect();
+        assert_eq!((PALETTE.len(), set.len()), (MAX_PROJECTS, MAX_PROJECTS));
+        for c in PALETTE {
+            assert!(c.len() == 7 && c.starts_with('#') && c[1..].bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()), "{c}");
+        }
+    }
+
+    #[test]
+    fn colors_cannot_be_shared_between_projects() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path());
+        let a = ws.create("A", PALETTE[0]).unwrap();
+        let b = ws.create("B", PALETTE[1]).unwrap();
+        // 作成・更新とも、他のプロジェクトの色は選べない(大文字でも同じ色として扱う)
+        assert!(matches!(ws.create("C", PALETTE[0]), Err(AppError::ColorInUse)));
+        assert!(matches!(ws.create("C", &PALETTE[0].to_uppercase()), Err(AppError::ColorInUse)));
+        assert!(matches!(ws.update(&b.id, "B", PALETTE[0]), Err(AppError::ColorInUse)));
+        // 自分の色のまま名称だけ変えるのは許可される
+        assert!(ws.update(&a.id, "A2", PALETTE[0]).is_ok());
+        // 削除すると、その色は空く
+        ws.delete(&a.id).unwrap();
+        assert!(ws.create("C", PALETTE[0]).is_ok());
+        assert_eq!(ws.list().len(), 2);
     }
 }

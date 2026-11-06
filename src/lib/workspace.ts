@@ -6,6 +6,7 @@ import {
   PERSONAL_ID,
   WORKSPACE_CHANGED_EVENT,
   getActiveWorkspace,
+  listProjectColors,
   listProjects,
   switchWorkspace,
   type ActiveWorkspace,
@@ -13,10 +14,10 @@ import {
 } from "@/lib/api";
 
 /** ワークスペースの現在値。起動直後は読み込み前(`ready`が偽)で、パーソナルとして扱う。 */
-export type WorkspaceState = { ready: boolean; active: ActiveWorkspace; projects: Project[] };
+export type WorkspaceState = { ready: boolean; active: ActiveWorkspace; projects: Project[]; palette: string[] };
 
 const PERSONAL: ActiveWorkspace = { id: PERSONAL_ID, project: null };
-const INITIAL: WorkspaceState = { ready: false, active: PERSONAL, projects: [] };
+const INITIAL: WorkspaceState = { ready: false, active: PERSONAL, projects: [], palette: [] };
 
 let state = INITIAL;
 const listeners = new Set<() => void>();
@@ -28,8 +29,8 @@ function set(next: Partial<WorkspaceState>) {
 
 /** バックエンドから現在値を読み直す。 */
 export async function refreshWorkspace() {
-  const [active, projects] = await Promise.all([getActiveWorkspace(), listProjects()]);
-  set({ ready: true, active, projects });
+  const [active, projects, palette] = await Promise.all([getActiveWorkspace(), listProjects(), listProjectColors()]);
+  set({ ready: true, active, projects, palette });
 }
 
 /** ワークスペースを切り替える。切り替えの前後で会話などを止めるのは、`id`の変化を見る側が行う。 */

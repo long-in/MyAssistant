@@ -486,8 +486,11 @@ export const EN: Record<string, string> = {
   "プロジェクトの削除": "Delete project",
   "プロジェクト「{name}」を削除します。会話・ナレッジ・設定・APIキーもすべて削除され、元に戻せません。続行しますか?": "Delete the project \"{name}\"? Its conversations, knowledge, settings and API keys are all deleted and this cannot be undone. Continue?",
   "ワークのプロジェクトは、それぞれが独立したエージェントです。会話・ナレッジ・設定・APIキーは、プロジェクト同士でも、パーソナルとも共有されません。": "Each Work project is an independent agent. Conversations, knowledge, settings and API keys are not shared between projects or with Personal.",
-  "名称とイメージカラーは、どのエージェントと話しているかを見分けるために表示されます。({count}/{max}件)": "The name and image color are shown so you can tell which agent you are talking to. ({count}/{max})",
+  "名称とイメージカラーは、どのエージェントと話しているかを見分けるために表示されます。色はプロジェクトごとに重複できません。({count}/{max}件)": "The name and image color are shown so you can tell which agent you are talking to. Colors cannot be shared between projects. ({count}/{max})",
   "プロジェクトは30件までです。不要なプロジェクトを削除してください。": "You can have up to 30 projects. Delete the ones you no longer need.",
   "プロジェクトの名称(1〜40文字)またはイメージカラーが正しくありません。": "The project name (1-40 characters) or image color is invalid.",
   "プロジェクトが見つかりません。": "Project not found.",
+  "その色は、ほかのプロジェクトがすでに使っています。別の色を選んでください。": "Another project already uses that color. Choose a different one.",
+  "使用中: {name}": "In use: {name}",
+  "{color}(使用中: {name})": "{color} (in use: {name})",
 };

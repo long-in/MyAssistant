@@ -22,29 +22,29 @@ import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { refreshWorkspace, switchTo, useWorkspace } from "@/lib/workspace";
 
-/** イメージカラーの候補。白・黒に近い色は、背景に溶けるため避ける。 */
-const PALETTE = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#14b8a6", "#06b6d4", "#3b82f6", "#8b5cf6", "#d946ef", "#ec4899"];
-
 export default function WorkspacePage() {
   const t = useT();
   const router = useRouter();
-  const { active, projects } = useWorkspace();
+  const { active, projects, palette } = useWorkspace();
   const [editing, setEditing] = useState<string | null>(null); // 編集中のプロジェクトID。nullなら新規作成
   const [name, setName] = useState("");
-  const [color, setColor] = useState(PALETTE[6]);
+  const [picked, setPicked] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const full = projects.length >= MAX_PROJECTS;
+  // ほかのプロジェクトが使っている色は選べない(編集中は自分の色を除く)。選んだ色が使えなければ、空いている先頭の色にする
+  const usedBy = new Map(projects.filter((p) => p.id !== editing).map((p) => [p.color, p.name]));
+  const color = picked && !usedBy.has(picked) ? picked : (palette.find((c) => !usedBy.has(c)) ?? "");
 
   const reset = () => {
     setEditing(null);
     setName("");
-    setColor(PALETTE[6]);
+    setPicked(null);
   };
 
   const startEdit = (p: Project) => {
     setEditing(p.id);
     setName(p.name);
-    setColor(p.color);
+    setPicked(p.color);
   };
 
   const submit = async () => {
@@ -91,7 +91,7 @@ export default function WorkspacePage() {
     }
   };
 
-  const canSubmit = !busy && name.trim().length > 0 && (editing !== null || !full);
+  const canSubmit = !busy && name.trim().length > 0 && color !== "" && (editing !== null || !full);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -108,7 +108,7 @@ export default function WorkspacePage() {
           <CardHeader>
             <CardTitle>{editing ? t("プロジェクトを編集") : t("プロジェクトを作成")}</CardTitle>
             <CardDescription>
-              {t("名称とイメージカラーは、どのエージェントと話しているかを見分けるために表示されます。({count}/{max}件)", {
+              {t("名称とイメージカラーは、どのエージェントと話しているかを見分けるために表示されます。色はプロジェクトごとに重複できません。({count}/{max}件)", {
                 count: projects.length,
                 max: MAX_PROJECTS,
               })}
@@ -123,34 +123,31 @@ export default function WorkspacePage() {
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && canSubmit && void submit()}
             />
-            <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label={t("イメージカラー")}>
-              {PALETTE.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  role="radio"
-                  aria-checked={color === c}
-                  aria-label={c}
-                  onClick={() => setColor(c)}
-                  className={cn(
-                    "flex size-7 items-center justify-center rounded-full ring-offset-2 ring-offset-background transition",
-                    color === c && "ring-2 ring-foreground",
-                  )}
-                  style={{ backgroundColor: c }}
-                >
-                  {color === c && <Check className="size-4 text-white drop-shadow" />}
-                </button>
-              ))}
-              <label className="ml-2 flex items-center gap-2 text-xs text-muted-foreground">
-                {t("カスタム")}
-                <input
-                  type="color"
-                  value={color}
-                  onChange={(e) => setColor(e.target.value)}
-                  className="size-7 cursor-pointer rounded border bg-transparent p-0"
-                  aria-label={t("カスタム")}
-                />
-              </label>
+            <div className="grid grid-cols-10 gap-2" role="radiogroup" aria-label={t("イメージカラー")}>
+              {palette.map((c) => {
+                const owner = usedBy.get(c);
+                return (
+                  <button
+                    key={c}
+                    type="button"
+                    role="radio"
+                    aria-checked={color === c}
+                    aria-label={owner ? t("{color}(使用中: {name})", { color: c, name: owner }) : c}
+                    title={owner ? t("使用中: {name}", { name: owner }) : c}
+                    disabled={owner !== undefined}
+                    onClick={() => setPicked(c)}
+                    className={cn(
+                      "relative flex aspect-square w-full max-w-8 items-center justify-center rounded-full ring-offset-2 ring-offset-background transition",
+                      color === c && "ring-2 ring-foreground",
+                      owner !== undefined && "cursor-not-allowed opacity-25",
+                    )}
+                    style={{ backgroundColor: c }}
+                  >
+                    {color === c && <Check className="size-4 text-white drop-shadow" />}
+                    {owner !== undefined && <X className="size-4 text-white drop-shadow" />}
+                  </button>
+                );
+              })}
             </div>
             <div className="flex items-center gap-2">
               <Button onClick={() => void submit()} disabled={!canSubmit}>
