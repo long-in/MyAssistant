@@ -201,21 +201,8 @@ pub fn run() {
 
       tray::setup(app.handle())?;
 
-      let handle = app.handle().clone();
-      tauri::async_runtime::spawn(async move {
-        loop {
-          // 設定変更を次の待ちから反映するため、毎回読み直す
-          let minutes = services::batch::interval_minutes(&services::workspace::active(&handle).db)
-            .unwrap_or(services::batch::DEFAULT_INTERVAL_MINUTES);
-          tokio::time::sleep(Duration::from_secs(u64::from(minutes) * 60)).await;
-          // プロジェクトも含め、切り替えていないワークスペースの整理も続ける
-          for ctx in handle.state::<services::workspace::Workspaces>().load_all() {
-            if let Err(e) = services::batch::run_guarded(&ctx).await {
-              log::warn!("periodic batch failed ({}): {e}", ctx.id);
-            }
-          }
-        }
-      });
+      // 整理バッチは、ワークスペースごとの間隔で独立して動かす
+      services::scheduler::spawn(app.handle().clone());
 
       if cfg!(debug_assertions) {
         app.handle().plugin(

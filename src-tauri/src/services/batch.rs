@@ -235,7 +235,7 @@ pub fn knowledge_root(ctx: &WorkspaceCtx) -> Result<std::path::PathBuf, AppError
 pub async fn run_guarded(ctx: &WorkspaceCtx) -> Result<Option<BatchReport>, AppError> {
     // 削除済みのプロジェクトは処理しない
     ctx.ensure_alive()?;
-    let guard = &ctx.batch;
+    let guard = &ctx.shared.batch;
     if guard.0.swap(true, Ordering::SeqCst) {
         return Ok(None);
     }

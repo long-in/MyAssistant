@@ -48,8 +48,17 @@ pub struct WorkspaceCtx {
     pub db: Db,
     pub secrets: Secrets,
     pub aws: AwsState,
-    pub batch: BatchGuard,
     pub debug: DebugLog,
+    /// 同じワークスペースを別々に開いた複数の`WorkspaceCtx`の間で共有する状態。
+    pub shared: Arc<Shared>,
+}
+
+/// 同じワークスペースの間で共有する状態。バッチのために一時的に開いたものと、画面用に読み込んだものが、
+/// 同じ整理バッチを二重に動かしたり、削除に気づかなかったりしないようにする。
+#[derive(Default)]
+pub struct Shared {
+    /// 整理バッチの多重実行を防ぐ。
+    pub batch: BatchGuard,
     /// 削除された(または削除中の)プロジェクトの印。裏で動く処理は、書き込む前にこれを確かめて止まる。
     deleted: AtomicBool,
 }
@@ -57,6 +66,11 @@ pub struct WorkspaceCtx {
 impl WorkspaceCtx {
     /// `dir`を開く(無ければ作る)。
     pub fn open(id: &str, dir: &Path) -> Result<Self, AppError> {
+        Self::open_shared(id, dir, Arc::new(Shared::default()))
+    }
+
+    /// 共有状態を指定して開く。同じワークスペースを開き直すときに、前の状態を引き継ぐ。
+    pub fn open_shared(id: &str, dir: &Path, shared: Arc<Shared>) -> Result<Self, AppError> {
         std::fs::create_dir_all(dir).map_err(|e| AppError::Io(e.to_string()))?;
         Ok(Self {
             id: id.to_owned(),
@@ -64,15 +78,14 @@ impl WorkspaceCtx {
             db: Db::open(&dir.join("timeline.db"))?,
             secrets: Secrets::open(dir)?,
             aws: AwsState::default(),
-            batch: BatchGuard::default(),
             debug: DebugLog::default(),
-            deleted: AtomicBool::new(false),
+            shared,
         })
     }
 
     /// 削除されていないことを確かめる。バッチや会話が、削除済みのプロジェクトへ書き込まないようにする。
     pub fn ensure_alive(&self) -> Result<(), AppError> {
-        if self.deleted.load(Ordering::SeqCst) { Err(AppError::ProjectNotFound) } else { Ok(()) }
+        if self.shared.deleted.load(Ordering::SeqCst) { Err(AppError::ProjectNotFound) } else { Ok(()) }
     }
 }
 
@@ -133,6 +146,8 @@ pub struct Workspaces {
     /// 削除と切り替え・読み込みが交差して、存在しないワークスペースを選んだり、削除済みを開き直したりしないようにする。
     op: Mutex<()>,
     loaded: RwLock<HashMap<String, Arc<WorkspaceCtx>>>,
+    /// ワークスペースIDごとの共有状態(読み込んでいないプロジェクトの分も、一時的に開くときのために持つ)。
+    shared: Mutex<HashMap<String, Arc<Shared>>>,
     active: RwLock<String>,
     projects: Mutex<Vec<Project>>,
 }
@@ -146,6 +161,7 @@ impl Workspaces {
         Self {
             root: root.to_owned(),
             op: Mutex::new(()),
+            shared: Mutex::new(HashMap::from([(id.clone(), personal.shared.clone())])),
             loaded: RwLock::new(HashMap::from([(id.clone(), Arc::new(personal))])),
             active: RwLock::new(id),
             projects: Mutex::new(projects),
@@ -189,20 +205,46 @@ impl Workspaces {
         self.loaded.read().unwrap_or_else(|p| p.into_inner()).values().cloned().collect()
     }
 
-    /// すべてのプロジェクトを読み込んで返す(バックグラウンド処理の巡回用)。開けないものは警告して飛ばす。
-    pub fn load_all(&self) -> Vec<Arc<WorkspaceCtx>> {
-        let _op = self.op();
-        self.load_all_locked()
+    fn shared_for(&self, id: &str) -> Arc<Shared> {
+        self.shared.lock().unwrap_or_else(|p| p.into_inner()).entry(id.to_owned()).or_default().clone()
     }
 
-    fn load_all_locked(&self) -> Vec<Arc<WorkspaceCtx>> {
-        let ids: Vec<String> = self.projects().iter().map(|p| p.id.clone()).collect();
-        for id in ids {
-            if let Err(e) = self.load_locked(&id) {
-                log::warn!("project {id} not loaded: {e}");
-            }
+    /// バックグラウンド処理の対象になるワークスペースのID(パーソナルとすべてのプロジェクト)。開かずに返す。
+    pub fn batch_ids(&self) -> Vec<String> {
+        let _op = self.op();
+        std::iter::once(PERSONAL_ID.to_owned()).chain(self.projects().iter().map(|p| p.id.clone())).collect()
+    }
+
+    /// 読み込み済みならそれを、未読み込みなら一時的に開いて返す(読み込み済みの一覧には加えない)。`op`を持った状態で呼ぶ。
+    /// 一時的に開いたものは、使い終わったら捨てられる。共有状態は読み込み済みのものと同じ。
+    fn open_transient_locked(&self, id: &str) -> Result<Arc<WorkspaceCtx>, AppError> {
+        if let Some(ctx) = self.get(id) {
+            return Ok(ctx);
         }
-        self.all()
+        if !self.projects().iter().any(|p| p.id == id) {
+            return Err(AppError::ProjectNotFound);
+        }
+        let ctx = Arc::new(WorkspaceCtx::open_shared(id, &self.project_dir(id), self.shared_for(id))?);
+        if let Err(e) = debug_log::refresh(&ctx) {
+            log::warn!("debug log init failed for project {id}: {e}");
+        }
+        Ok(ctx)
+    }
+
+    /// 整理バッチなど、選択していないワークスペースの処理のために開く。未読み込みのプロジェクトは一時的に開くだけで、読み込んだままにしない。
+    pub fn open_for_batch(&self, id: &str) -> Result<Arc<WorkspaceCtx>, AppError> {
+        let _op = self.op();
+        self.open_transient_locked(id)
+    }
+
+    /// すべてのワークスペースを、保存先の確認のために開く(未読み込みは一時的に開くだけ)。開けないものは警告して飛ばす。
+    fn all_for_check_locked(&self) -> Vec<Arc<WorkspaceCtx>> {
+        let ids: Vec<String> = std::iter::once(PERSONAL_ID.to_owned()).chain(self.projects().iter().map(|p| p.id.clone())).collect();
+        ids.iter()
+            .filter_map(|id| {
+                self.open_transient_locked(id).map_err(|e| log::warn!("workspace {id} not opened: {e}")).ok()
+            })
+            .collect()
     }
 
     /// プロジェクトを(未読み込みなら)開く。一覧に無いIDは開かない。`op`を持った状態で呼ぶ。
@@ -213,7 +255,7 @@ impl Workspaces {
         if !self.projects().iter().any(|p| p.id == id) {
             return Err(AppError::ProjectNotFound);
         }
-        let ctx = Arc::new(WorkspaceCtx::open(id, &self.project_dir(id))?);
+        let ctx = Arc::new(WorkspaceCtx::open_shared(id, &self.project_dir(id), self.shared_for(id))?);
         // デバッグログの出力先は、開いたときに決める(裏で動く処理も自分のワークスペースのログへ書く)
         if let Err(e) = debug_log::refresh(&ctx) {
             log::warn!("debug log init failed for project {id}: {e}");
@@ -238,7 +280,7 @@ impl Workspaces {
         if overlaps(&candidate, &canonical_lenient(&self.root)) && !own_default.is_some_and(|d| candidate.starts_with(d)) {
             return Err(AppError::PathInUse);
         }
-        for other in self.load_all_locked().into_iter().filter(|c| c.id != id) {
+        for other in self.all_for_check_locked().into_iter().filter(|c| c.id != id) {
             for claimed in claimed_paths(&other) {
                 if overlaps(&candidate, &canonical_lenient(&claimed)) {
                     return Err(AppError::PathInUse);
@@ -286,14 +328,14 @@ impl Workspaces {
         // (古い設定でアプリデータ全体を保存先にしている場合など。そのままではキーやDBがナレッジから見えてしまう)
         let dir = canonical_lenient(&self.project_dir(&project.id));
         drop(projects);
-        for other in self.load_all_locked() {
+        for other in self.all_for_check_locked() {
             if claimed_paths(&other).iter().any(|c| overlaps(&dir, &canonical_lenient(c))) {
                 return Err(AppError::PathInUse);
             }
         }
         let mut projects = self.projects();
         // 先にフォルダとDBを作れることを確かめてから一覧へ載せる
-        let ctx = Arc::new(WorkspaceCtx::open(&project.id, &self.project_dir(&project.id))?);
+        let ctx = Arc::new(WorkspaceCtx::open_shared(&project.id, &self.project_dir(&project.id), self.shared_for(&project.id))?);
         let mut next = projects.clone();
         next.push(project.clone());
         save_registry(&self.root, &next)?;
@@ -353,9 +395,11 @@ impl Workspaces {
             }
             was
         };
-        if let Some(ctx) = self.loaded.write().unwrap_or_else(|p| p.into_inner()).remove(id) {
-            ctx.deleted.store(true, Ordering::SeqCst);
+        // 読み込み済みでも、バッチのために一時的に開かれたものでも、同じ共有状態の印で止まる
+        if let Some(shared) = self.shared.lock().unwrap_or_else(|p| p.into_inner()).remove(id) {
+            shared.deleted.store(true, Ordering::SeqCst);
         }
+        self.loaded.write().unwrap_or_else(|p| p.into_inner()).remove(id);
         // `id`は一覧にあったもの(生成したUUID)だけなので、`workspaces/`配下の1フォルダに限られる
         if let Err(e) = std::fs::remove_dir_all(self.project_dir(id))
             && e.kind() != std::io::ErrorKind::NotFound
@@ -751,7 +795,7 @@ mod tests {
         assert!(!ws.delete(&b.id).unwrap(), "選択中ではなかった");
         // 削除済みのIDは、選択も読み込みもできず、一覧から開き直されない
         assert!(matches!(ws.switch(&a.id), Err(AppError::ProjectNotFound)));
-        assert!(ws.load_all().iter().all(|c| c.id == PERSONAL_ID));
+        assert_eq!(ws.batch_ids(), vec![PERSONAL_ID.to_owned()]);
         assert!(!d.path().join(DIR_NAME).join(&a.id).exists());
     }
 
@@ -789,5 +833,34 @@ mod tests {
             assert!(ws.get(&p.id).is_none());
             assert!(!d.path().join(DIR_NAME).join(&p.id).exists());
         }
+    }
+
+    #[test]
+    fn background_work_opens_projects_transiently_and_shares_state() {
+        let d = tempfile::tempdir().unwrap();
+        let id = workspaces(d.path()).create("A", PALETTE[0]).unwrap().id;
+        let ws = workspaces(d.path()); // 再起動後: プロジェクトは未読み込み
+        assert_eq!(ws.batch_ids(), vec![PERSONAL_ID.to_owned(), id.clone()], "開かずに一覧を返す");
+        assert!(ws.get(&id).is_none());
+
+        // バッチのために開いても、読み込み済みの一覧には残らない
+        let transient = ws.open_for_batch(&id).unwrap();
+        transient.db.set_setting("k", "v").unwrap();
+        assert!(ws.get(&id).is_none(), "開いたままにしない");
+        // 保存先の確認も、他のプロジェクトを読み込んだままにしない
+        let free = tempfile::tempdir().unwrap();
+        assert!(ws.ensure_paths_free(PERSONAL_ID, free.path()).is_ok());
+        assert!(ws.get(&id).is_none());
+
+        // 画面用に読み込んだものと、整理バッチの多重実行ガード・削除の印を共有する(二重に動かさない)
+        ws.switch(&id).unwrap();
+        let loaded = ws.get(&id).unwrap();
+        assert!(Arc::ptr_eq(&transient.shared, &loaded.shared));
+        assert_eq!(loaded.db.get_setting("k").unwrap().as_deref(), Some("v"));
+
+        // 削除は、一時的に開かれたものにも伝わる
+        ws.delete(&id).unwrap();
+        assert!(matches!(transient.ensure_alive(), Err(AppError::ProjectNotFound)));
+        assert!(matches!(ws.open_for_batch(&id), Err(AppError::ProjectNotFound)));
     }
 }

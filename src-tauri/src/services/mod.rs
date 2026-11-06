@@ -8,6 +8,7 @@ pub mod legacy_data;
 pub mod compact;
 pub mod debug_log;
 pub mod graph;
+pub mod scheduler;
 pub mod secrets;
 pub mod settings_transfer;
 pub mod shell;
