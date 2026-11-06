@@ -90,6 +90,8 @@ pub fn run() {
       commands::voice::synthesize_speech,
       commands::voice::get_tts_dictionary,
       commands::voice::set_tts_dictionary,
+      commands::voice::export_tts_dictionary,
+      commands::voice::import_tts_dictionary,
       commands::voice::get_tts_engine,
       commands::voice::set_tts_engine,
       commands::voice::get_voicevox_style,

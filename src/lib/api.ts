@@ -58,6 +58,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   path_not_allowed: "ナレッジディレクトリ外のパスにはアクセスできません。",
   io_error: "ファイルの読み書きに失敗しました。",
   mfa_required: "MFAコードが入力されませんでした。もう一度お試しください。",
+  invalid_dictionary: "読み上げ辞書のJSONを取り込めませんでした。[{\"word\": \"語\", \"reading\": \"読み\"}] の形式で、ファイルは1MB以下にしてください。",
   invalid_settings: "設定ファイルの形式が正しくありません。このアプリが書き出したファイルを選んでください。",
 };
 
@@ -372,6 +373,11 @@ export type TtsDictionary = { builtin: DictionaryEntry[]; user: DictionaryEntry[
 export const getTtsDictionary = () => invoke<TtsDictionary>("get_tts_dictionary");
 /** ユーザー辞書を丸ごと保存し、整形後(空欄・大文字小文字違いの重複を除いた)の内容を返す。 */
 export const setTtsDictionary = (entries: DictionaryEntry[]) => invoke<DictionaryEntry[]>("set_tts_dictionary", { entries });
+export type DictionaryImportReport = { entries: DictionaryEntry[]; added: number; updated: number };
+/** ユーザー辞書をJSONファイルへ書き出し、書き出した語数を返す。 */
+export const exportTtsDictionary = (dest: string) => invoke<number>("export_tts_dictionary", { dest });
+/** JSONファイルの語をユーザー辞書へ取り込む。重複する語は取り込み側で上書きする。 */
+export const importTtsDictionary = (src: string) => invoke<DictionaryImportReport>("import_tts_dictionary", { src });
 
 export const ttsKeyRegistered = () => invoke<boolean>("tts_key_registered");
 export const saveTtsKey = (key: string) => invoke<void>("save_tts_key", { key });

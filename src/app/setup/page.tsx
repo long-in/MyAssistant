@@ -51,6 +51,8 @@ import {
   getTtsDictionary,
   getWakeConfig,
   setTtsDictionary,
+  exportTtsDictionary,
+  importTtsDictionary,
   type DictionaryEntry,
   type TtsDictionary,
   getWebAccess,
@@ -981,6 +983,47 @@ function PronunciationDictionary() {
     if (await save([...rest, draft])) setEditing(null);
   };
 
+  const exportJson = async () => {
+    const stamp = new Date().toISOString().slice(0, 10);
+    const dest = await saveDialog({
+      title: t("読み上げ辞書のエクスポート"),
+      defaultPath: `myassistant-dictionary-${stamp}.json`,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (!dest) return;
+    setBusy(true);
+    try {
+      const n = await exportTtsDictionary(dest);
+      toast.success(t("{n}語を書き出しました。", { n }));
+    } catch (e) {
+      toast.error(reportError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ファイル内で重複する語は後の項目、登録済みの同じ語は取り込み側で上書きされる
+  const importJson = async () => {
+    const src = await openDialog({
+      title: t("読み上げ辞書のインポート"),
+      multiple: false,
+      directory: false,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (typeof src !== "string") return;
+    setBusy(true);
+    try {
+      const r = await importTtsDictionary(src);
+      setDict((d) => d && { ...d, user: r.entries });
+      setEditing(null);
+      toast.success(t("{added}語を追加、{updated}語を上書きしました。", { added: r.added, updated: r.updated }));
+    } catch (e) {
+      toast.error(reportError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="border-t py-3">
       <div className="text-sm font-medium">{t("読み上げ辞書")}</div>
@@ -1000,6 +1043,17 @@ function PronunciationDictionary() {
           <Plus /> {t("追加")}
         </Button>
       </form>
+      <div className="mt-2 flex items-center gap-2">
+        <Button type="button" variant="outline" size="sm" disabled={!dict || busy} onClick={importJson}>
+          <Upload /> {t("JSONから取り込み")}
+        </Button>
+        <Button type="button" variant="outline" size="sm" disabled={!dict || busy || !dict.user.length} onClick={exportJson}>
+          <Download /> {t("JSONで書き出し")}
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          {t("形式: [{\"word\": \"Figma\", \"reading\": \"フィグマ\"}]。同じ語は上書きされます。")}
+        </span>
+      </div>
       {!!dict?.user.length && (
         <ul className="mt-2 space-y-1 text-sm">
           {dict.user.map((e) =>
