@@ -39,6 +39,8 @@ pub const PALETTE: [&str; MAX_SPACES] = [
 pub const WORKSPACE_CHANGED_EVENT: &str = "workspace-changed";
 
 const DIR_NAME: &str = "workspaces";
+/// 削除時に残したナレッジを置くフォルダ(アプリデータ直下)。
+const KEPT_DIR_NAME: &str = "kept-knowledge";
 const REGISTRY_FILE: &str = "registry.json";
 
 /// 1ワークスペース分の状態。`dir`配下に`timeline.db`と`secrets.json`を置く。
@@ -383,16 +385,24 @@ impl Workspaces {
     }
 
     /// スペースを一覧とディスクから削除する。選択中ならパーソナルへ戻す。元に戻せない。
-    /// 選択中を切り戻したかどうかを返す。裏で動いている処理には削除の印(`ensure_alive`)が付き、書き込む前に止まる。
+    /// `delete_knowledge`が偽なら、既定の場所のナレッジ(とデバッグログ)を、削除前に`kept-knowledge/`へ移して残す。
+    /// 選択中を切り戻したかと、残した場所を返す。裏で動いている処理には削除の印(`ensure_alive`)が付き、書き込む前に止まる。
     /// アプリが管理するフォルダ(`workspaces/<id>/`)だけを消す。利用者が指定したナレッジの保存先は消さない。
-    pub fn delete(&self, id: &str) -> Result<bool, AppError> {
+    pub fn delete(&self, id: &str, delete_knowledge: bool) -> Result<Deleted, AppError> {
         let _op = self.op();
         let mut spaces = self.spaces();
-        if !spaces.iter().any(|p| p.id == id) {
+        let Some(space) = spaces.iter().find(|p| p.id == id).cloned() else {
             return Err(AppError::SpaceNotFound);
-        }
+        };
+        // ナレッジを残すときは、消す前に移す。移せなければ何も消さずに失敗する
+        let kept = if delete_knowledge { None } else { self.keep_knowledge(&space)? };
         let next: Vec<Space> = spaces.iter().filter(|p| p.id != id).cloned().collect();
-        save_registry(&self.root, &next)?;
+        if let Err(e) = save_registry(&self.root, &next) {
+            if let Some((from, to)) = &kept {
+                let _ = std::fs::rename(to, from); // 一覧が変わらないので、ナレッジも元の場所へ戻す
+            }
+            return Err(e);
+        }
         *spaces = next;
         drop(spaces);
         let was_active = {
@@ -416,8 +426,44 @@ impl Workspaces {
         {
             log::warn!("space dir not removed: {e}");
         }
-        Ok(was_active)
+        Ok(Deleted { was_active, kept_knowledge: kept.map(|(_, to)| to.to_string_lossy().into_owned()) })
     }
+
+    /// 既定の場所のナレッジを`kept-knowledge/<名称>-<ID先頭>/`へ移す。無ければ`None`。移す前と後の場所を返す。
+    fn keep_knowledge(&self, space: &Space) -> Result<Option<(PathBuf, PathBuf)>, AppError> {
+        let from = self.space_dir(&space.id).join("knowledge");
+        if !from.is_dir() {
+            return Ok(None);
+        }
+        let parent = self.root.join(KEPT_DIR_NAME);
+        std::fs::create_dir_all(&parent).map_err(|e| AppError::Io(e.to_string()))?;
+        let id8: String = space.id.chars().take(8).collect();
+        let to = parent.join(format!("{}-{id8}", folder_name(&space.name)));
+        if to.exists() {
+            return Err(AppError::PathInUse);
+        }
+        std::fs::rename(&from, &to).map_err(|e| AppError::Io(e.to_string()))?;
+        Ok(Some((from, to)))
+    }
+}
+
+/// スペースの削除の結果。
+#[derive(Debug)]
+pub struct Deleted {
+    /// 選択中のスペースを削除して、パーソナルへ戻ったか。
+    pub was_active: bool,
+    /// 残したナレッジの場所(残さなかった、または、既定の場所にナレッジが無いときは`None`)。
+    pub kept_knowledge: Option<String>,
+}
+
+/// 名称を、フォルダ名に使える形にする(区切り文字や制御文字を`_`に、前後の空白とドットを除く)。
+fn folder_name(name: &str) -> String {
+    let s: String = name
+        .chars()
+        .map(|c| if c.is_control() || "/\\:*?\"<>|".contains(c) { '_' } else { c })
+        .collect();
+    let s = s.trim_matches(|c: char| c.is_whitespace() || c == '.');
+    if s.is_empty() { "space".to_owned() } else { s.to_owned() }
 }
 
 /// そのワークスペースが使う(または、既定に戻すと使う)ナレッジとデバッグログの場所。
@@ -565,7 +611,7 @@ mod tests {
         }
         assert!(matches!(ws.create("over", PALETTE[0]), Err(AppError::SpaceLimit)));
         let (first, first_color) = (ws.list()[0].id.clone(), ws.list()[0].color.clone());
-        ws.delete(&first).unwrap();
+        ws.delete(&first, true).unwrap();
         assert!(ws.create("again", &first_color).is_ok());
     }
 
@@ -602,14 +648,61 @@ mod tests {
         let p = ws.create("A", PALETTE[0]).unwrap();
         ws.switch(&p.id).unwrap();
         assert!(d.path().join(DIR_NAME).join(&p.id).exists());
-        ws.delete(&p.id).unwrap();
+        ws.delete(&p.id, true).unwrap();
         assert_eq!(ws.active_info().id, PERSONAL_ID);
         assert!(!d.path().join(DIR_NAME).join(&p.id).exists());
         assert!(ws.list().is_empty());
-        assert!(matches!(ws.delete(&p.id), Err(AppError::SpaceNotFound)));
+        assert!(matches!(ws.delete(&p.id, true), Err(AppError::SpaceNotFound)));
         // 一覧に無いIDでは何も消えない(パスの注入対策)
-        assert!(matches!(ws.delete(".."), Err(AppError::SpaceNotFound)));
+        assert!(matches!(ws.delete("..", true), Err(AppError::SpaceNotFound)));
         assert!(d.path().join("timeline.db").exists());
+    }
+
+    #[test]
+    fn delete_can_keep_the_default_knowledge() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path());
+        let a = ws.create("A/B: x", PALETTE[0]).unwrap();
+        let note = d.path().join(DIR_NAME).join(&a.id).join("knowledge").join("note.md");
+        std::fs::create_dir_all(note.parent().unwrap()).unwrap();
+        std::fs::write(&note, "keep me").unwrap();
+        let r = ws.delete(&a.id, false).unwrap();
+        // スペースは消え、ナレッジはアプリデータ直下の別の場所に残る(名称の区切り文字は無害化される)
+        assert!(!d.path().join(DIR_NAME).join(&a.id).exists());
+        let kept = std::path::PathBuf::from(r.kept_knowledge.unwrap());
+        assert_eq!(kept.parent().unwrap(), d.path().join(KEPT_DIR_NAME));
+        assert_eq!(std::fs::read_to_string(kept.join("note.md")).unwrap(), "keep me");
+        assert!(ws.list().is_empty());
+    }
+
+    #[test]
+    fn delete_removes_the_knowledge_when_asked_and_keeps_nothing() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path());
+        let a = ws.create("A", PALETTE[0]).unwrap();
+        let knowledge = d.path().join(DIR_NAME).join(&a.id).join("knowledge");
+        std::fs::create_dir_all(&knowledge).unwrap();
+        std::fs::write(knowledge.join("note.md"), "x").unwrap();
+        let r = ws.delete(&a.id, true).unwrap();
+        assert!(r.kept_knowledge.is_none());
+        assert!(!d.path().join(KEPT_DIR_NAME).exists());
+        // ナレッジが無ければ、残すを選んでも何も作らない
+        let b = ws.create("B", PALETTE[1]).unwrap();
+        assert!(ws.delete(&b.id, false).unwrap().kept_knowledge.is_none());
+    }
+
+    #[test]
+    fn delete_fails_without_losing_data_if_the_kept_place_is_taken() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path());
+        let a = ws.create("A", PALETTE[0]).unwrap();
+        let knowledge = d.path().join(DIR_NAME).join(&a.id).join("knowledge");
+        std::fs::create_dir_all(&knowledge).unwrap();
+        let id8: String = a.id.chars().take(8).collect();
+        std::fs::create_dir_all(d.path().join(KEPT_DIR_NAME).join(format!("A-{id8}"))).unwrap();
+        assert!(matches!(ws.delete(&a.id, false), Err(AppError::PathInUse)));
+        assert!(knowledge.exists());
+        assert_eq!(ws.list().len(), 1);
     }
 
     #[test]
@@ -644,7 +737,7 @@ mod tests {
         // 自分の色のまま名称だけ変えるのは許可される
         assert!(ws.update(&a.id, "A2", PALETTE[0]).is_ok());
         // 削除すると、その色は空く
-        ws.delete(&a.id).unwrap();
+        ws.delete(&a.id, true).unwrap();
         assert!(ws.create("C", PALETTE[0]).is_ok());
         assert_eq!(ws.list().len(), 2);
     }
@@ -664,7 +757,7 @@ mod tests {
         assert!(ws.update(&a.id, "Sales", PALETTE[3]).is_ok());
         assert!(ws.update(&a.id, "SALES", PALETTE[3]).is_ok());
         // 削除すると、その名称は空く
-        ws.delete(&a.id).unwrap();
+        ws.delete(&a.id, true).unwrap();
         assert!(ws.create("Sales", PALETTE[0]).is_ok());
         // 拒否された操作では、一覧は変わらない
         assert_eq!(ws.list().len(), 2);
@@ -799,10 +892,10 @@ mod tests {
         let held = ws.get(&a.id).unwrap(); // 裏の処理が持っている
         ws.switch(&a.id).unwrap();
         assert!(held.ensure_alive().is_ok());
-        assert!(ws.delete(&a.id).unwrap(), "選択中だった");
+        assert!(ws.delete(&a.id, true).unwrap().was_active, "選択中だった");
         assert!(matches!(held.ensure_alive(), Err(AppError::SpaceNotFound)), "裏の処理は削除に気づいて止まる");
         assert_eq!(ws.active().id, PERSONAL_ID);
-        assert!(!ws.delete(&b.id).unwrap(), "選択中ではなかった");
+        assert!(!ws.delete(&b.id, true).unwrap().was_active, "選択中ではなかった");
         // 削除済みのIDは、選択も読み込みもできず、一覧から開き直されない
         assert!(matches!(ws.switch(&a.id), Err(AppError::SpaceNotFound)));
         assert_eq!(ws.batch_ids(), vec![PERSONAL_ID.to_owned()]);
@@ -833,7 +926,7 @@ mod tests {
                 let _ = w1.active();
             });
             let t2 = std::thread::spawn(move || {
-                let _ = w2.delete(&id2);
+                let _ = w2.delete(&id2, true);
             });
             t1.join().unwrap();
             t2.join().unwrap();
@@ -869,7 +962,7 @@ mod tests {
         assert_eq!(loaded.db.get_setting("k").unwrap().as_deref(), Some("v"));
 
         // 削除は、一時的に開かれたものにも伝わる
-        ws.delete(&id).unwrap();
+        ws.delete(&id, true).unwrap();
         assert!(matches!(transient.ensure_alive(), Err(AppError::SpaceNotFound)));
         assert!(matches!(ws.open_for_batch(&id), Err(AppError::SpaceNotFound)));
     }
@@ -896,14 +989,14 @@ mod tests {
         let token = crate::services::cancel::CancelToken::default();
         shared.agent.set_cancel(token.clone());
         let rx = shared.agent.register_approval("t1");
-        ws.delete(&p.id).unwrap();
+        ws.delete(&p.id, true).unwrap();
         token.cancelled().await; // 中断されている
         assert!(rx.await.is_err(), "承認待ちは拒否として終わる");
         // 別のスペースの依頼には影響しない
         let q = ws.create("B", PALETTE[1]).unwrap();
         let other = ws.get(&q.id).unwrap().shared.clone();
         let rx2 = other.agent.register_approval("t2");
-        ws.delete(&p.id).unwrap_err();
+        ws.delete(&p.id, true).unwrap_err();
         other.agent.answer("t2", true);
         assert!(rx2.await.unwrap());
     }

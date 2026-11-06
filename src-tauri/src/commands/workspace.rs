@@ -6,7 +6,7 @@ use crate::{
     services::{
         debug_log,
         settings_transfer::{self, CopyOptions, CopyReport},
-        workspace::{ActiveWorkspace, PALETTE, Space, WORKSPACE_CHANGED_EVENT, Workspaces},
+        workspace::{ActiveWorkspace, Deleted, PALETTE, Space, WORKSPACE_CHANGED_EVENT, Workspaces},
     },
     utils::error::AppError,
 };
@@ -54,16 +54,26 @@ pub fn update_space(
     Ok(space)
 }
 
-/// スペースを、データごと削除する。元に戻せないため、呼び出し側で確認を取ること。選択中ならパーソナルへ戻る。
+/// 削除後の状態。`kept_knowledge`は、残したナレッジの場所。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteReport {
+    pub active: ActiveWorkspace,
+    pub kept_knowledge: Option<String>,
+}
+
+/// スペースを削除する。元に戻せないため、呼び出し側で確認を取ること。選択中ならパーソナルへ戻る。
+/// `delete_knowledge`が偽なら、既定の場所のナレッジは消さずに残す。
 #[tauri::command]
 pub fn delete_space(
     app: AppHandle,
     ws: State<'_, Workspaces>,
     contexts: State<'_, SessionContexts>,
     id: String,
-) -> Result<ActiveWorkspace, AppError> {
+    delete_knowledge: bool,
+) -> Result<DeleteReport, AppError> {
     // 選択中だったかは、削除と同じロックの中で判定される(確認と削除の間に切り替えられても食い違わない)
-    let was_active = ws.delete(&id)?;
+    let Deleted { was_active, kept_knowledge } = ws.delete(&id, delete_knowledge)?;
     contexts.forget_workspace(&id);
     if was_active {
         refresh_after_switch(&app, &ws);
@@ -72,7 +82,7 @@ pub fn delete_space(
         let _ = app.emit(WORKSPACE_CHANGED_EVENT, ws.active_info());
         tray::refresh(&app);
     }
-    Ok(ws.active_info())
+    Ok(DeleteReport { active: ws.active_info(), kept_knowledge })
 }
 
 /// ワークスペースを切り替える。`personal`でパーソナルへ戻る。

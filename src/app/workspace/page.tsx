@@ -2,7 +2,6 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { ask } from "@tauri-apps/plugin-dialog";
 import { Check, Pencil, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -10,14 +9,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import CopyConfirmModal from "@/components/CopyConfirmModal";
 import CopySettingsCard from "@/components/CopySettingsCard";
+import DeleteSpaceModal from "@/components/DeleteSpaceModal";
 import {
   MAX_SPACES,
   PERSONAL_ID,
   SPACE_NAME_MAX,
   createSpace,
-  deleteSpace,
   errorMessage,
   updateSpace,
+  type DeleteReport,
   type Space,
 } from "@/lib/api";
 import { useT } from "@/lib/i18n";
@@ -37,6 +37,8 @@ export default function WorkspacePage() {
   // 最終確認を待っているコピー。確認のモーダルは、このページで1つだけ出す
   const [copyRequest, setCopyRequest] = useState<CopyRequest | null>(null);
   // 作ったばかりのスペース。設定のコピー先の候補にする
+  // 削除の最終確認を待っているスペース
+  const [deleting, setDeleting] = useState<Space | null>(null);
   const [justCreated, setJustCreated] = useState<string | null>(null);
   const full = spaces.length >= MAX_SPACES;
   // ほかのスペースが使っている色は選べない(編集中は自分の色を除く)。選んだ色が使えなければ、空いている先頭の色にする
@@ -87,20 +89,10 @@ export default function WorkspacePage() {
       .then(() => router.push("/"))
       .catch((e) => toast.error(errorMessage(e)));
 
-  const remove = async (p: Space) => {
-    const ok = await ask(
-      t("スペース「{name}」を削除します。会話・設定・APIキーと、既定の場所のナレッジがすべて削除され、元に戻せません。独自に指定したナレッジの保存先は削除されません。続行しますか?", { name: p.name }),
-      { title: t("スペースの削除"), kind: "warning" },
-    );
-    if (!ok) return;
-    try {
-      await deleteSpace(p.id);
-      await refreshWorkspace();
-      if (editing === p.id) reset();
-      toast.success(t("スペースを削除しました。"));
-    } catch (e) {
-      toast.error(errorMessage(e));
-    }
+  const deleted = async (r: DeleteReport) => {
+    await refreshWorkspace();
+    if (editing === deleting?.id) reset();
+    toast.success(t("スペースを削除しました。"), r.keptKnowledge ? { description: t("ナレッジは次の場所に残しました: {path}", { path: r.keptKnowledge }) } : undefined);
   };
 
   const targets = copyTargets(spaces);
@@ -209,7 +201,7 @@ export default function WorkspacePage() {
                     <Button size="icon" variant="ghost" title={t("編集")} aria-label={t("編集")} onClick={() => startEdit(p)}>
                       <Pencil />
                     </Button>
-                    <Button size="icon" variant="ghost" title={t("削除")} aria-label={t("削除")} onClick={() => void remove(p)}>
+                    <Button size="icon" variant="ghost" title={t("削除")} aria-label={t("削除")} onClick={() => setDeleting(p)}>
                       <Trash2 />
                     </Button>
                   </div>
@@ -219,6 +211,7 @@ export default function WorkspacePage() {
           </CardContent>
         </Card>
       </div>
+      {deleting && <DeleteSpaceModal space={deleting} onClose={() => setDeleting(null)} onDeleted={(r) => void deleted(r)} />}
       {copyRequest && (
         <CopyConfirmModal request={copyRequest} targets={targets} onClose={() => setCopyRequest(null)} onCopied={copied} />
       )}

@@ -16,6 +16,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ModelSelector from "@/components/ModelSelector";
 import HelpDrawer from "@/components/HelpDrawer";
 import AwsPanel from "@/components/AwsPanel";
+import DeleteSpaceModal from "@/components/DeleteSpaceModal";
+import { PERSONAL_ID, type DeleteReport } from "@/lib/api";
+import { refreshWorkspace, useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
 import {
   PROVIDERS,
@@ -590,6 +593,42 @@ function LanguageSetting() {
 }
 
 /** デバッグモードのオン/オフ。ログにはAPIへ送る会話内容や文字起こしがそのまま残る。 */
+/** 選択中のスペースの削除。パーソナルには出さない。削除の前に、確認のモーダルで必ず再確認する。 */
+function DeleteSpace() {
+  const t = useT();
+  const router = useRouter();
+  const { active, spaces } = useWorkspace();
+  const [confirming, setConfirming] = useState(false);
+  const space = spaces.find((p) => p.id === active.id);
+  if (active.id === PERSONAL_ID || !space) return null;
+
+  const deleted = async (r: DeleteReport) => {
+    await refreshWorkspace();
+    toast.success(t("スペースを削除しました。"), r.keptKnowledge ? { description: t("ナレッジは次の場所に残しました: {path}", { path: r.keptKnowledge }) } : undefined);
+    router.replace("/"); // 削除したスペースの画面から、パーソナルへ戻る
+  };
+
+  return (
+    <section className="hud-panel px-5 py-4">
+      <Heading title="Danger Zone" help={t("スペースの削除")}>
+        <p>{t("このスペースを、会話・設定・APIキーごと削除します。元に戻せません。")}</p>
+        <ul>
+          <li>{t("ナレッジは、削除時に残すか消すかを選べます(既定は残す)。")}</li>
+          <li>{t("削除すると、パーソナルへ戻ります。")}</li>
+        </ul>
+      </Heading>
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <p className="text-xs text-muted-foreground">{t("「{name}」を削除します。", { name: space.name })}</p>
+        <Button variant="destructive" size="sm" onClick={() => setConfirming(true)}>
+          <Trash2 />
+          {t("このスペースを削除…")}
+        </Button>
+      </div>
+      {confirming && <DeleteSpaceModal space={space} onClose={() => setConfirming(false)} onDeleted={(r) => void deleted(r)} />}
+    </section>
+  );
+}
+
 function DebugMode() {
   const t = useT();
   const [enabled, setEnabled] = useState<boolean | null>(null);
@@ -1930,6 +1969,7 @@ export default function Setup() {
           <LanguageSetting />
           <SettingsTransfer />
           <DebugMode />
+          <DeleteSpace />
           </TabsContent>
         </Tabs>
 

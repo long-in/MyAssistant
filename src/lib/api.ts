@@ -676,7 +676,11 @@ export const getActiveWorkspace = () => invoke<ActiveWorkspace>("get_active_work
 export const createSpace = (name: string, color: string) => invoke<Space>("create_space", { name, color });
 export const updateSpace = (id: string, name: string, color: string) =>
   invoke<Space>("update_space", { id, name, color });
-export const deleteSpace = (id: string) => invoke<ActiveWorkspace>("delete_space", { id });
+/** 削除の結果。`keptKnowledge`は、残したナレッジの場所(残さなかった、または無かったときは null)。 */
+export type DeleteReport = { active: ActiveWorkspace; keptKnowledge: string | null };
+/** スペースを削除する。`deleteKnowledge`が false なら、既定の場所のナレッジは消さずに残す。 */
+export const deleteSpace = (id: string, deleteKnowledge: boolean) =>
+  invoke<DeleteReport>("delete_space", { id, deleteKnowledge });
 /** コピーした設定の項目数と、コピーしたキーの件数(キーの値は返らない)。 */
 export type CopyReport = { settings: number; keys: number };
 /** `from`の設定を`to`へコピーする(`personal`またはスペースID)。コピー先の既存の設定は上書きされる。 */
