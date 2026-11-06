@@ -192,7 +192,7 @@ pub struct CopyReport {
 /// キーの生値はRust内で写し、画面には件数だけ返す。
 pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result<CopyReport, AppError> {
     if from.id == to.id {
-        return Err(AppError::InvalidProject("same workspace".into()));
+        return Err(AppError::InvalidSpace("same workspace".into()));
     }
     let policy = command_policy::load(&batch::knowledge_root(from)?);
     let mut file = collect(&from.db, policy, String::new())?;

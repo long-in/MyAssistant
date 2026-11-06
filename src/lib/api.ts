@@ -60,13 +60,13 @@ export const ERROR_MESSAGES: Record<string, string> = {
   mfa_required: "MFAコードが入力されませんでした。もう一度お試しください。",
   invalid_dictionary: "読み上げ辞書のJSONを取り込めませんでした。[{\"word\": \"語\", \"reading\": \"読み\"}] の形式で、ファイルは1MB以下にしてください。",
   invalid_settings: "設定ファイルの形式が正しくありません。このアプリが書き出したファイルを選んでください。",
-  // ワークスペース(プロジェクト管理)の画面に出る文言。表記は英語に固定している
-  invalid_project: "Invalid space name (1-40 characters) or color.",
+  // ワークスペース(スペース管理)の画面に出る文言。表記は英語に固定している
+  invalid_space: "Invalid space name (1-40 characters) or color.",
   reserved_name: "That name is reserved. Choose a different space name.",
   name_in_use: "Another space already uses that name. Choose a different one.",
   color_in_use: "Another space already uses that color. Choose a different one.",
-  project_limit: "You can have up to 30 spaces. Delete the ones you no longer need.",
-  project_not_found: "Space not found.",
+  space_limit: "You can have up to 30 spaces. Delete the ones you no longer need.",
+  space_not_found: "Space not found.",
   path_in_use: "その場所は、ほかのワークスペースのナレッジまたはデバッグログの保存先と重なっています。別の場所を選んでください。",
 };
 
@@ -121,9 +121,9 @@ export type AwsMfaPrompt = {
   profile: string;
   mfa_serial: string;
   error: string | null;
-  /** コードを求めているワークスペース(`personal`またはプロジェクトID)。コードはこのIDで返す。 */
+  /** コードを求めているワークスペース(`personal`またはスペースID)。コードはこのIDで返す。 */
   workspace_id: string;
-  /** プロジェクトの名称とイメージカラー。パーソナルは`null`。 */
+  /** スペースの名称とイメージカラー。パーソナルは`null`。 */
   workspace_name: string | null;
   workspace_color: string | null;
 };
@@ -640,29 +640,29 @@ export const importSettings = (src: string) => invoke<SettingsTransferReport>("i
 
 /** パーソナルワークスペースのID。 */
 export const PERSONAL_ID = "personal";
-/** 作れるプロジェクトの上限。 */
-export const MAX_PROJECTS = 30;
-/** プロジェクト名の最大文字数。 */
-export const PROJECT_NAME_MAX = 40;
+/** 作れるスペースの上限。 */
+export const MAX_SPACES = 30;
+/** スペース名の最大文字数。 */
+export const SPACE_NAME_MAX = 40;
 
-/** ワークの1プロジェクト(独立したエージェント)。`color`は`#rrggbb`。 */
-export type Project = { id: string; name: string; color: string; created_at: string };
-/** 現在のワークスペース。`project`はパーソナルのとき`null`。 */
-export type ActiveWorkspace = { id: string; project: Project | null };
+/** ワークの1スペース(独立したエージェント)。`color`は`#rrggbb`。 */
+export type Space = { id: string; name: string; color: string; created_at: string };
+/** 現在のワークスペース。`space`はパーソナルのとき`null`。 */
+export type ActiveWorkspace = { id: string; space: Space | null };
 
 export const WORKSPACE_CHANGED_EVENT = "workspace-changed";
 
-/** プロジェクトに選べるイメージカラー(30色)。 */
-export const listProjectColors = () => invoke<string[]>("list_project_colors");
-export const listProjects = () => invoke<Project[]>("list_projects");
+/** スペースに選べるイメージカラー(30色)。 */
+export const listSpaceColors = () => invoke<string[]>("list_space_colors");
+export const listSpaces = () => invoke<Space[]>("list_spaces");
 export const getActiveWorkspace = () => invoke<ActiveWorkspace>("get_active_workspace");
-export const createProject = (name: string, color: string) => invoke<Project>("create_project", { name, color });
-export const updateProject = (id: string, name: string, color: string) =>
-  invoke<Project>("update_project", { id, name, color });
-export const deleteProject = (id: string) => invoke<ActiveWorkspace>("delete_project", { id });
+export const createSpace = (name: string, color: string) => invoke<Space>("create_space", { name, color });
+export const updateSpace = (id: string, name: string, color: string) =>
+  invoke<Space>("update_space", { id, name, color });
+export const deleteSpace = (id: string) => invoke<ActiveWorkspace>("delete_space", { id });
 /** コピーした設定の項目数と、コピーしたキーの件数(キーの値は返らない)。 */
 export type CopyReport = { settings: number; keys: number };
-/** `from`の設定を`to`へコピーする(`personal`またはプロジェクトID)。コピー先の既存の設定は上書きされる。 */
+/** `from`の設定を`to`へコピーする(`personal`またはスペースID)。コピー先の既存の設定は上書きされる。 */
 export const copyWorkspaceSettings = (from: string, to: string, includeKeys: boolean, includeProfile: boolean) =>
   invoke<CopyReport>("copy_workspace_settings", { from, to, includeKeys, includeProfile });
 export const switchWorkspace = (id: string) => invoke<ActiveWorkspace>("switch_workspace", { id });

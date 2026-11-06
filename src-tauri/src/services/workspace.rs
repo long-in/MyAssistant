@@ -1,8 +1,8 @@
-//! ワークスペース(パーソナル / ワークのプロジェクト)ごとの実行コンテキストと、プロジェクトの管理。
+//! ワークスペース(パーソナル / ワークのスペース)ごとの実行コンテキストと、スペースの管理。
 //!
 //! DB・APIキー・AWS の一時状態をワークスペースごとに分け、混線させない。
-//! パーソナルは従来どおりアプリデータ直下、プロジェクトは`<アプリデータ>/workspaces/<id>/`に置く。
-//! プロジェクト一覧(名称・イメージカラー)は`workspaces/registry.json`に保持する。
+//! パーソナルは従来どおりアプリデータ直下、スペースは`<アプリデータ>/workspaces/<id>/`に置く。
+//! スペース一覧(名称・イメージカラー)は`workspaces/registry.json`に保持する。
 use std::{
     collections::HashMap,
     ops::Deref,
@@ -24,13 +24,13 @@ use crate::{db::Db, utils::error::AppError};
 
 /// パーソナルワークスペースのID。保存先は従来どおりアプリデータ直下。
 pub const PERSONAL_ID: &str = "personal";
-/// 作れるプロジェクトの上限。
-pub const MAX_PROJECTS: usize = 30;
-/// プロジェクト名の最大文字数。
+/// 作れるスペースの上限。
+pub const MAX_SPACES: usize = 30;
+/// スペース名の最大文字数。
 pub const NAME_MAX_CHARS: usize = 40;
-/// プロジェクトに選べるイメージカラー(`#rrggbb`)。上限(`MAX_PROJECTS`)と同数で、プロジェクト同士で重複させない。
+/// スペースに選べるイメージカラー(`#rrggbb`)。上限(`MAX_SPACES`)と同数で、スペース同士で重複させない。
 /// 色相をずらした明るい15色と暗い15色(明るさの違いと色相差で見分けやすくする)。
-pub const PALETTE: [&str; MAX_PROJECTS] = [
+pub const PALETTE: [&str; MAX_SPACES] = [
     "#e61919", "#e66b19", "#e6bd19", "#bde619", "#6be619", "#19e619", "#19e66b", "#19e6bd", "#19bde6", "#196be6",
     "#1919e6", "#6b19e6", "#bd19e6", "#e619bd", "#e6196b", "#a5381d", "#a56e1d", "#a5a51d", "#6ea51d", "#38a51d",
     "#1da538", "#1da56e", "#1da5a5", "#1d6ea5", "#1d38a5", "#381da5", "#6e1da5", "#a51da5", "#a51d6e", "#a51d38",
@@ -58,7 +58,7 @@ pub struct WorkspaceCtx {
 pub struct Shared {
     /// 整理バッチの多重実行を防ぐ。
     pub batch: BatchGuard,
-    /// 削除された(または削除中の)プロジェクトの印。裏で動く処理は、書き込む前にこれを確かめて止まる。
+    /// 削除された(または削除中の)スペースの印。裏で動く処理は、書き込む前にこれを確かめて止まる。
     deleted: AtomicBool,
     /// 作業の依頼の実行状態(承認待ち・中断・進捗の記録)。切り替えても止めず、戻ったときに続きから再開する。
     pub agent: AgentState,
@@ -85,15 +85,15 @@ impl WorkspaceCtx {
         })
     }
 
-    /// 削除されていないことを確かめる。バッチや会話が、削除済みのプロジェクトへ書き込まないようにする。
+    /// 削除されていないことを確かめる。バッチや会話が、削除済みのスペースへ書き込まないようにする。
     pub fn ensure_alive(&self) -> Result<(), AppError> {
-        if self.shared.deleted.load(Ordering::SeqCst) { Err(AppError::ProjectNotFound) } else { Ok(()) }
+        if self.shared.deleted.load(Ordering::SeqCst) { Err(AppError::SpaceNotFound) } else { Ok(()) }
     }
 }
 
-/// ワークスペース内の1プロジェクト(独立したエージェント)。
+/// ワークスペース内の1スペース(独立したエージェント)。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Project {
+pub struct Space {
     pub id: String,
     pub name: String,
     /// イメージカラー(`#rrggbb`)。
@@ -101,14 +101,14 @@ pub struct Project {
     pub created_at: String,
 }
 
-/// 現在選択中のワークスペース。`project`は個人のとき`None`。
+/// 現在選択中のワークスペース。`space`は個人のとき`None`。
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ActiveWorkspace {
     pub id: String,
-    pub project: Option<Project>,
+    pub space: Option<Space>,
 }
 
-/// プロジェクト名にできない名称(切り替えやバッジで、パーソナル・ワークと紛らわしくなるもの)。大文字小文字・前後の空白は無視して比べる。
+/// スペース名にできない名称(切り替えやバッジで、パーソナル・ワークと紛らわしくなるもの)。大文字小文字・前後の空白は無視して比べる。
 const RESERVED_NAMES: [&str; 4] = ["パーソナル", "ワーク", "personal", "work"];
 
 /// 名称を整える。前後の空白を除き、1〜`NAME_MAX_CHARS`文字で、制御文字を含まず、予約名でないこと。
@@ -116,7 +116,7 @@ fn clean_name(name: &str) -> Result<String, AppError> {
     let name = name.trim();
     let chars = name.chars().count();
     if chars == 0 || chars > NAME_MAX_CHARS || name.chars().any(char::is_control) {
-        return Err(AppError::InvalidProject("name".into()));
+        return Err(AppError::InvalidSpace("name".into()));
     }
     if RESERVED_NAMES.contains(&name.to_lowercase().as_str()) {
         return Err(AppError::ReservedName);
@@ -128,15 +128,15 @@ fn clean_name(name: &str) -> Result<String, AppError> {
 fn clean_color(color: &str) -> Result<String, AppError> {
     let c = color.trim().to_ascii_lowercase();
     if !PALETTE.contains(&c.as_str()) {
-        return Err(AppError::InvalidProject("color".into()));
+        return Err(AppError::InvalidSpace("color".into()));
     }
     Ok(c)
 }
 
-/// `name`と`color`を、`except`以外のプロジェクトがすでに使っていれば拒否する。
+/// `name`と`color`を、`except`以外のスペースがすでに使っていれば拒否する。
 /// 名称は大文字小文字を区別せず比較する(`name`は整形済みであること)。
-fn ensure_unique(projects: &[Project], name: &str, color: &str, except: Option<&str>) -> Result<(), AppError> {
-    let others = || projects.iter().filter(|p| Some(p.id.as_str()) != except);
+fn ensure_unique(spaces: &[Space], name: &str, color: &str, except: Option<&str>) -> Result<(), AppError> {
+    let others = || spaces.iter().filter(|p| Some(p.id.as_str()) != except);
     if others().any(|p| p.name.to_lowercase() == name.to_lowercase()) {
         return Err(AppError::NameInUse);
     }
@@ -146,7 +146,7 @@ fn ensure_unique(projects: &[Project], name: &str, color: &str, except: Option<&
     Ok(())
 }
 
-/// 読み込み済みのワークスペースと、現在選択中のID、プロジェクト一覧。
+/// 読み込み済みのワークスペースと、現在選択中のID、スペース一覧。
 pub struct Workspaces {
     /// アプリデータディレクトリ(パーソナルの保存先でもある)。
     root: PathBuf,
@@ -154,17 +154,17 @@ pub struct Workspaces {
     /// 削除と切り替え・読み込みが交差して、存在しないワークスペースを選んだり、削除済みを開き直したりしないようにする。
     op: Mutex<()>,
     loaded: RwLock<HashMap<String, Arc<WorkspaceCtx>>>,
-    /// ワークスペースIDごとの共有状態(読み込んでいないプロジェクトの分も、一時的に開くときのために持つ)。
+    /// ワークスペースIDごとの共有状態(読み込んでいないスペースの分も、一時的に開くときのために持つ)。
     shared: Mutex<HashMap<String, Arc<Shared>>>,
     active: RwLock<String>,
-    projects: Mutex<Vec<Project>>,
+    spaces: Mutex<Vec<Space>>,
 }
 
 impl Workspaces {
-    /// パーソナルを選択した状態で始め、保存済みのプロジェクト一覧を読む。
-    /// 一覧が壊れていたら`.corrupt`へ退避して空から始める(プロジェクトのフォルダは残す)。
+    /// パーソナルを選択した状態で始め、保存済みのスペース一覧を読む。
+    /// 一覧が壊れていたら`.corrupt`へ退避して空から始める(スペースのフォルダは残す)。
     pub fn new(root: &Path, personal: WorkspaceCtx) -> Self {
-        let projects = load_registry(root);
+        let spaces = load_registry(root);
         let id = personal.id.clone();
         Self {
             root: root.to_owned(),
@@ -172,7 +172,7 @@ impl Workspaces {
             shared: Mutex::new(HashMap::from([(id.clone(), personal.shared.clone())])),
             loaded: RwLock::new(HashMap::from([(id.clone(), Arc::new(personal))])),
             active: RwLock::new(id),
-            projects: Mutex::new(projects),
+            spaces: Mutex::new(spaces),
         }
     }
 
@@ -180,11 +180,11 @@ impl Workspaces {
         self.op.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    fn projects(&self) -> std::sync::MutexGuard<'_, Vec<Project>> {
-        self.projects.lock().unwrap_or_else(|p| p.into_inner())
+    fn spaces(&self) -> std::sync::MutexGuard<'_, Vec<Space>> {
+        self.spaces.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    fn project_dir(&self, id: &str) -> PathBuf {
+    fn space_dir(&self, id: &str) -> PathBuf {
         self.root.join(DIR_NAME).join(id)
     }
 
@@ -200,8 +200,8 @@ impl Workspaces {
 
     pub fn active_info(&self) -> ActiveWorkspace {
         let id = self.active().id.clone();
-        let project = self.projects().iter().find(|p| p.id == id).cloned();
-        ActiveWorkspace { id, project }
+        let space = self.spaces().iter().find(|p| p.id == id).cloned();
+        ActiveWorkspace { id, space }
     }
 
     pub fn get(&self, id: &str) -> Option<Arc<WorkspaceCtx>> {
@@ -217,10 +217,10 @@ impl Workspaces {
         self.shared.lock().unwrap_or_else(|p| p.into_inner()).entry(id.to_owned()).or_default().clone()
     }
 
-    /// バックグラウンド処理の対象になるワークスペースのID(パーソナルとすべてのプロジェクト)。開かずに返す。
+    /// バックグラウンド処理の対象になるワークスペースのID(パーソナルとすべてのスペース)。開かずに返す。
     pub fn batch_ids(&self) -> Vec<String> {
         let _op = self.op();
-        std::iter::once(PERSONAL_ID.to_owned()).chain(self.projects().iter().map(|p| p.id.clone())).collect()
+        std::iter::once(PERSONAL_ID.to_owned()).chain(self.spaces().iter().map(|p| p.id.clone())).collect()
     }
 
     /// 読み込み済みならそれを、未読み込みなら一時的に開いて返す(読み込み済みの一覧には加えない)。`op`を持った状態で呼ぶ。
@@ -229,17 +229,17 @@ impl Workspaces {
         if let Some(ctx) = self.get(id) {
             return Ok(ctx);
         }
-        if !self.projects().iter().any(|p| p.id == id) {
-            return Err(AppError::ProjectNotFound);
+        if !self.spaces().iter().any(|p| p.id == id) {
+            return Err(AppError::SpaceNotFound);
         }
-        let ctx = Arc::new(WorkspaceCtx::open_shared(id, &self.project_dir(id), self.shared_for(id))?);
+        let ctx = Arc::new(WorkspaceCtx::open_shared(id, &self.space_dir(id), self.shared_for(id))?);
         if let Err(e) = debug_log::refresh(&ctx) {
-            log::warn!("debug log init failed for project {id}: {e}");
+            log::warn!("debug log init failed for space {id}: {e}");
         }
         Ok(ctx)
     }
 
-    /// 整理バッチなど、選択していないワークスペースの処理のために開く。未読み込みのプロジェクトは一時的に開くだけで、読み込んだままにしない。
+    /// 整理バッチなど、選択していないワークスペースの処理のために開く。未読み込みのスペースは一時的に開くだけで、読み込んだままにしない。
     pub fn open_for_batch(&self, id: &str) -> Result<Arc<WorkspaceCtx>, AppError> {
         let _op = self.op();
         self.open_transient_locked(id)
@@ -247,7 +247,7 @@ impl Workspaces {
 
     /// すべてのワークスペースを、保存先の確認のために開く(未読み込みは一時的に開くだけ)。開けないものは警告して飛ばす。
     fn all_for_check_locked(&self) -> Vec<Arc<WorkspaceCtx>> {
-        let ids: Vec<String> = std::iter::once(PERSONAL_ID.to_owned()).chain(self.projects().iter().map(|p| p.id.clone())).collect();
+        let ids: Vec<String> = std::iter::once(PERSONAL_ID.to_owned()).chain(self.spaces().iter().map(|p| p.id.clone())).collect();
         ids.iter()
             .filter_map(|id| {
                 self.open_transient_locked(id).map_err(|e| log::warn!("workspace {id} not opened: {e}")).ok()
@@ -255,24 +255,24 @@ impl Workspaces {
             .collect()
     }
 
-    /// プロジェクトを(未読み込みなら)開く。一覧に無いIDは開かない。`op`を持った状態で呼ぶ。
+    /// スペースを(未読み込みなら)開く。一覧に無いIDは開かない。`op`を持った状態で呼ぶ。
     fn load_locked(&self, id: &str) -> Result<Arc<WorkspaceCtx>, AppError> {
         if let Some(ctx) = self.get(id) {
             return Ok(ctx);
         }
-        if !self.projects().iter().any(|p| p.id == id) {
-            return Err(AppError::ProjectNotFound);
+        if !self.spaces().iter().any(|p| p.id == id) {
+            return Err(AppError::SpaceNotFound);
         }
-        let ctx = Arc::new(WorkspaceCtx::open_shared(id, &self.project_dir(id), self.shared_for(id))?);
+        let ctx = Arc::new(WorkspaceCtx::open_shared(id, &self.space_dir(id), self.shared_for(id))?);
         // デバッグログの出力先は、開いたときに決める(裏で動く処理も自分のワークスペースのログへ書く)
         if let Err(e) = debug_log::refresh(&ctx) {
-            log::warn!("debug log init failed for project {id}: {e}");
+            log::warn!("debug log init failed for space {id}: {e}");
         }
         self.loaded.write().unwrap_or_else(|p| p.into_inner()).insert(id.to_owned(), ctx.clone());
         Ok(ctx)
     }
 
-    /// IDからワークスペースを得る(プロジェクトは未読み込みなら開く)。一覧に無いIDは`ProjectNotFound`。
+    /// IDからワークスペースを得る(スペースは未読み込みなら開く)。一覧に無いIDは`SpaceNotFound`。
     pub fn resolve(&self, id: &str) -> Result<Arc<WorkspaceCtx>, AppError> {
         let _op = self.op();
         if id == PERSONAL_ID { Ok(self.personal()) } else { self.load_locked(id) }
@@ -313,65 +313,65 @@ impl Workspaces {
         save()
     }
 
-    pub fn list(&self) -> Vec<Project> {
-        self.projects().clone()
+    pub fn list(&self) -> Vec<Space> {
+        self.spaces().clone()
     }
 
-    /// プロジェクトを作る。名称・色を検証し、上限(`MAX_PROJECTS`)を超える場合は拒否する。
-    pub fn create(&self, name: &str, color: &str) -> Result<Project, AppError> {
+    /// スペースを作る。名称・色を検証し、上限(`MAX_SPACES`)を超える場合は拒否する。
+    pub fn create(&self, name: &str, color: &str) -> Result<Space, AppError> {
         let (name, color) = (clean_name(name)?, clean_color(color)?);
         let _op = self.op();
-        let projects = self.projects();
-        if projects.len() >= MAX_PROJECTS {
-            return Err(AppError::ProjectLimit);
+        let spaces = self.spaces();
+        if spaces.len() >= MAX_SPACES {
+            return Err(AppError::SpaceLimit);
         }
-        ensure_unique(&projects, &name, &color, None)?;
-        let project = Project {
+        ensure_unique(&spaces, &name, &color, None)?;
+        let space = Space {
             id: uuid::Uuid::new_v4().to_string(),
             name,
             color,
             created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         };
-        // 既存のワークスペースが、新しいプロジェクトのフォルダを含む場所を保存先にしていたら作らない
+        // 既存のワークスペースが、新しいスペースのフォルダを含む場所を保存先にしていたら作らない
         // (古い設定でアプリデータ全体を保存先にしている場合など。そのままではキーやDBがナレッジから見えてしまう)
-        let dir = canonical_lenient(&self.project_dir(&project.id));
-        drop(projects);
+        let dir = canonical_lenient(&self.space_dir(&space.id));
+        drop(spaces);
         for other in self.all_for_check_locked() {
             if claimed_paths(&other).iter().any(|c| overlaps(&dir, &canonical_lenient(c))) {
                 return Err(AppError::PathInUse);
             }
         }
-        let mut projects = self.projects();
+        let mut spaces = self.spaces();
         // 先にフォルダとDBを作れることを確かめてから一覧へ載せる
-        let ctx = Arc::new(WorkspaceCtx::open_shared(&project.id, &self.project_dir(&project.id), self.shared_for(&project.id))?);
-        let mut next = projects.clone();
-        next.push(project.clone());
+        let ctx = Arc::new(WorkspaceCtx::open_shared(&space.id, &self.space_dir(&space.id), self.shared_for(&space.id))?);
+        let mut next = spaces.clone();
+        next.push(space.clone());
         save_registry(&self.root, &next)?;
-        *projects = next;
+        *spaces = next;
         if let Err(e) = debug_log::refresh(&ctx) {
-            log::warn!("debug log init failed for project {}: {e}", project.id);
+            log::warn!("debug log init failed for space {}: {e}", space.id);
         }
-        self.loaded.write().unwrap_or_else(|p| p.into_inner()).insert(project.id.clone(), ctx);
-        Ok(project)
+        self.loaded.write().unwrap_or_else(|p| p.into_inner()).insert(space.id.clone(), ctx);
+        Ok(space)
     }
 
     /// 名称とイメージカラーを変える。
-    pub fn update(&self, id: &str, name: &str, color: &str) -> Result<Project, AppError> {
+    pub fn update(&self, id: &str, name: &str, color: &str) -> Result<Space, AppError> {
         let (name, color) = (clean_name(name)?, clean_color(color)?);
         let _op = self.op();
-        let mut projects = self.projects();
-        ensure_unique(&projects, &name, &color, Some(id))?;
-        let mut next = projects.clone();
-        let target = next.iter_mut().find(|p| p.id == id).ok_or(AppError::ProjectNotFound)?;
+        let mut spaces = self.spaces();
+        ensure_unique(&spaces, &name, &color, Some(id))?;
+        let mut next = spaces.clone();
+        let target = next.iter_mut().find(|p| p.id == id).ok_or(AppError::SpaceNotFound)?;
         target.name = name;
         target.color = color;
         let updated = target.clone();
         save_registry(&self.root, &next)?;
-        *projects = next;
+        *spaces = next;
         Ok(updated)
     }
 
-    /// プロジェクトを選択する。`PERSONAL_ID`でパーソナルへ戻る。
+    /// スペースを選択する。`PERSONAL_ID`でパーソナルへ戻る。
     pub fn switch(&self, id: &str) -> Result<ActiveWorkspace, AppError> {
         let _op = self.op();
         if id != PERSONAL_ID {
@@ -382,19 +382,19 @@ impl Workspaces {
         Ok(self.active_info())
     }
 
-    /// プロジェクトを一覧とディスクから削除する。選択中ならパーソナルへ戻す。元に戻せない。
+    /// スペースを一覧とディスクから削除する。選択中ならパーソナルへ戻す。元に戻せない。
     /// 選択中を切り戻したかどうかを返す。裏で動いている処理には削除の印(`ensure_alive`)が付き、書き込む前に止まる。
     /// アプリが管理するフォルダ(`workspaces/<id>/`)だけを消す。利用者が指定したナレッジの保存先は消さない。
     pub fn delete(&self, id: &str) -> Result<bool, AppError> {
         let _op = self.op();
-        let mut projects = self.projects();
-        if !projects.iter().any(|p| p.id == id) {
-            return Err(AppError::ProjectNotFound);
+        let mut spaces = self.spaces();
+        if !spaces.iter().any(|p| p.id == id) {
+            return Err(AppError::SpaceNotFound);
         }
-        let next: Vec<Project> = projects.iter().filter(|p| p.id != id).cloned().collect();
+        let next: Vec<Space> = spaces.iter().filter(|p| p.id != id).cloned().collect();
         save_registry(&self.root, &next)?;
-        *projects = next;
-        drop(projects);
+        *spaces = next;
+        drop(spaces);
         let was_active = {
             let mut active = self.active.write().unwrap_or_else(|p| p.into_inner());
             let was = *active == id;
@@ -411,10 +411,10 @@ impl Workspaces {
         }
         self.loaded.write().unwrap_or_else(|p| p.into_inner()).remove(id);
         // `id`は一覧にあったもの(生成したUUID)だけなので、`workspaces/`配下の1フォルダに限られる
-        if let Err(e) = std::fs::remove_dir_all(self.project_dir(id))
+        if let Err(e) = std::fs::remove_dir_all(self.space_dir(id))
             && e.kind() != std::io::ErrorKind::NotFound
         {
-            log::warn!("project dir not removed: {e}");
+            log::warn!("space dir not removed: {e}");
         }
         Ok(was_active)
     }
@@ -460,7 +460,7 @@ fn registry_path(root: &Path) -> PathBuf {
     root.join(DIR_NAME).join(REGISTRY_FILE)
 }
 
-fn load_registry(root: &Path) -> Vec<Project> {
+fn load_registry(root: &Path) -> Vec<Space> {
     let path = registry_path(root);
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
@@ -470,7 +470,7 @@ fn load_registry(root: &Path) -> Vec<Project> {
             return Vec::new();
         }
     };
-    match serde_json::from_str::<Vec<Project>>(&text) {
+    match serde_json::from_str::<Vec<Space>>(&text) {
         Ok(v) => v,
         Err(e) => {
             log::warn!("registry corrupt, moved aside: {e}");
@@ -481,12 +481,12 @@ fn load_registry(root: &Path) -> Vec<Project> {
 }
 
 /// 一時ファイルへ書いてからリネームし、書き込み途中の破損を避ける。
-fn save_registry(root: &Path, projects: &[Project]) -> Result<(), AppError> {
+fn save_registry(root: &Path, spaces: &[Space]) -> Result<(), AppError> {
     let io = |e: std::io::Error| AppError::Io(e.to_string());
     let path = registry_path(root);
     std::fs::create_dir_all(root.join(DIR_NAME)).map_err(io)?;
     let tmp = path.with_extension("json.tmp");
-    let json = serde_json::to_string_pretty(projects).map_err(|e| AppError::Io(e.to_string()))?;
+    let json = serde_json::to_string_pretty(spaces).map_err(|e| AppError::Io(e.to_string()))?;
     std::fs::write(&tmp, json).map_err(io)?;
     std::fs::rename(&tmp, &path).map_err(io)
 }
@@ -546,10 +546,10 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
         for name in ["", "   ", "a\nb", &"あ".repeat(NAME_MAX_CHARS + 1)] {
-            assert!(matches!(ws.create(name, PALETTE[0]), Err(AppError::InvalidProject(_))), "{name:?}");
+            assert!(matches!(ws.create(name, PALETTE[0]), Err(AppError::InvalidSpace(_))), "{name:?}");
         }
         for color in ["", "red", "#12345", "#1234567", "#12345g", "112233", "#000000", "#ffffff"] {
-            assert!(matches!(ws.create("x", color), Err(AppError::InvalidProject(_))), "{color:?}");
+            assert!(matches!(ws.create("x", color), Err(AppError::InvalidSpace(_))), "{color:?}");
         }
         let p = ws.create("  営業  ", &PALETTE[0].to_uppercase()).unwrap();
         assert_eq!((p.name.as_str(), p.color.as_str()), ("営業", PALETTE[0]));
@@ -557,20 +557,20 @@ mod tests {
     }
 
     #[test]
-    fn enforces_project_limit() {
+    fn enforces_space_limit() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
-        for i in 0..MAX_PROJECTS {
+        for i in 0..MAX_SPACES {
             ws.create(&format!("p{i}"), PALETTE[i]).unwrap();
         }
-        assert!(matches!(ws.create("over", PALETTE[0]), Err(AppError::ProjectLimit)));
+        assert!(matches!(ws.create("over", PALETTE[0]), Err(AppError::SpaceLimit)));
         let (first, first_color) = (ws.list()[0].id.clone(), ws.list()[0].color.clone());
         ws.delete(&first).unwrap();
         assert!(ws.create("again", &first_color).is_ok());
     }
 
     #[test]
-    fn registry_persists_and_projects_reload_lazily() {
+    fn registry_persists_and_spaces_reload_lazily() {
         let d = tempfile::tempdir().unwrap();
         let id = {
             let ws = workspaces(d.path());
@@ -583,15 +583,15 @@ mod tests {
         assert!(ws.get(&id).is_none(), "not loaded until needed");
         assert_eq!(ws.list()[0].name, "A2");
         let info = ws.switch(&id).unwrap();
-        assert_eq!(info.project.unwrap().color, PALETTE[2]);
+        assert_eq!(info.space.unwrap().color, PALETTE[2]);
         assert_eq!(ws.active().db.get_setting("k").unwrap().as_deref(), Some("v"));
     }
 
     #[test]
-    fn switch_to_unknown_project_fails_and_keeps_active() {
+    fn switch_to_unknown_space_fails_and_keeps_active() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
-        assert!(matches!(ws.switch("../etc"), Err(AppError::ProjectNotFound)));
+        assert!(matches!(ws.switch("../etc"), Err(AppError::SpaceNotFound)));
         assert_eq!(ws.active_info().id, PERSONAL_ID);
     }
 
@@ -606,9 +606,9 @@ mod tests {
         assert_eq!(ws.active_info().id, PERSONAL_ID);
         assert!(!d.path().join(DIR_NAME).join(&p.id).exists());
         assert!(ws.list().is_empty());
-        assert!(matches!(ws.delete(&p.id), Err(AppError::ProjectNotFound)));
+        assert!(matches!(ws.delete(&p.id), Err(AppError::SpaceNotFound)));
         // 一覧に無いIDでは何も消えない(パスの注入対策)
-        assert!(matches!(ws.delete(".."), Err(AppError::ProjectNotFound)));
+        assert!(matches!(ws.delete(".."), Err(AppError::SpaceNotFound)));
         assert!(d.path().join("timeline.db").exists());
     }
 
@@ -625,19 +625,19 @@ mod tests {
     #[test]
     fn palette_has_30_distinct_valid_colors() {
         let set: std::collections::HashSet<_> = PALETTE.iter().collect();
-        assert_eq!((PALETTE.len(), set.len()), (MAX_PROJECTS, MAX_PROJECTS));
+        assert_eq!((PALETTE.len(), set.len()), (MAX_SPACES, MAX_SPACES));
         for c in PALETTE {
             assert!(c.len() == 7 && c.starts_with('#') && c[1..].bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()), "{c}");
         }
     }
 
     #[test]
-    fn colors_cannot_be_shared_between_projects() {
+    fn colors_cannot_be_shared_between_spaces() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
         let a = ws.create("A", PALETTE[0]).unwrap();
         let b = ws.create("B", PALETTE[1]).unwrap();
-        // 作成・更新とも、他のプロジェクトの色は選べない(大文字でも同じ色として扱う)
+        // 作成・更新とも、他のスペースの色は選べない(大文字でも同じ色として扱う)
         assert!(matches!(ws.create("C", PALETTE[0]), Err(AppError::ColorInUse)));
         assert!(matches!(ws.create("C", &PALETTE[0].to_uppercase()), Err(AppError::ColorInUse)));
         assert!(matches!(ws.update(&b.id, "B", PALETTE[0]), Err(AppError::ColorInUse)));
@@ -650,7 +650,7 @@ mod tests {
     }
 
     #[test]
-    fn names_cannot_be_shared_between_projects() {
+    fn names_cannot_be_shared_between_spaces() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
         let a = ws.create("Sales", PALETTE[0]).unwrap();
@@ -697,7 +697,7 @@ mod tests {
         // 関係のない場所と、自分自身の既定の場所は使える
         assert!(ws.ensure_paths_free(&b.id, free.path()).is_ok());
         assert!(ws.ensure_paths_free(&b.id, &d.path().join(DIR_NAME).join(&b.id).join("knowledge")).is_ok());
-        // パーソナルから見ても、プロジェクトの場所は使えない
+        // パーソナルから見ても、スペースの場所は使えない
         assert!(ws.ensure_paths_free(PERSONAL_ID, &a_default).is_err());
         assert!(ws.ensure_paths_free(PERSONAL_ID, free.path()).is_ok());
     }
@@ -731,25 +731,25 @@ mod tests {
         let ws = workspaces(d.path());
         let p = ws.create("A", PALETTE[0]).unwrap();
         let personal = ws.get(PERSONAL_ID).unwrap();
-        let project = ws.get(&p.id).unwrap();
+        let space = ws.get(&p.id).unwrap();
         // パーソナルだけデバッグモードを有効にする
         personal.db.set_setting(debug_log::ENABLED_KEY, "1").unwrap();
         debug_log::refresh(&personal).unwrap();
-        debug_log::refresh(&project).unwrap();
-        // プロジェクトを選択している間も、パーソナルの裏の処理はパーソナルのログへ書く
+        debug_log::refresh(&space).unwrap();
+        // スペースを選択している間も、パーソナルの裏の処理はパーソナルのログへ書く
         ws.switch(&p.id).unwrap();
         debug_log::record(&personal, "api", serde_json::json!({ "from": "personal" }));
-        debug_log::record(&project, "api", serde_json::json!({ "from": "project" }));
+        debug_log::record(&space, "api", serde_json::json!({ "from": "space" }));
         let files = |c: &WorkspaceCtx| std::fs::read_dir(debug_log::log_dir(c).unwrap()).map(|r| r.count()).unwrap_or(0);
         assert_eq!(files(&personal), 1);
-        assert_eq!(files(&project), 0, "無効なワークスペースには書かない");
-        assert!(debug_log::enabled(&personal) && !debug_log::enabled(&project));
+        assert_eq!(files(&space), 0, "無効なワークスペースには書かない");
+        assert!(debug_log::enabled(&personal) && !debug_log::enabled(&space));
     }
 
     #[test]
     fn app_data_is_never_a_storage_location() {
         let d = tempfile::tempdir().unwrap();
-        let ws = workspaces(d.path()); // プロジェクトが1件も無くても拒否する
+        let ws = workspaces(d.path()); // スペースが1件も無くても拒否する
         for bad in [d.path().to_owned(), d.path().join(DIR_NAME), d.path().join(DIR_NAME).join("anything"), d.path().join("models")] {
             assert!(matches!(ws.ensure_paths_free(PERSONAL_ID, &bad), Err(AppError::PathInUse)), "{bad:?}");
         }
@@ -764,7 +764,7 @@ mod tests {
     }
 
     #[test]
-    fn creating_a_project_is_refused_when_an_existing_location_would_contain_it() {
+    fn creating_a_space_is_refused_when_an_existing_location_would_contain_it() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
         // 古い設定で、パーソナルがアプリデータ全体をナレッジの保存先にしている
@@ -791,7 +791,7 @@ mod tests {
     }
 
     #[test]
-    fn deleted_projects_are_marked_and_the_active_one_falls_back() {
+    fn deleted_spaces_are_marked_and_the_active_one_falls_back() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
         let a = ws.create("A", PALETTE[0]).unwrap();
@@ -800,11 +800,11 @@ mod tests {
         ws.switch(&a.id).unwrap();
         assert!(held.ensure_alive().is_ok());
         assert!(ws.delete(&a.id).unwrap(), "選択中だった");
-        assert!(matches!(held.ensure_alive(), Err(AppError::ProjectNotFound)), "裏の処理は削除に気づいて止まる");
+        assert!(matches!(held.ensure_alive(), Err(AppError::SpaceNotFound)), "裏の処理は削除に気づいて止まる");
         assert_eq!(ws.active().id, PERSONAL_ID);
         assert!(!ws.delete(&b.id).unwrap(), "選択中ではなかった");
         // 削除済みのIDは、選択も読み込みもできず、一覧から開き直されない
-        assert!(matches!(ws.switch(&a.id), Err(AppError::ProjectNotFound)));
+        assert!(matches!(ws.switch(&a.id), Err(AppError::SpaceNotFound)));
         assert_eq!(ws.batch_ids(), vec![PERSONAL_ID.to_owned()]);
         assert!(!d.path().join(DIR_NAME).join(&a.id).exists());
     }
@@ -837,7 +837,7 @@ mod tests {
             });
             t1.join().unwrap();
             t2.join().unwrap();
-            // どの順序でも、削除済みのプロジェクトが選択・読み込み・フォルダとして残らない
+            // どの順序でも、削除済みのスペースが選択・読み込み・フォルダとして残らない
             assert!(ws.list().is_empty());
             assert_eq!(ws.active().id, PERSONAL_ID);
             assert!(ws.get(&p.id).is_none());
@@ -846,10 +846,10 @@ mod tests {
     }
 
     #[test]
-    fn background_work_opens_projects_transiently_and_shares_state() {
+    fn background_work_opens_spaces_transiently_and_shares_state() {
         let d = tempfile::tempdir().unwrap();
         let id = workspaces(d.path()).create("A", PALETTE[0]).unwrap().id;
-        let ws = workspaces(d.path()); // 再起動後: プロジェクトは未読み込み
+        let ws = workspaces(d.path()); // 再起動後: スペースは未読み込み
         assert_eq!(ws.batch_ids(), vec![PERSONAL_ID.to_owned(), id.clone()], "開かずに一覧を返す");
         assert!(ws.get(&id).is_none());
 
@@ -857,7 +857,7 @@ mod tests {
         let transient = ws.open_for_batch(&id).unwrap();
         transient.db.set_setting("k", "v").unwrap();
         assert!(ws.get(&id).is_none(), "開いたままにしない");
-        // 保存先の確認も、他のプロジェクトを読み込んだままにしない
+        // 保存先の確認も、他のスペースを読み込んだままにしない
         let free = tempfile::tempdir().unwrap();
         assert!(ws.ensure_paths_free(PERSONAL_ID, free.path()).is_ok());
         assert!(ws.get(&id).is_none());
@@ -870,8 +870,8 @@ mod tests {
 
         // 削除は、一時的に開かれたものにも伝わる
         ws.delete(&id).unwrap();
-        assert!(matches!(transient.ensure_alive(), Err(AppError::ProjectNotFound)));
-        assert!(matches!(ws.open_for_batch(&id), Err(AppError::ProjectNotFound)));
+        assert!(matches!(transient.ensure_alive(), Err(AppError::SpaceNotFound)));
+        assert!(matches!(ws.open_for_batch(&id), Err(AppError::SpaceNotFound)));
     }
 
     #[test]
@@ -888,7 +888,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deleting_a_project_aborts_its_running_request() {
+    async fn deleting_a_space_aborts_its_running_request() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
         let p = ws.create("A", PALETTE[0]).unwrap();
@@ -899,7 +899,7 @@ mod tests {
         ws.delete(&p.id).unwrap();
         token.cancelled().await; // 中断されている
         assert!(rx.await.is_err(), "承認待ちは拒否として終わる");
-        // 別のプロジェクトの依頼には影響しない
+        // 別のスペースの依頼には影響しない
         let q = ws.create("B", PALETTE[1]).unwrap();
         let other = ws.get(&q.id).unwrap().shared.clone();
         let rx2 = other.agent.register_approval("t2");

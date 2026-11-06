@@ -233,7 +233,7 @@ pub fn knowledge_root(ctx: &WorkspaceCtx) -> Result<std::path::PathBuf, AppError
 
 /// 実LLMを使うバッチ。多重実行・APIキー未登録・未処理ログなしの場合は`None`を返す。
 pub async fn run_guarded(ctx: &WorkspaceCtx) -> Result<Option<BatchReport>, AppError> {
-    // 削除済みのプロジェクトは処理しない
+    // 削除済みのスペースは処理しない
     ctx.ensure_alive()?;
     let guard = &ctx.shared.batch;
     if guard.0.swap(true, Ordering::SeqCst) {
@@ -253,7 +253,7 @@ pub async fn run_guarded(ctx: &WorkspaceCtx) -> Result<Option<BatchReport>, AppE
         let report = run(db, &root, |prompt| {
             let model = target.model.clone();
             async move {
-                // LLMの呼び出しの前後で削除を確かめ、削除されたプロジェクトへ整理結果を書かせない
+                // LLMの呼び出しの前後で削除を確かめ、削除されたスペースへ整理結果を書かせない
                 ctx.ensure_alive()?;
                 let msg = [ChatMessage { role: "user".into(), content: prompt }];
                 let done = llm_client::complete(ctx, target.provider, &model, None, &msg).await?;
@@ -379,7 +379,7 @@ mod tests {
         let p = ws.create("A", PALETTE[0]).unwrap();
         let ctx = ws.get(&p.id).unwrap(); // 裏のバッチが持っている
         ws.delete(&p.id).unwrap();
-        assert!(matches!(run_guarded(&ctx).await, Err(AppError::ProjectNotFound)));
+        assert!(matches!(run_guarded(&ctx).await, Err(AppError::SpaceNotFound)));
         assert!(!d.path().join("workspaces").join(&p.id).exists(), "削除後に作り直されない");
     }
 }

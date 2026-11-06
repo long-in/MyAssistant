@@ -21,7 +21,7 @@ const NAV = [
   { href: "/shortcuts", label: "Shortcuts", icon: Keyboard },
 ] as const;
 
-const PROJECTS_NAV = { href: "/workspace", label: "Spaces", icon: FolderKanban } as const;
+const SPACES_NAV = { href: "/workspace", label: "Spaces", icon: FolderKanban } as const;
 
 const DEBUG_NAV = { href: "/debug", label: "Debug", icon: Bug } as const;
 
@@ -44,7 +44,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const onChat = pathname === "/";
   const { active, settingsVersion } = useWorkspace();
-  const accent = active.project?.color;
+  const accent = active.space?.color;
   const workspaceId = active.id;
   const prevWorkspace = useRef(workspaceId);
 
@@ -59,7 +59,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     setChatReady(false);
   }, [workspaceId]);
 
-  // プロジェクトのイメージカラーを、画面全体で参照できるようにする
+  // スペースのイメージカラーを、画面全体で参照できるようにする
   useEffect(() => {
     const root = document.documentElement;
     if (accent) root.style.setProperty("--workspace-color", accent);
@@ -144,7 +144,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </span>
         </div>
         <WorkspaceSwitcher collapsed={collapsed} />
-        {[...NAV, ...(workspaceId !== PERSONAL_ID ? [PROJECTS_NAV] : []), ...(debug ? [DEBUG_NAV] : [])].map(({ href, label, icon: Icon }) => {
+        {[...NAV, ...(workspaceId !== PERSONAL_ID ? [SPACES_NAV] : []), ...(debug ? [DEBUG_NAV] : [])].map(({ href, label, icon: Icon }) => {
           const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
           return (
             <Link

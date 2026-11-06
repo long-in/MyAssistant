@@ -20,7 +20,7 @@ const NAV_ITEMS: [(&str, &str, &str); 4] = [
   ("nav-shortcuts", "Shortcuts", "/shortcuts"),
 ];
 
-/// ワークスペース項目のメニュー ID の接頭辞。続きは `personal` またはプロジェクトの ID。
+/// ワークスペース項目のメニュー ID の接頭辞。続きは `personal` またはスペースの ID。
 const WORKSPACE_PREFIX: &str = "ws:";
 
 /// フロントエンドへ画面遷移を依頼するイベント名。ペイロードは遷移先パス。
@@ -71,9 +71,9 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
   let menu = Menu::new(app)?;
   // いまのワークスペース(表示のみ)と、直接切り替えるためのSpaces。ワークスペース関連の表記は英語に固定する
   let (active, _) = workspace_state(app);
-  let name = active.project.as_ref().map_or("Personal", |p| p.name.as_str());
+  let name = active.space.as_ref().map_or("Personal", |p| p.name.as_str());
   menu.append(&MenuItem::with_id(app, "ws-current", format!("Workspace: {name}"), false, None::<&str>)?)?;
-  menu.append(&projects_submenu(app)?)?;
+  menu.append(&spaces_submenu(app)?)?;
   menu.append(&PredefinedMenuItem::separator(app)?)?;
   menu.append(&MenuItem::with_id(app, MENU_SHOW, "Open MyAssistant", true, None::<&str>)?)?;
   menu.append(&PredefinedMenuItem::separator(app)?)?;
@@ -85,19 +85,19 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
   Ok(menu)
 }
 
-/// 選択中のワークスペースと、プロジェクト一覧。状態の登録前(起動の途中)はパーソナルだけ。
-fn workspace_state(app: &AppHandle) -> (ActiveWorkspace, Vec<crate::services::workspace::Project>) {
+/// 選択中のワークスペースと、スペース一覧。状態の登録前(起動の途中)はパーソナルだけ。
+fn workspace_state(app: &AppHandle) -> (ActiveWorkspace, Vec<crate::services::workspace::Space>) {
   match app.try_state::<Workspaces>() {
     Some(ws) => (ws.active_info(), ws.list()),
-    None => (ActiveWorkspace { id: PERSONAL_ID.to_owned(), project: None }, Vec::new()),
+    None => (ActiveWorkspace { id: PERSONAL_ID.to_owned(), space: None }, Vec::new()),
   }
 }
 
-/// 「Spaces」サブメニュー。パーソナルと各プロジェクトを並べ、選択中にチェックを付ける。クリックで、そのワークスペースへ切り替える。
-fn projects_submenu(app: &AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
-  let (active, projects) = workspace_state(app);
+/// 「Spaces」サブメニュー。パーソナルと各スペースを並べ、選択中にチェックを付ける。クリックで、そのワークスペースへ切り替える。
+fn spaces_submenu(app: &AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
+  let (active, spaces) = workspace_state(app);
   let personal = CheckMenuItem::with_id(app, format!("{WORKSPACE_PREFIX}{PERSONAL_ID}"), "Personal", true, active.id == PERSONAL_ID, None::<&str>)?;
-  let items = projects
+  let items = spaces
     .iter()
     .map(|p| CheckMenuItem::with_id(app, format!("{WORKSPACE_PREFIX}{}", p.id), &p.name, true, active.id == p.id, None::<&str>))
     .collect::<tauri::Result<Vec<_>>>()?;
@@ -110,7 +110,7 @@ fn projects_submenu(app: &AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
   Submenu::with_items(app, "Spaces", true, &all)
 }
 
-/// アプリのメニューバーと、トレイのメニューを作り直す。ワークスペースの切り替えや、プロジェクトの追加・名称変更・削除のあとに呼ぶ。
+/// アプリのメニューバーと、トレイのメニューを作り直す。ワークスペースの切り替えや、スペースの追加・名称変更・削除のあとに呼ぶ。
 pub fn refresh(app: &AppHandle) {
   match (build_menu(app), app.tray_by_id("main")) {
     (Ok(menu), Some(tray)) => {
@@ -134,7 +134,7 @@ pub fn on_app_menu_event(app: &AppHandle, id: &str) {
   }
 }
 
-/// macOS のメニューバー。OS の言語に関わらず英語表記に固定する。「Spaces」から、パーソナルや各プロジェクトへ直接切り替えられる。
+/// macOS のメニューバー。OS の言語に関わらず英語表記に固定する。「Spaces」から、パーソナルや各スペースへ直接切り替えられる。
 pub fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
   use tauri::menu::{PredefinedMenuItem as P, Submenu};
   let app_sub = Submenu::with_items(
@@ -173,8 +173,8 @@ pub fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     true,
     &[&P::minimize(app, Some("Minimize"))?, &P::maximize(app, Some("Zoom"))?, &P::separator(app)?, &P::close_window(app, Some("Close Window"))?],
   )?;
-  let projects = projects_submenu(app)?;
-  Menu::with_items(app, &[&app_sub, &edit, &view, &projects, &window])
+  let spaces = spaces_submenu(app)?;
+  Menu::with_items(app, &[&app_sub, &edit, &view, &spaces, &window])
 }
 
 /// メインウィンドウを前面に出す。Dock アイコンも復帰させる。

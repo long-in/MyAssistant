@@ -87,27 +87,27 @@ pub enum AppError {
     /// MFAコードの入力が取り消された、または時間内に入力されなかった。
     #[error("MFA code was not provided")]
     MfaRequired,
-    /// プロジェクトの名称・イメージカラーの不備。
-    #[error("invalid project: {0}")]
-    InvalidProject(String),
+    /// スペースの名称・イメージカラーの不備。
+    #[error("invalid space: {0}")]
+    InvalidSpace(String),
     /// 指定した保存先が、別のワークスペースの保存先(ナレッジ・デバッグログ)と重なっている。
     #[error("path overlaps another workspace's location")]
     PathInUse,
     /// 名称がパーソナル・ワークの表示名と紛らわしいため使えない。
-    #[error("project name is reserved")]
+    #[error("space name is reserved")]
     ReservedName,
-    /// 指定した名称を、別のプロジェクトがすでに使っている。
-    #[error("project name already in use")]
+    /// 指定した名称を、別のスペースがすでに使っている。
+    #[error("space name already in use")]
     NameInUse,
-    /// 指定した色を、別のプロジェクトがすでに使っている。
-    #[error("project color already in use")]
+    /// 指定した色を、別のスペースがすでに使っている。
+    #[error("space color already in use")]
     ColorInUse,
-    /// プロジェクト数が上限に達している。
-    #[error("project limit reached")]
-    ProjectLimit,
-    /// 指定したプロジェクトが無い。
-    #[error("project not found")]
-    ProjectNotFound,
+    /// スペース数が上限に達している。
+    #[error("space limit reached")]
+    SpaceLimit,
+    /// 指定したスペースが無い。
+    #[error("space not found")]
+    SpaceNotFound,
 }
 
 impl AppError {
@@ -157,13 +157,13 @@ impl AppError {
             Self::InvalidProfile(_) => "invalid_profile",
             Self::AwsConfig(_) => "aws_config_error",
             Self::MfaRequired => "mfa_required",
-            Self::InvalidProject(_) => "invalid_project",
+            Self::InvalidSpace(_) => "invalid_space",
             Self::PathInUse => "path_in_use",
             Self::ReservedName => "reserved_name",
             Self::NameInUse => "name_in_use",
             Self::ColorInUse => "color_in_use",
-            Self::ProjectLimit => "project_limit",
-            Self::ProjectNotFound => "project_not_found",
+            Self::SpaceLimit => "space_limit",
+            Self::SpaceNotFound => "space_not_found",
             Self::ProviderRejected(_) => "provider_rejected",
             Self::ApiDisabled => "api_disabled",
             Self::KeyRestricted => "key_restricted",

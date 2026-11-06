@@ -321,7 +321,7 @@ async fn send_chat_inner(
     )
     .await?;
     let content = out.text;
-    // 実行中に削除されたプロジェクトへは、応答もキャプチャも書かない
+    // 実行中に削除されたスペースへは、応答もキャプチャも書かない
     ctx.ensure_alive()?;
     ctx.db.insert_log(&session_id, "assistant", &content, Some(target.provider.as_str()), Some(&target.model))?;
     // 会話内容は確認なしでキャプチャ(チャプター)として書き出す。整理は画面の「今すぐ整理」で行う
@@ -346,11 +346,11 @@ mod tests {
         {
             let mut map = contexts.0.lock().unwrap();
             map.insert(key("personal", "s1"), Some("personal corrections".into()));
-            map.insert(key("p1", "s1"), Some("project corrections".into())); // 同じセッションIDでも別のワークスペース
+            map.insert(key("p1", "s1"), Some("space corrections".into())); // 同じセッションIDでも別のワークスペース
             map.insert(key("p1", "s2"), None);
         }
         // 別のワークスペースの分は混ざらない
-        assert_eq!(contexts.0.lock().unwrap().get(&key("p1", "s1")).unwrap().as_deref(), Some("project corrections"));
+        assert_eq!(contexts.0.lock().unwrap().get(&key("p1", "s1")).unwrap().as_deref(), Some("space corrections"));
         contexts.forget_workspace("p1");
         let map = contexts.0.lock().unwrap();
         assert_eq!(map.len(), 1);

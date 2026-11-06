@@ -6,25 +6,25 @@ import {
   PERSONAL_ID,
   WORKSPACE_CHANGED_EVENT,
   getActiveWorkspace,
-  listProjectColors,
-  listProjects,
+  listSpaceColors,
+  listSpaces,
   switchWorkspace,
   type ActiveWorkspace,
-  type Project,
+  type Space,
 } from "@/lib/api";
 
 /** ワークスペースの現在値。起動直後は読み込み前(`ready`が偽)で、パーソナルとして扱う。 */
 export type WorkspaceState = {
   ready: boolean;
   active: ActiveWorkspace;
-  projects: Project[];
+  spaces: Space[];
   palette: string[];
   /** 選択中のワークスペースの設定を外から書き換えたときに増える(設定を読み直すための印)。 */
   settingsVersion: number;
 };
 
-const PERSONAL: ActiveWorkspace = { id: PERSONAL_ID, project: null };
-const INITIAL: WorkspaceState = { ready: false, active: PERSONAL, projects: [], palette: [], settingsVersion: 0 };
+const PERSONAL: ActiveWorkspace = { id: PERSONAL_ID, space: null };
+const INITIAL: WorkspaceState = { ready: false, active: PERSONAL, spaces: [], palette: [], settingsVersion: 0 };
 
 let state = INITIAL;
 const listeners = new Set<() => void>();
@@ -36,8 +36,8 @@ function set(next: Partial<WorkspaceState>) {
 
 /** バックエンドから現在値を読み直す。 */
 export async function refreshWorkspace() {
-  const [active, projects, palette] = await Promise.all([getActiveWorkspace(), listProjects(), listProjectColors()]);
-  set({ ready: true, active, projects, palette });
+  const [active, spaces, palette] = await Promise.all([getActiveWorkspace(), listSpaces(), listSpaceColors()]);
+  set({ ready: true, active, spaces, palette });
 }
 
 /** 選択中のワークスペースの設定が、コピーなどで書き換わったことを知らせる。 */

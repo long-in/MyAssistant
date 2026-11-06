@@ -6,20 +6,20 @@ use crate::{
     services::{
         debug_log,
         settings_transfer::{self, CopyOptions, CopyReport},
-        workspace::{ActiveWorkspace, PALETTE, Project, WORKSPACE_CHANGED_EVENT, Workspaces},
+        workspace::{ActiveWorkspace, PALETTE, Space, WORKSPACE_CHANGED_EVENT, Workspaces},
     },
     utils::error::AppError,
 };
 
-/// ワークスペースのプロジェクト一覧(作成順)。
+/// ワークスペースのスペース一覧(作成順)。
 #[tauri::command]
-pub fn list_projects(ws: State<'_, Workspaces>) -> Vec<Project> {
+pub fn list_spaces(ws: State<'_, Workspaces>) -> Vec<Space> {
     ws.list()
 }
 
-/// プロジェクトに選べるイメージカラー(30色)。
+/// スペースに選べるイメージカラー(30色)。
 #[tauri::command]
-pub fn list_project_colors() -> Vec<&'static str> {
+pub fn list_space_colors() -> Vec<&'static str> {
     PALETTE.to_vec()
 }
 
@@ -29,34 +29,34 @@ pub fn get_active_workspace(ws: State<'_, Workspaces>) -> ActiveWorkspace {
     ws.active_info()
 }
 
-/// プロジェクトを作る(上限30件)。選択はしない。
+/// スペースを作る(上限30件)。選択はしない。
 #[tauri::command]
-pub fn create_project(app: AppHandle, ws: State<'_, Workspaces>, name: String, color: String) -> Result<Project, AppError> {
-    let project = ws.create(&name, &color)?;
+pub fn create_space(app: AppHandle, ws: State<'_, Workspaces>, name: String, color: String) -> Result<Space, AppError> {
+    let space = ws.create(&name, &color)?;
     tray::refresh(&app); // メニューバー・トレイのSpacesに加える
-    Ok(project)
+    Ok(space)
 }
 
-/// プロジェクトの名称とイメージカラーを変える。選択中なら画面へ通知する。
+/// スペースの名称とイメージカラーを変える。選択中なら画面へ通知する。
 #[tauri::command]
-pub fn update_project(
+pub fn update_space(
     app: AppHandle,
     ws: State<'_, Workspaces>,
     id: String,
     name: String,
     color: String,
-) -> Result<Project, AppError> {
-    let project = ws.update(&id, &name, &color)?;
+) -> Result<Space, AppError> {
+    let space = ws.update(&id, &name, &color)?;
     if ws.active_info().id == id {
         let _ = app.emit(WORKSPACE_CHANGED_EVENT, ws.active_info());
     }
     tray::refresh(&app);
-    Ok(project)
+    Ok(space)
 }
 
-/// プロジェクトを、データごと削除する。元に戻せないため、呼び出し側で確認を取ること。選択中ならパーソナルへ戻る。
+/// スペースを、データごと削除する。元に戻せないため、呼び出し側で確認を取ること。選択中ならパーソナルへ戻る。
 #[tauri::command]
-pub fn delete_project(
+pub fn delete_space(
     app: AppHandle,
     ws: State<'_, Workspaces>,
     contexts: State<'_, SessionContexts>,
@@ -84,7 +84,7 @@ pub fn switch_workspace(app: AppHandle, ws: State<'_, Workspaces>, id: String) -
     Ok(info)
 }
 
-/// `from`の設定を`to`へコピーする(`personal`またはプロジェクトID)。`from`は変更しない。
+/// `from`の設定を`to`へコピーする(`personal`またはスペースID)。`from`は変更しない。
 /// `include_keys`でAPIキー・AWS設定、`include_profile`でパーソナルデータも写す。コピー先の既存の設定は上書きされる。
 #[tauri::command]
 pub fn copy_workspace_settings(

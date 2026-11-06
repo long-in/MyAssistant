@@ -119,7 +119,7 @@ impl AgentState {
         }
     }
 
-    /// 依頼を中断し、承認待ちも拒否にする(プロジェクトの削除時)。
+    /// 依頼を中断し、承認待ちも拒否にする(スペースの削除時)。
     pub fn abort(&self) {
         self.cancel();
         lock(&self.approvals).clear(); // 送り口を捨てると、待っている側は拒否として扱う

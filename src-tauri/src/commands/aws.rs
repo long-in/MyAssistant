@@ -60,7 +60,7 @@ pub fn remove_aws_model(ctx: Ctx, model: String) -> Result<Status, AppError> {
 }
 
 /// 入力されたMFAコードを、待っているBedrock呼び出しへ渡す。
-/// コードは、求めたワークスペース(`workspace_id`)へ返す。選択中とは限らない(裏のプロジェクトが求めることがある)。
+/// コードは、求めたワークスペース(`workspace_id`)へ返す。選択中とは限らない(裏のスペースが求めることがある)。
 #[tauri::command]
 pub fn submit_aws_mfa(ws: State<'_, Workspaces>, workspace_id: String, code: String) -> Result<(), AppError> {
     let ctx = ws.resolve(&workspace_id)?;

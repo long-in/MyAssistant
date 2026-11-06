@@ -130,12 +130,12 @@ pub fn run() {
       commands::knowledge::run_batch,
       commands::knowledge::load_batch_route,
       commands::knowledge::save_batch_route,
-      commands::workspace::list_projects,
-      commands::workspace::list_project_colors,
+      commands::workspace::list_spaces,
+      commands::workspace::list_space_colors,
       commands::workspace::get_active_workspace,
-      commands::workspace::create_project,
-      commands::workspace::update_project,
-      commands::workspace::delete_project,
+      commands::workspace::create_space,
+      commands::workspace::update_space,
+      commands::workspace::delete_space,
       commands::workspace::switch_workspace,
       commands::workspace::copy_workspace_settings,
     ])
@@ -159,7 +159,7 @@ pub fn run() {
       }
 
       tray::setup(app.handle())?;
-      // メニューバーは状態の登録前に作られるため、プロジェクト一覧を含めて作り直す
+      // メニューバーは状態の登録前に作られるため、スペース一覧を含めて作り直す
       tray::refresh(app.handle());
 
       // 整理バッチは、ワークスペースごとの間隔で独立して動かす

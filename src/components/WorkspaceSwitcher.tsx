@@ -8,20 +8,20 @@ import { PERSONAL_ID, errorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { switchTo, useWorkspace } from "@/lib/workspace";
 
-const LAST_PROJECT_KEY = "lastProject";
+const LAST_SPACE_KEY = "lastSpace";
 
-function lastProject(): string | null {
+function lastSpace(): string | null {
   try {
-    return localStorage.getItem(LAST_PROJECT_KEY);
+    return localStorage.getItem(LAST_SPACE_KEY);
   } catch {
     return null;
   }
 }
 
-/** 左メニュー上部の、パーソナル / ワークの切り替えと、ワークのプロジェクト選択。`collapsed`はアイコンだけの表示。 */
+/** 左メニュー上部の、パーソナル / ワークの切り替えと、ワークのスペース選択。`collapsed`はアイコンだけの表示。 */
 export default function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }) {
   const router = useRouter();
-  const { active, projects } = useWorkspace();
+  const { active, spaces } = useWorkspace();
   const personal = active.id === PERSONAL_ID;
 
   const go = (id: string) =>
@@ -29,7 +29,7 @@ export default function WorkspaceSwitcher({ collapsed }: { collapsed: boolean })
       .then(() => {
         if (id !== PERSONAL_ID) {
           try {
-            localStorage.setItem(LAST_PROJECT_KEY, id);
+            localStorage.setItem(LAST_SPACE_KEY, id);
           } catch {}
         }
       })
@@ -37,12 +37,12 @@ export default function WorkspaceSwitcher({ collapsed }: { collapsed: boolean })
 
   const openWork = () => {
     if (!personal) return;
-    const target = projects.find((p) => p.id === lastProject()) ?? projects[0];
+    const target = spaces.find((p) => p.id === lastSpace()) ?? spaces[0];
     if (target) void go(target.id);
-    else router.push("/workspace"); // 先にプロジェクトを作る
+    else router.push("/workspace"); // 先にスペースを作る
   };
 
-  const items = projects.map((p) => ({ value: p.id, label: p.name }));
+  const items = spaces.map((p) => ({ value: p.id, label: p.name }));
   const modeButton = (on: boolean, onClick: () => void, label: string, icon: React.ReactNode) => (
     <button
       type="button"
@@ -68,21 +68,21 @@ export default function WorkspaceSwitcher({ collapsed }: { collapsed: boolean })
           !personal,
           openWork,
           "Work",
-          <Briefcase className="size-3.5 shrink-0" style={active.project ? { color: active.project.color } : undefined} />,
+          <Briefcase className="size-3.5 shrink-0" style={active.space ? { color: active.space.color } : undefined} />,
         )}
       </div>
-      {!personal && projects.length > 0 && (
+      {!personal && spaces.length > 0 && (
         <Select items={items} value={active.id} onValueChange={(v) => v && void go(v as string)}>
           <SelectTrigger
             className={cn("hidden w-full", !collapsed && "md:flex")}
             aria-label="Spaces"
-            style={{ borderColor: active.project?.color }}
+            style={{ borderColor: active.space?.color }}
           >
-            <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: active.project?.color }} />
+            <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: active.space?.color }} />
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {projects.map((p) => (
+            {spaces.map((p) => (
               <SelectItem key={p.id} value={p.id}>
                 <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: p.color }} />
                 {p.name}
@@ -91,19 +91,19 @@ export default function WorkspaceSwitcher({ collapsed }: { collapsed: boolean })
           </SelectContent>
         </Select>
       )}
-      {!personal && active.project && collapsed && projects.length > 0 && (
-        // 畳んだメニューでは、色の丸を押してプロジェクトを選ぶ
+      {!personal && active.space && collapsed && spaces.length > 0 && (
+        // 畳んだメニューでは、色の丸を押してスペースを選ぶ
         <Select items={items} value={active.id} onValueChange={(v) => v && void go(v as string)}>
           <SelectTrigger
             className="size-8 justify-center rounded-full p-0 [&>svg:last-child]:hidden"
             aria-label="Space"
-            title={active.project.name}
-            style={{ borderColor: active.project.color }}
+            title={active.space.name}
+            style={{ borderColor: active.space.color }}
           >
-            <span className="size-3.5 rounded-full" style={{ backgroundColor: active.project.color }} />
+            <span className="size-3.5 rounded-full" style={{ backgroundColor: active.space.color }} />
           </SelectTrigger>
           <SelectContent>
-            {projects.map((p) => (
+            {spaces.map((p) => (
               <SelectItem key={p.id} value={p.id}>
                 <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: p.color }} />
                 {p.name}

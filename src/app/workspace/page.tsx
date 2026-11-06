@@ -11,23 +11,23 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
-  MAX_PROJECTS,
+  MAX_SPACES,
   PERSONAL_ID,
-  PROJECT_NAME_MAX,
+  SPACE_NAME_MAX,
   copyWorkspaceSettings,
-  createProject,
-  deleteProject,
+  createSpace,
+  deleteSpace,
   errorMessage,
-  updateProject,
-  type Project,
+  updateSpace,
+  type Space,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { bumpSettingsVersion, refreshWorkspace, switchTo, useWorkspace } from "@/lib/workspace";
 
 export default function WorkspacePage() {
   const router = useRouter();
-  const { active, projects, palette } = useWorkspace();
-  const [editing, setEditing] = useState<string | null>(null); // 編集中のプロジェクトID。nullなら新規作成
+  const { active, spaces, palette } = useWorkspace();
+  const [editing, setEditing] = useState<string | null>(null); // 編集中のスペースID。nullなら新規作成
   const [name, setName] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -36,9 +36,9 @@ export default function WorkspacePage() {
   const [copyTo, setCopyTo] = useState<string | null>(null);
   const [withKeys, setWithKeys] = useState(false);
   const [withProfile, setWithProfile] = useState(false);
-  const full = projects.length >= MAX_PROJECTS;
-  // ほかのプロジェクトが使っている色は選べない(編集中は自分の色を除く)。選んだ色が使えなければ、空いている先頭の色にする
-  const usedBy = new Map(projects.filter((p) => p.id !== editing).map((p) => [p.color, p.name]));
+  const full = spaces.length >= MAX_SPACES;
+  // ほかのスペースが使っている色は選べない(編集中は自分の色を除く)。選んだ色が使えなければ、空いている先頭の色にする
+  const usedBy = new Map(spaces.filter((p) => p.id !== editing).map((p) => [p.color, p.name]));
   const color = picked && !usedBy.has(picked) ? picked : (palette.find((c) => !usedBy.has(c)) ?? "");
 
   const reset = () => {
@@ -47,7 +47,7 @@ export default function WorkspacePage() {
     setPicked(null);
   };
 
-  const startEdit = (p: Project) => {
+  const startEdit = (p: Space) => {
     setEditing(p.id);
     setName(p.name);
     setPicked(p.color);
@@ -57,12 +57,12 @@ export default function WorkspacePage() {
     setBusy(true);
     try {
       if (editing) {
-        await updateProject(editing, name, color);
+        await updateSpace(editing, name, color);
         await refreshWorkspace();
         toast.success("Updated the space.");
         reset();
       } else {
-        const created = await createProject(name, color);
+        const created = await createSpace(name, color);
         await refreshWorkspace();
         await switchTo(created.id); // 作ったらそのまま開く。APIキーが未登録なら設定画面へ案内される
         toast.success("Created the space.");
@@ -80,14 +80,14 @@ export default function WorkspacePage() {
       .then(() => router.push("/"))
       .catch((e) => toast.error(errorMessage(e)));
 
-  const remove = async (p: Project) => {
+  const remove = async (p: Space) => {
     const ok = await ask(
       `Delete the space "${p.name}"? Its conversations, settings, API keys and the knowledge in the default location are all deleted and this cannot be undone. A knowledge location you specified yourself is not deleted. Continue?`,
       { title: "Delete space", kind: "warning" },
     );
     if (!ok) return;
     try {
-      await deleteProject(p.id);
+      await deleteSpace(p.id);
       await refreshWorkspace();
       if (editing === p.id) reset();
       toast.success("Deleted the space.");
@@ -98,7 +98,7 @@ export default function WorkspacePage() {
 
   const targets = [
     { id: PERSONAL_ID, name: "Personal", color: null as string | null },
-    ...projects.map((p) => ({ id: p.id, name: p.name, color: p.color as string | null })),
+    ...spaces.map((p) => ({ id: p.id, name: p.name, color: p.color as string | null })),
   ];
   const to = targets.find((x) => x.id === copyTo)?.id ?? active.id;
   const from = targets.find((x) => x.id === copyFrom && x.id !== to)?.id ?? targets.find((x) => x.id !== to)?.id ?? "";
@@ -139,13 +139,13 @@ export default function WorkspacePage() {
           <CardHeader>
             <CardTitle>{editing ? "Edit space" : "Create a space"}</CardTitle>
             <CardDescription>
-              {`The name and image color are shown so you can tell which agent you are talking to. Each space needs its own name and color, and names like "Personal" and "Work" are reserved. (${projects.length}/${MAX_PROJECTS})`}
+              {`The name and image color are shown so you can tell which agent you are talking to. Each space needs its own name and color, and names like "Personal" and "Work" are reserved. (${spaces.length}/${MAX_SPACES})`}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <Input
               value={name}
-              maxLength={PROJECT_NAME_MAX}
+              maxLength={SPACE_NAME_MAX}
               placeholder="Space name"
               aria-label="Space name"
               onChange={(e) => setName(e.target.value)}
@@ -260,8 +260,8 @@ export default function WorkspacePage() {
             <CardTitle>Space list</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col divide-y">
-            {projects.length === 0 && <p className="py-3 text-sm text-muted-foreground">No spaces yet.</p>}
-            {projects.map((p) => {
+            {spaces.length === 0 && <p className="py-3 text-sm text-muted-foreground">No spaces yet.</p>}
+            {spaces.map((p) => {
               const current = active.id === p.id && active.id !== PERSONAL_ID;
               return (
                 <div key={p.id} className="flex items-center justify-between gap-3 py-3">
