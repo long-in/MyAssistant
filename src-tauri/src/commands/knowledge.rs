@@ -1,12 +1,14 @@
 
 
+use tauri::State;
+
 use crate::{
     services::{
         batch::{self, BatchReport},
         debug_log,
         knowledge::{self, KnowledgeFile, TransferReport},
         llm_router::Route,
-        workspace::Ctx,
+        workspace::{Ctx, Workspaces},
     },
     utils::error::AppError,
 };
@@ -21,7 +23,7 @@ pub fn knowledge_dir(ctx: Ctx) -> Result<String, AppError> {
 
 /// ナレッジの保存先を変更する。`None`で既定の場所に戻す。既存ファイルは移動しない。
 #[tauri::command]
-pub fn set_knowledge_dir(ctx: Ctx, path: Option<String>) -> Result<String, AppError> {
+pub fn set_knowledge_dir(ws: State<'_, Workspaces>, ctx: Ctx, path: Option<String>) -> Result<String, AppError> {
     let path = path.map(|p| p.trim().to_owned()).filter(|p| !p.is_empty());
     let root = match &path {
         Some(p) => {
@@ -33,6 +35,8 @@ pub fn set_knowledge_dir(ctx: Ctx, path: Option<String>) -> Result<String, AppEr
         }
         None => batch::default_knowledge_root(&ctx),
     };
+    // 他のワークスペースのナレッジ・デバッグログの場所と重なる場所は使えない(フォルダを作る前に確かめる)
+    ws.ensure_paths_free(&ctx.id, &root)?;
     std::fs::create_dir_all(&root).map_err(|e| AppError::Io(e.to_string()))?;
     let root = root.canonicalize().map_err(|e| AppError::Io(e.to_string()))?;
     // 書き込めない場所を保存しないよう、実際に書き込めるか確認する

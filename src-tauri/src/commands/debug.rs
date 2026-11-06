@@ -1,7 +1,9 @@
+use tauri::State;
+
 use crate::{
     services::{
         debug_log::{self, LogFile},
-        workspace::{Ctx, WorkspaceCtx},
+        workspace::{Ctx, WorkspaceCtx, Workspaces},
     },
     utils::error::AppError,
 };
@@ -18,9 +20,11 @@ pub fn get_debug_log_dir(ctx: Ctx) -> Result<String, AppError> {
 
 /// デバッグログの出力先を変更する。`None`でナレッジ配下の既定に戻す。既存のログは移動しない。
 #[tauri::command]
-pub fn set_debug_log_dir(ctx: Ctx, path: Option<String>) -> Result<String, AppError> {
+pub fn set_debug_log_dir(ws: State<'_, Workspaces>, ctx: Ctx, path: Option<String>) -> Result<String, AppError> {
     let path = path.map(|p| p.trim().to_owned()).filter(|p| !p.is_empty());
     if let Some(p) = &path {
+        // 他のワークスペースのナレッジ・デバッグログの場所と重なる場所は使えない
+        ws.ensure_paths_free(&ctx.id, std::path::Path::new(p))?;
         let dir = debug_log::prepare_dir(std::path::Path::new(p))?;
         ctx.db.set_setting(debug_log::DIR_KEY, &dir.to_string_lossy())?;
     } else {

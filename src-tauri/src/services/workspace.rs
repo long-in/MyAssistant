@@ -16,7 +16,7 @@ use tauri::{
     ipc::{CommandArg, CommandItem, InvokeError},
 };
 
-use super::{aws::AwsState, batch::BatchGuard, secrets::Secrets};
+use super::{aws::AwsState, batch, batch::BatchGuard, debug_log, secrets::Secrets};
 use crate::{db::Db, utils::error::AppError};
 
 /// パーソナルワークスペースのID。保存先は従来どおりアプリデータ直下。
@@ -194,6 +194,21 @@ impl Workspaces {
         if id == PERSONAL_ID { Ok(self.get(PERSONAL_ID).expect("personal is always loaded")) } else { self.load(id) }
     }
 
+    /// `candidate`(ナレッジやデバッグログの保存先にしたい場所)が、`id`以外のワークスペースの保存先と重ならないことを確かめる。
+    /// 相手の保存先は、現在の場所と既定の場所(「既定に戻す」で使われうる場所)の両方で、ナレッジとデバッグログが対象。
+    /// 同じ場所、親子関係(含む・含まれる)のどちらも重なりとして拒否する。
+    pub fn ensure_paths_free(&self, id: &str, candidate: &Path) -> Result<(), AppError> {
+        let candidate = canonical_lenient(candidate);
+        for other in self.load_all().into_iter().filter(|c| c.id != id) {
+            for claimed in claimed_paths(&other) {
+                if overlaps(&candidate, &canonical_lenient(&claimed)) {
+                    return Err(AppError::PathInUse);
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn list(&self) -> Vec<Project> {
         self.projects().clone()
     }
@@ -269,6 +284,42 @@ impl Workspaces {
             log::warn!("project dir not removed: {e}");
         }
         Ok(())
+    }
+}
+
+/// そのワークスペースが使う(または、既定に戻すと使う)ナレッジとデバッグログの場所。
+fn claimed_paths(ctx: &WorkspaceCtx) -> Vec<PathBuf> {
+    let default_root = batch::default_knowledge_root(ctx);
+    let mut paths = vec![default_root.join(debug_log::DIR_NAME), default_root];
+    if let Ok(root) = batch::knowledge_root(ctx) {
+        paths.push(root);
+    }
+    if let Ok(dir) = debug_log::log_dir(ctx) {
+        paths.push(dir);
+    }
+    paths
+}
+
+/// 2つの場所が、同じか、一方が他方の中にあるか。
+fn overlaps(a: &Path, b: &Path) -> bool {
+    a.starts_with(b) || b.starts_with(a)
+}
+
+/// 存在しない場所でも比べられるよう、存在する最も深い親を正規化(シンボリックリンクを解決)して、残りをつなぐ。
+fn canonical_lenient(path: &Path) -> PathBuf {
+    let mut rest = Vec::new();
+    let mut cur = path;
+    loop {
+        if let Ok(base) = cur.canonicalize() {
+            return rest.iter().rev().fold(base, |acc, part| acc.join(part));
+        }
+        match (cur.parent(), cur.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_owned());
+                cur = parent;
+            }
+            _ => return path.to_owned(),
+        }
     }
 }
 
@@ -484,5 +535,60 @@ mod tests {
         assert!(ws.create("Sales", PALETTE[0]).is_ok());
         // 拒否された操作では、一覧は変わらない
         assert_eq!(ws.list().len(), 2);
+    }
+
+    #[test]
+    fn storage_locations_cannot_overlap_between_workspaces() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path());
+        let a = ws.create("A", PALETTE[0]).unwrap();
+        let b = ws.create("B", PALETTE[1]).unwrap();
+        let a_default = d.path().join(DIR_NAME).join(&a.id).join("knowledge");
+        let free = tempfile::tempdir().unwrap();
+
+        // 他のワークスペースの既定の場所・その中・その親・データのフォルダは使えない
+        for bad in [
+            a_default.clone(),
+            a_default.join("sub"),
+            a_default.join("debug-logs"),
+            d.path().join(DIR_NAME).join(&a.id),
+            d.path().join(DIR_NAME),
+            d.path().to_owned(), // 全体を含む
+            d.path().join("knowledge"),         // パーソナルの既定
+            d.path().join("knowledge").join("x"),
+        ] {
+            assert!(matches!(ws.ensure_paths_free(&b.id, &bad), Err(AppError::PathInUse)), "{bad:?}");
+        }
+        // まだ存在しない場所でも、重なりは見抜く
+        assert!(ws.ensure_paths_free(&b.id, &a_default.join("not/yet/created")).is_err());
+        // 関係のない場所と、自分自身の既定の場所は使える
+        assert!(ws.ensure_paths_free(&b.id, free.path()).is_ok());
+        assert!(ws.ensure_paths_free(&b.id, &d.path().join(DIR_NAME).join(&b.id).join("knowledge")).is_ok());
+        // パーソナルから見ても、プロジェクトの場所は使えない
+        assert!(ws.ensure_paths_free(PERSONAL_ID, &a_default).is_err());
+        assert!(ws.ensure_paths_free(PERSONAL_ID, free.path()).is_ok());
+    }
+
+    #[test]
+    fn custom_locations_are_claimed_too() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path());
+        let a = ws.create("A", PALETTE[0]).unwrap();
+        let b = ws.create("B", PALETTE[1]).unwrap();
+        let (kx, dx) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        // Aがナレッジとデバッグログの保存先を変えている
+        let ctx_a = ws.get(&a.id).unwrap();
+        ctx_a.db.set_setting(batch::KNOWLEDGE_DIR_KEY, &kx.path().to_string_lossy()).unwrap();
+        ctx_a.db.set_setting(debug_log::DIR_KEY, &dx.path().to_string_lossy()).unwrap();
+        for bad in [kx.path().to_owned(), kx.path().join("sub"), dx.path().to_owned(), kx.path().parent().unwrap().to_owned()] {
+            assert!(ws.ensure_paths_free(&b.id, &bad).is_err(), "{bad:?}");
+        }
+        // Aが自分の既定の場所へ戻しても、Bの場所とは重ならない(Bが先に使っていれば拒否される)
+        let a_default = d.path().join(DIR_NAME).join(&a.id).join("knowledge");
+        assert!(ws.ensure_paths_free(&a.id, &a_default).is_ok());
+        // Bが、Aの「既定に戻す」場所を先に取ることはできない
+        assert!(ws.ensure_paths_free(&b.id, &a_default).is_err());
+        // 自分の保存先は、自分からは使える
+        assert!(ws.ensure_paths_free(&a.id, kx.path()).is_ok());
     }
 }
