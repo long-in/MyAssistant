@@ -1,7 +1,5 @@
 //! メニューバー(トレイ)常駐。ウィンドウを閉じてもプロセスは残し、トレイから再表示・終了する。
 
-use std::sync::Mutex;
-
 use tauri::{
   AppHandle, Emitter, Manager, WebviewWindow, WindowEvent,
   menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
@@ -14,26 +12,23 @@ const MAIN_WINDOW: &str = "main";
 const MENU_SHOW: &str = "show";
 const MENU_QUIT: &str = "quit";
 
-/// メニュー項目 ID・日本語/英語の表示名・開く画面のパスの対応。
-const NAV_ITEMS: [(&str, &str, &str, &str); 4] = [
-  ("nav-chat", "対話", "Chat", "/"),
-  ("nav-setup", "設定", "Settings", "/setup"),
-  ("nav-knowledge", "ナレッジ", "Knowledge", "/knowledge"),
-  ("nav-shortcuts", "ショートカット", "Shortcuts", "/shortcuts"),
+/// メニュー項目 ID・表示名・開く画面のパスの対応。表示名は英語に固定する(左メニュー・メニューバーに合わせる)。
+const NAV_ITEMS: [(&str, &str, &str); 4] = [
+  ("nav-chat", "Chat", "/"),
+  ("nav-knowledge", "Knowledge base", "/knowledge"),
+  ("nav-setup", "Settings", "/setup"),
+  ("nav-shortcuts", "Shortcuts", "/shortcuts"),
 ];
 
 /// ワークスペース項目のメニュー ID の接頭辞。続きは `personal` またはプロジェクトの ID。
 const WORKSPACE_PREFIX: &str = "ws:";
-
-/// トレイメニューの表示言語(`set_tray_language` で受け取った値)。メニューを作り直すときに使う。
-static LANG: Mutex<String> = Mutex::new(String::new());
 
 /// フロントエンドへ画面遷移を依頼するイベント名。ペイロードは遷移先パス。
 const NAVIGATE_EVENT: &str = "navigate";
 
 /// トレイアイコンを作成し、メインウィンドウの閉じる操作を「隠す」に差し替える。
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
-  let menu = build_menu(app, "ja")?;
+  let menu = build_menu(app)?;
 
   let tray = TrayIconBuilder::with_id("main")
     .icon(tauri::include_image!("icons/tray.png"))
@@ -51,7 +46,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         on_app_menu_event(app, id);
       }
       id => {
-        if let Some((_, _, _, path)) = NAV_ITEMS.iter().find(|(item, ..)| *item == id) {
+        if let Some((_, _, path)) = NAV_ITEMS.iter().find(|(item, ..)| *item == id) {
           show_main(app);
           let _ = app.emit(NAVIGATE_EVENT, *path);
         }
@@ -71,10 +66,8 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
   Ok(())
 }
 
-/// 言語(`ja` / `en`)に合わせたトレイメニューを作る。`en` 以外は日本語。
-fn build_menu(app: &AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry>> {
-  let en = lang == "en";
-  let pick = |ja: &'static str, en_label: &'static str| if en { en_label } else { ja };
+/// トレイメニューを作る。表記は英語に固定する。
+fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
   let menu = Menu::new(app)?;
   // いまのワークスペース(表示のみ)と、直接切り替えるためのProjects。ワークスペース関連の表記は英語に固定する
   let (active, _) = workspace_state(app);
@@ -82,23 +75,14 @@ fn build_menu(app: &AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry>> {
   menu.append(&MenuItem::with_id(app, "ws-current", format!("Workspace: {name}"), false, None::<&str>)?)?;
   menu.append(&projects_submenu(app)?)?;
   menu.append(&PredefinedMenuItem::separator(app)?)?;
-  menu.append(&MenuItem::with_id(app, MENU_SHOW, pick("MyAssistant を開く", "Open MyAssistant"), true, None::<&str>)?)?;
+  menu.append(&MenuItem::with_id(app, MENU_SHOW, "Open MyAssistant", true, None::<&str>)?)?;
   menu.append(&PredefinedMenuItem::separator(app)?)?;
-  for (id, ja, en_label, _) in NAV_ITEMS {
-    menu.append(&MenuItem::with_id(app, id, pick(ja, en_label), true, None::<&str>)?)?;
+  for (id, label, _) in NAV_ITEMS {
+    menu.append(&MenuItem::with_id(app, id, label, true, None::<&str>)?)?;
   }
   menu.append(&PredefinedMenuItem::separator(app)?)?;
-  menu.append(&MenuItem::with_id(app, MENU_QUIT, pick("終了", "Quit"), true, None::<&str>)?)?;
+  menu.append(&MenuItem::with_id(app, MENU_QUIT, "Quit", true, None::<&str>)?)?;
   Ok(menu)
-}
-
-/// フロントエンドの表示言語に合わせて、トレイメニューを作り直す。
-#[tauri::command]
-pub fn set_tray_language(app: AppHandle, lang: String) -> Result<(), String> {
-  *LANG.lock().unwrap_or_else(|e| e.into_inner()) = lang.clone();
-  let menu = build_menu(&app, &lang).map_err(|e| e.to_string())?;
-  let tray = app.tray_by_id("main").ok_or("tray not found")?;
-  tray.set_menu(Some(menu)).map_err(|e| e.to_string())
 }
 
 /// 選択中のワークスペースと、プロジェクト一覧。状態の登録前(起動の途中)はパーソナルだけ。
@@ -128,8 +112,7 @@ fn projects_submenu(app: &AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
 
 /// アプリのメニューバーと、トレイのメニューを作り直す。ワークスペースの切り替えや、プロジェクトの追加・名称変更・削除のあとに呼ぶ。
 pub fn refresh(app: &AppHandle) {
-  let lang = LANG.lock().unwrap_or_else(|e| e.into_inner()).clone();
-  match (build_menu(app, &lang), app.tray_by_id("main")) {
+  match (build_menu(app), app.tray_by_id("main")) {
     (Ok(menu), Some(tray)) => {
       let _ = tray.set_menu(Some(menu));
     }

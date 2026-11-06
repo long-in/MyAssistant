@@ -637,7 +637,6 @@ export const exportSettings = (dest: string) => invoke<SettingsTransferReport>("
 export const importSettings = (src: string) => invoke<SettingsTransferReport>("import_settings", { src });
 
 /** トレイメニューの表示言語を切り替える。 */
-export const setTrayLanguage = (lang: string) => invoke<void>("set_tray_language", { lang });
 
 /** パーソナルワークスペースのID。 */
 export const PERSONAL_ID = "personal";

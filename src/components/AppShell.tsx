@@ -8,7 +8,7 @@ import { Bug, BookOpen, FolderKanban, Keyboard, MessageSquare, PanelLeftClose, P
 import Chat from "@/components/Chat";
 import MfaModal from "@/components/MfaModal";
 import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
-import { DEBUG_MODE_EVENT, PERSONAL_ID, getDebugMode, getKeyStatus, setTrayLanguage } from "@/lib/api";
+import { DEBUG_MODE_EVENT, PERSONAL_ID, getDebugMode, getKeyStatus } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
 import { matchShortcut, type ShortcutId } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
@@ -96,7 +96,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     document.documentElement.lang = lang;
-    setTrayLanguage(lang).catch(() => {});
   }, [lang]);
 
   useEffect(() => {

@@ -21,7 +21,6 @@ pub fn run() {
     .on_menu_event(|app, event| tray::on_app_menu_event(app, event.id().as_ref()))
     .plugin(tauri_plugin_dialog::init())
     .invoke_handler(tauri::generate_handler![
-      tray::set_tray_language,
       commands::agent::agent_approve,
       commands::agent::agent_cancel,
       commands::agent::agent_resume,
