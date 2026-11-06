@@ -3,6 +3,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::{
     services::{
         debug_log,
+        settings_transfer::{self, CopyOptions, CopyReport},
         workspace::{ActiveWorkspace, PALETTE, Project, WORKSPACE_CHANGED_EVENT, Workspaces},
     },
     utils::error::AppError,
@@ -66,6 +67,26 @@ pub fn switch_workspace(app: AppHandle, ws: State<'_, Workspaces>, id: String) -
     let info = ws.switch(&id)?;
     refresh_after_switch(&app, &ws);
     Ok(info)
+}
+
+/// `from`の設定を`to`へコピーする(`personal`またはプロジェクトID)。`from`は変更しない。
+/// `include_keys`でAPIキー・AWS設定、`include_profile`でパーソナルデータも写す。コピー先の既存の設定は上書きされる。
+#[tauri::command]
+pub fn copy_workspace_settings(
+    app: AppHandle,
+    ws: State<'_, Workspaces>,
+    from: String,
+    to: String,
+    include_keys: bool,
+    include_profile: bool,
+) -> Result<CopyReport, AppError> {
+    let (src, dst) = (ws.resolve(&from)?, ws.resolve(&to)?);
+    let report = settings_transfer::copy(&src, &dst, CopyOptions { include_keys, include_profile })?;
+    // 選択中のワークスペースへコピーしたときは、デバッグログの出力先などを新しい設定に合わせる
+    if ws.active().id == dst.id {
+        refresh_after_switch(&app, &ws);
+    }
+    Ok(report)
 }
 
 /// デバッグログの出力先を切替先に合わせ、画面へ通知する。

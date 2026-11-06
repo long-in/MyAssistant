@@ -6,7 +6,12 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{command_policy::Policy, debug_log, profile, proofread, tuning, wake};
+use super::{
+    aws, batch,
+    command_policy::{self, Policy},
+    debug_log, profile, proofread, tuning, wake,
+    workspace::WorkspaceCtx,
+};
 use crate::{
     commands::{chat, voice},
     db::Db,
@@ -141,6 +146,50 @@ pub fn apply(db: &Db, file: &SettingsFile) -> Result<(Report, Option<Policy>), A
     Ok((Report { applied, skipped }, policy))
 }
 
+/// ワークスペース間の設定コピーの対象。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CopyOptions {
+    /// APIキー・AWS設定もコピーする(コピー先の同名のキーは上書き)。
+    pub include_keys: bool,
+    /// パーソナルデータ(名前・誕生日など)もコピーする。
+    pub include_profile: bool,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct CopyReport {
+    /// コピーした設定の項目数(コマンド権限を含む)。
+    pub settings: usize,
+    /// コピーしたキーの件数。
+    pub keys: usize,
+}
+
+/// `from`の設定を`to`へコピーする。`from`は変更しない。
+/// 対象は書き出しと同じ項目とコマンド権限で、ナレッジの保存先・会話・要約・ナレッジ本体・読み上げ辞書は含めない。
+/// 設定の検証に失敗したら何も書かない。キーの生値はRust内で写し、画面には件数だけ返す。
+pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result<CopyReport, AppError> {
+    if from.id == to.id {
+        return Err(AppError::InvalidProject("same workspace".into()));
+    }
+    let policy = command_policy::load(&batch::knowledge_root(from)?);
+    let mut file = collect(&from.db, policy, String::new())?;
+    if !opts.include_profile {
+        file.settings.remove(profile::KEY);
+    }
+    let (report, policy) = apply(&to.db, &file)?;
+    if let Some(policy) = policy {
+        // 保存先のフォルダは、作ったばかりのワークスペースに無くても`save`が作る
+        command_policy::save(&batch::knowledge_root(to)?, &policy).map_err(AppError::Io)?;
+    }
+    let keys = if opts.include_keys {
+        let n = to.secrets.copy_from(&from.secrets)?;
+        aws::reset(to); // 差し替えたAWS設定で取り直すため、古い一時クレデンシャルは捨てる
+        n
+    } else {
+        0
+    };
+    Ok(CopyReport { settings: report.applied, keys })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,5 +259,65 @@ mod tests {
         assert_eq!(db.get_setting("knowledge_dir").unwrap(), None);
         assert!(parse("{}").is_err());
         assert!(parse(r#"{"app":"other","version":1,"exported_at":"","settings":{},"command_policy":null}"#).is_err());
+    }
+
+    fn ctx(id: &str) -> (tempfile::TempDir, WorkspaceCtx) {
+        let d = tempfile::tempdir().unwrap();
+        let c = WorkspaceCtx::open(id, d.path()).unwrap();
+        (d, c)
+    }
+
+    #[test]
+    fn copy_moves_settings_and_policy_but_not_profile_or_keys_by_default() {
+        let (_da, a) = ctx("a");
+        let (_db, b) = ctx("b");
+        a.db.set_setting(chat::SHELL_ACCESS_KEY, "0").unwrap();
+        a.db.set_setting(profile::KEY, r#"{"enabled":true,"name":"山田"}"#).unwrap();
+        let custom = tempfile::tempdir().unwrap(); // コピー元は別の場所をナレッジの保存先にしている
+        a.db.set_setting("knowledge_dir", &custom.path().to_string_lossy()).unwrap();
+        a.db.set_setting("summary:abc", "{}").unwrap();
+        a.secrets.set_tts_key("tts-a").unwrap();
+        command_policy::add_allow(custom.path(), &["mytool".to_owned()]).unwrap();
+        b.db.set_setting(chat::WEB_ACCESS_KEY, "0").unwrap(); // コピー元に無い項目は残る
+
+        let report = copy(&a, &b, CopyOptions::default()).unwrap();
+        assert_eq!(report.keys, 0);
+        assert_eq!(b.db.get_setting(chat::SHELL_ACCESS_KEY).unwrap().as_deref(), Some("0"));
+        assert_eq!(b.db.get_setting(chat::WEB_ACCESS_KEY).unwrap().as_deref(), Some("0"));
+        for key in [profile::KEY, "knowledge_dir", "summary:abc"] {
+            assert_eq!(b.db.get_setting(key).unwrap(), None, "{key}");
+        }
+        assert!(!b.secrets.has_tts_key().unwrap());
+        assert!(command_policy::load(&batch::knowledge_root(&b).unwrap()).allow.contains(&"mytool".to_owned()));
+        // コピー元は変わらない
+        assert_eq!(a.db.get_setting(profile::KEY).unwrap().as_deref(), Some(r#"{"enabled":true,"name":"山田"}"#));
+        assert!(a.secrets.has_tts_key().unwrap());
+    }
+
+    #[test]
+    fn copy_options_include_profile_and_keys() {
+        let (_da, a) = ctx("a");
+        let (_db, b) = ctx("b");
+        let json = r#"{"enabled":true,"name":"山田"}"#;
+        a.db.set_setting(profile::KEY, json).unwrap();
+        a.secrets.set_tts_key("tts-a").unwrap();
+        a.secrets.set_key(crate::services::secrets::Provider::Anthropic, "ka").unwrap();
+        let report = copy(&a, &b, CopyOptions { include_keys: true, include_profile: true }).unwrap();
+        assert_eq!(report.keys, 2);
+        assert_eq!(b.db.get_setting(profile::KEY).unwrap().as_deref(), Some(json));
+        assert_eq!(b.secrets.get_tts_key().unwrap().as_deref(), Some("tts-a"));
+    }
+
+    #[test]
+    fn copy_to_same_workspace_is_rejected_and_bad_source_changes_nothing() {
+        let (_da, a) = ctx("a");
+        assert!(copy(&a, &a, CopyOptions::default()).is_err());
+        let (_db, b) = ctx("b");
+        b.db.set_setting(chat::SHELL_ACCESS_KEY, "1").unwrap();
+        a.db.set_setting(chat::WEB_ACCESS_KEY, "yes").unwrap(); // 不正な値
+        a.secrets.set_tts_key("tts-a").unwrap();
+        assert!(copy(&a, &b, CopyOptions { include_keys: true, include_profile: true }).is_err());
+        assert_eq!(b.db.get_setting(chat::WEB_ACCESS_KEY).unwrap(), None);
+        assert!(!b.secrets.has_tts_key().unwrap(), "キーも写さない");
     }
 }

@@ -620,4 +620,9 @@ export const createProject = (name: string, color: string) => invoke<Project>("c
 export const updateProject = (id: string, name: string, color: string) =>
   invoke<Project>("update_project", { id, name, color });
 export const deleteProject = (id: string) => invoke<ActiveWorkspace>("delete_project", { id });
+/** コピーした設定の項目数と、コピーしたキーの件数(キーの値は返らない)。 */
+export type CopyReport = { settings: number; keys: number };
+/** `from`の設定を`to`へコピーする(`personal`またはプロジェクトID)。コピー先の既存の設定は上書きされる。 */
+export const copyWorkspaceSettings = (from: string, to: string, includeKeys: boolean, includeProfile: boolean) =>
+  invoke<CopyReport>("copy_workspace_settings", { from, to, includeKeys, includeProfile });
 export const switchWorkspace = (id: string) => invoke<ActiveWorkspace>("switch_workspace", { id });

@@ -73,6 +73,20 @@ impl Secrets {
         Ok(Self { path, map: Mutex::new(map) })
     }
 
+    /// `src`の保存内容をすべてこの保管庫へ写す(同じ名前は上書き、`src`にだけ無いものは残す)。写した件数を返す。
+    /// 生値はこのモジュールの外へ出さない。ワークスペース間で設定をコピーするときに使う。
+    pub fn copy_from(&self, src: &Secrets) -> Result<usize, AppError> {
+        if std::ptr::eq(self, src) {
+            return Ok(0);
+        }
+        let snapshot = src.map().clone();
+        let count = snapshot.len();
+        let mut map = self.map();
+        map.extend(snapshot);
+        write_private(&self.path, &map)?;
+        Ok(count)
+    }
+
     fn map(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
         self.map.lock().unwrap_or_else(|p| p.into_inner())
     }
@@ -292,6 +306,25 @@ mod tests {
         assert_eq!(Secrets::open(d.path()).unwrap().get("anthropic").as_deref(), Some("k1"));
         s.delete("anthropic").unwrap();
         assert_eq!(Secrets::open(d.path()).unwrap().get("anthropic"), None);
+    }
+
+    #[test]
+    fn copy_from_merges_without_touching_source() {
+        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (sa, sb) = (Secrets::open(a.path()).unwrap(), Secrets::open(b.path()).unwrap());
+        sa.set_key(Provider::Anthropic, "ka").unwrap();
+        sa.set_tts_key("tts-a").unwrap();
+        sb.set_tts_key("tts-b").unwrap();
+        sb.set_aqua_key("aqua-b").unwrap();
+        assert_eq!(sb.copy_from(&sa).unwrap(), 2);
+        assert_eq!(sb.get_key(Provider::Anthropic).unwrap().as_deref(), Some("ka"));
+        assert_eq!(sb.get_tts_key().unwrap().as_deref(), Some("tts-a")); // 上書き
+        assert_eq!(sb.get_aqua_key().unwrap().as_deref(), Some("aqua-b")); // 残る
+        assert_eq!(sa.get_tts_key().unwrap().as_deref(), Some("tts-a"));
+        // 保存済みで、開き直しても残る
+        assert!(Secrets::open(b.path()).unwrap().has_key(Provider::Anthropic).unwrap());
+        // 自分自身へのコピーは何もしない(ロックの二重取得をしない)
+        assert_eq!(sa.copy_from(&sa).unwrap(), 0);
     }
 
     /// ワークスペース間でキーが混ざらないこと。

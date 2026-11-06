@@ -3,15 +3,18 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { Check, Pencil, Plus, Trash2, X } from "lucide-react";
+import { ArrowRight, Check, Copy, Pencil, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import {
   MAX_PROJECTS,
   PERSONAL_ID,
   PROJECT_NAME_MAX,
+  copyWorkspaceSettings,
   createProject,
   deleteProject,
   errorMessage,
@@ -20,7 +23,7 @@ import {
 } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-import { refreshWorkspace, switchTo, useWorkspace } from "@/lib/workspace";
+import { bumpSettingsVersion, refreshWorkspace, switchTo, useWorkspace } from "@/lib/workspace";
 
 export default function WorkspacePage() {
   const t = useT();
@@ -30,6 +33,11 @@ export default function WorkspacePage() {
   const [name, setName] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // 設定のコピー。コピー先は、選んでいなければ選択中のワークスペース。コピー元は、選んでいなければコピー先以外の先頭
+  const [copyFrom, setCopyFrom] = useState<string | null>(null);
+  const [copyTo, setCopyTo] = useState<string | null>(null);
+  const [withKeys, setWithKeys] = useState(false);
+  const [withProfile, setWithProfile] = useState(false);
   const full = projects.length >= MAX_PROJECTS;
   // ほかのプロジェクトが使っている色は選べない(編集中は自分の色を除く)。選んだ色が使えなければ、空いている先頭の色にする
   const usedBy = new Map(projects.filter((p) => p.id !== editing).map((p) => [p.color, p.name]));
@@ -61,7 +69,6 @@ export default function WorkspacePage() {
         await switchTo(created.id); // 作ったらそのまま開く。APIキーが未登録なら設定画面へ案内される
         toast.success(t("プロジェクトを作成しました。"));
         reset();
-        router.push("/");
       }
     } catch (e) {
       toast.error(errorMessage(e));
@@ -88,6 +95,36 @@ export default function WorkspacePage() {
       toast.success(t("プロジェクトを削除しました。"));
     } catch (e) {
       toast.error(errorMessage(e));
+    }
+  };
+
+  const targets = [
+    { id: PERSONAL_ID, name: t("パーソナル"), color: null as string | null },
+    ...projects.map((p) => ({ id: p.id, name: p.name, color: p.color as string | null })),
+  ];
+  const to = targets.find((x) => x.id === copyTo)?.id ?? active.id;
+  const from = targets.find((x) => x.id === copyFrom && x.id !== to)?.id ?? targets.find((x) => x.id !== to)?.id ?? "";
+  const nameOf = (id: string) => targets.find((x) => x.id === id)?.name ?? "";
+
+  const copy = async () => {
+    const ok = await ask(
+      t("「{from}」の設定を「{to}」へコピーします。「{to}」の同じ項目は上書きされます。{extra}続行しますか?", {
+        from: nameOf(from),
+        to: nameOf(to),
+        extra: withKeys ? t("APIキーもコピー先に保存されます。") : "",
+      }),
+      { title: t("設定のコピー"), kind: "warning" },
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const r = await copyWorkspaceSettings(from, to, withKeys, withProfile);
+      if (to === active.id) bumpSettingsVersion();
+      toast.success(t("設定を{count}件コピーしました。", { count: r.settings }) + (r.keys > 0 ? t("(APIキー{keys}件)", { keys: r.keys }) : ""));
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -163,6 +200,66 @@ export default function WorkspacePage() {
               {full && !editing && (
                 <span className="text-xs text-destructive">{t("プロジェクトは30件までです。不要なプロジェクトを削除してください。")}</span>
               )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>{t("設定のコピー")}</CardTitle>
+            <CardDescription>
+              {t("ほかのパーソナル・プロジェクトの設定を、そのまま写します。モデル・音声・起動ワード・コマンド権限などが対象で、ナレッジ・会話・読み上げ辞書は写しません。")}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Select items={targets.filter((x) => x.id !== to).map((x) => ({ value: x.id, label: x.name }))} value={from} onValueChange={(v) => v && setCopyFrom(v as string)}>
+                <SelectTrigger className="min-w-40" aria-label={t("コピー元")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {targets.filter((x) => x.id !== to).map((x) => (
+                    <SelectItem key={x.id} value={x.id}>
+                      {x.color && <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: x.color }} />}
+                      {x.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <ArrowRight className="size-4 text-muted-foreground" />
+              <Select items={targets.map((x) => ({ value: x.id, label: x.name }))} value={to} onValueChange={(v) => v && setCopyTo(v as string)}>
+                <SelectTrigger className="min-w-40" aria-label={t("コピー先")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {targets.map((x) => (
+                    <SelectItem key={x.id} value={x.id}>
+                      {x.color && <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: x.color }} />}
+                      {x.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <label className="flex items-center justify-between gap-4 text-sm">
+              <span>
+                {t("APIキーもコピーする")}
+                <span className="block text-xs text-muted-foreground">{t("Anthropic・AWS・Google・Aquaのキーを、コピー先にも保存します(コピー先の同じキーは上書き)。")}</span>
+              </span>
+              <Switch checked={withKeys} onCheckedChange={setWithKeys} />
+            </label>
+            <label className="flex items-center justify-between gap-4 text-sm">
+              <span>
+                {t("パーソナルデータもコピーする")}
+                <span className="block text-xs text-muted-foreground">{t("名前・呼ばれ方・誕生日など。仕事用のプロジェクトへは、通常コピーしないでください。")}</span>
+              </span>
+              <Switch checked={withProfile} onCheckedChange={setWithProfile} />
+            </label>
+            <div>
+              <Button onClick={() => void copy()} disabled={busy || from === ""}>
+                <Copy />
+                {t("コピーする")}
+              </Button>
             </div>
           </CardContent>
         </Card>

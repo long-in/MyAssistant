@@ -134,6 +134,7 @@ pub fn run() {
       commands::workspace::update_project,
       commands::workspace::delete_project,
       commands::workspace::switch_workspace,
+      commands::workspace::copy_workspace_settings,
     ])
     .setup(|app| {
       use tauri::Manager;

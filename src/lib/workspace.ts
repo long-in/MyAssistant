@@ -14,10 +14,17 @@ import {
 } from "@/lib/api";
 
 /** ワークスペースの現在値。起動直後は読み込み前(`ready`が偽)で、パーソナルとして扱う。 */
-export type WorkspaceState = { ready: boolean; active: ActiveWorkspace; projects: Project[]; palette: string[] };
+export type WorkspaceState = {
+  ready: boolean;
+  active: ActiveWorkspace;
+  projects: Project[];
+  palette: string[];
+  /** 選択中のワークスペースの設定を外から書き換えたときに増える(設定を読み直すための印)。 */
+  settingsVersion: number;
+};
 
 const PERSONAL: ActiveWorkspace = { id: PERSONAL_ID, project: null };
-const INITIAL: WorkspaceState = { ready: false, active: PERSONAL, projects: [], palette: [] };
+const INITIAL: WorkspaceState = { ready: false, active: PERSONAL, projects: [], palette: [], settingsVersion: 0 };
 
 let state = INITIAL;
 const listeners = new Set<() => void>();
@@ -31,6 +38,11 @@ function set(next: Partial<WorkspaceState>) {
 export async function refreshWorkspace() {
   const [active, projects, palette] = await Promise.all([getActiveWorkspace(), listProjects(), listProjectColors()]);
   set({ ready: true, active, projects, palette });
+}
+
+/** 選択中のワークスペースの設定が、コピーなどで書き換わったことを知らせる。 */
+export function bumpSettingsVersion() {
+  set({ settingsVersion: state.settingsVersion + 1 });
 }
 
 /** ワークスペースを切り替える。切り替えの前後で会話などを止めるのは、`id`の変化を見る側が行う。 */

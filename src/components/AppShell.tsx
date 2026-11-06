@@ -44,7 +44,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [modelSlot, setModelSlot] = useState<HTMLElement | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const onChat = pathname === "/";
-  const { active } = useWorkspace();
+  const { active, settingsVersion } = useWorkspace();
   const accent = active.project?.color;
   const workspaceId = active.id;
   const prevWorkspace = useRef(workspaceId);
@@ -58,8 +58,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     if (prevWorkspace.current === workspaceId) return;
     prevWorkspace.current = workspaceId;
     setChatReady(false);
-    if (pathname === "/workspace") router.replace("/");
-  }, [workspaceId, pathname, router]);
+  }, [workspaceId]);
 
   // プロジェクトのイメージカラーを、画面全体で参照できるようにする
   useEffect(() => {
@@ -186,7 +185,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <Chat key={workspaceId} workspaceId={workspaceId} active={onChat} modelSlot={modelSlot} />
           </div>
         )}
-        {!onChat && <div key={workspaceId} className="h-full">{children}</div>}
+        {!onChat && <div key={`${workspaceId}:${settingsVersion}`} className="h-full">{children}</div>}
       </main>
       <MfaModal />
     </div>

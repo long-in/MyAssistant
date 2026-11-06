@@ -262,6 +262,12 @@ pub fn select_profile(ctx: &WorkspaceCtx, name: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// メモリ上の一時クレデンシャルとMFA入力待ちを破棄する(保存内容を差し替えたときに呼ぶ)。
+pub fn reset(ctx: &WorkspaceCtx) {
+    clear_session(ctx);
+    cancel_mfa(ctx);
+}
+
 pub fn delete(ctx: &WorkspaceCtx) -> Result<(), AppError> {
     ctx.secrets.delete_aws()?;
     clear_session(ctx);

@@ -189,6 +189,11 @@ impl Workspaces {
         Ok(loaded.entry(id.to_owned()).or_insert(ctx).clone())
     }
 
+    /// IDからワークスペースを得る(プロジェクトは未読み込みなら開く)。一覧に無いIDは`ProjectNotFound`。
+    pub fn resolve(&self, id: &str) -> Result<Arc<WorkspaceCtx>, AppError> {
+        if id == PERSONAL_ID { Ok(self.get(PERSONAL_ID).expect("personal is always loaded")) } else { self.load(id) }
+    }
+
     pub fn list(&self) -> Vec<Project> {
         self.projects().clone()
     }
