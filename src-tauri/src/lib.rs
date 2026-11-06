@@ -133,9 +133,10 @@ pub fn run() {
       let dir = app.path().app_data_dir()?;
       services::legacy_data::migrate(&dir);
       std::fs::create_dir_all(&dir)?;
-      services::secrets::init(&dir)?;
       services::aws::init(app.handle());
-      app.manage(db::Db::open(&dir.join("timeline.db"))?);
+      // パーソナルは従来どおりアプリデータ直下(`timeline.db` / `secrets.json` / `knowledge`)
+      let personal = services::workspace::WorkspaceCtx::open(services::workspace::PERSONAL_ID, &dir)?;
+      app.manage(services::workspace::Workspaces::new(personal));
       app.manage(commands::chat::SessionContexts::default());
       app.manage(services::graph::GraphCache::default());
       app.manage(commands::agent::AgentState::default());
@@ -143,8 +144,7 @@ pub fn run() {
       app.manage(services::stt::SttEngine::default());
       app.manage(services::vad::VadEngine::default());
       app.manage(services::voicevox::VoicevoxEngine::default());
-      app.manage(services::batch::BatchGuard::default());
-      if let Err(e) = services::debug_log::refresh(app.handle()) {
+      if let Err(e) = services::debug_log::refresh(&services::workspace::active(app.handle())) {
         log::warn!("debug log init failed: {e}");
       }
 
@@ -154,11 +154,13 @@ pub fn run() {
       tauri::async_runtime::spawn(async move {
         loop {
           // 設定変更を次の待ちから反映するため、毎回読み直す
-          let minutes = services::batch::interval_minutes(&handle.state::<db::Db>())
+          let minutes = services::batch::interval_minutes(&services::workspace::active(&handle).db)
             .unwrap_or(services::batch::DEFAULT_INTERVAL_MINUTES);
           tokio::time::sleep(Duration::from_secs(u64::from(minutes) * 60)).await;
-          if let Err(e) = services::batch::run_guarded(&handle).await {
-            log::warn!("periodic batch failed: {e}");
+          for ctx in handle.state::<services::workspace::Workspaces>().all() {
+            if let Err(e) = services::batch::run_guarded(&ctx).await {
+              log::warn!("periodic batch failed ({}): {e}", ctx.id);
+            }
           }
         }
       });
@@ -189,10 +191,14 @@ pub fn run() {
       api.prevent_exit();
       let handle = handle.clone();
       tauri::async_runtime::spawn(async move {
-        let run = services::batch::run_guarded(&handle);
-        if let Ok(Err(e)) = tokio::time::timeout(EXIT_BATCH_TIMEOUT, run).await {
-          log::warn!("exit batch failed: {e}");
-        }
+        let run = async {
+          for ctx in handle.state::<services::workspace::Workspaces>().all() {
+            if let Err(e) = services::batch::run_guarded(&ctx).await {
+              log::warn!("exit batch failed ({}): {e}", ctx.id);
+            }
+          }
+        };
+        let _ = tokio::time::timeout(EXIT_BATCH_TIMEOUT, run).await;
         handle.exit(0);
       });
     }

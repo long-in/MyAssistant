@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     llm_client::{self, ChatMessage},
     secrets::Provider,
+    workspace::WorkspaceCtx,
 };
 use crate::{
     db::{Db, LogRow},
@@ -74,15 +75,15 @@ fn prompt(previous: Option<&str>, rows: &[LogRow]) -> String {
 }
 
 async fn summarize(
-    db: &Db,
+    ctx: &WorkspaceCtx,
     provider: Provider,
     model: &str,
     previous: Option<&str>,
     rows: &[LogRow],
 ) -> Result<String, AppError> {
     let msg = [ChatMessage { role: "user".into(), content: prompt(previous, rows) }];
-    let done = llm_client::complete(provider, model, Some(SYSTEM), &msg).await?;
-    if let Err(e) = db.record_usage(provider.as_str(), model, done.input_tokens, done.output_tokens) {
+    let done = llm_client::complete(ctx, provider, model, Some(SYSTEM), &msg).await?;
+    if let Err(e) = ctx.db.record_usage(provider.as_str(), model, done.input_tokens, done.output_tokens) {
         log::warn!("usage record failed: {e}");
     }
     let text: String = done.text.trim().chars().take(SUMMARY_MAX_CHARS).collect();
@@ -91,8 +92,9 @@ async fn summarize(
 
 /// 今回のLLM呼び出しに渡す会話を用意する。`session_id`の会話に今回のユーザー発話が保存済みであること。
 /// 往復数が`exchanges`を超えていれば、古い分を要約して保存する。要約に失敗しても、直近だけに絞って続行する。
-pub async fn prepare(db: &Db, session_id: &str, exchanges: u32, provider: Provider, model: &str) -> Result<Window, AppError> {
+pub async fn prepare(ctx: &WorkspaceCtx, session_id: &str, exchanges: u32, provider: Provider, model: &str) -> Result<Window, AppError> {
     let exchanges = exchanges as usize;
+    let db = &ctx.db;
     let all = db.session_messages(session_id)?;
     let mut stored = load(db, session_id);
     let start = |s: &Option<Stored>| {
@@ -103,7 +105,7 @@ pub async fn prepare(db: &Db, session_id: &str, exchanges: u32, provider: Provid
     let fold = fold_rows(prior, exchanges);
     if fold > 0 {
         let previous = stored.as_ref().map(|s| s.text.as_str());
-        match summarize(db, provider, model, previous, &all[from..from + fold]).await {
+        match summarize(ctx, provider, model, previous, &all[from..from + fold]).await {
             Ok(text) => {
                 let next = Stored { upto_id: all[from + fold - 1].id.clone(), text };
                 match serde_json::to_string(&next) {

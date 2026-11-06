@@ -10,9 +10,9 @@ use std::{
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use tauri::{AppHandle, Manager};
 
-use super::batch;
+
+use super::{batch, workspace::WorkspaceCtx};
 use crate::{db::Db, utils::{error::AppError, path}};
 
 pub const ENABLED_KEY: &str = "debug_mode";
@@ -35,10 +35,10 @@ fn custom_dir(db: &Db) -> Result<Option<PathBuf>, AppError> {
 }
 
 /// ログの出力先(作成はしない)。
-pub fn log_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
-    match custom_dir(&app.state::<Db>())? {
+pub fn log_dir(ctx: &WorkspaceCtx) -> Result<PathBuf, AppError> {
+    match custom_dir(&ctx.db)? {
         Some(dir) => Ok(dir),
-        None => Ok(batch::knowledge_root(app)?.join(DIR_NAME)),
+        None => Ok(batch::knowledge_root(ctx)?.join(DIR_NAME)),
     }
 }
 
@@ -56,14 +56,14 @@ pub fn prepare_dir(dir: &Path) -> Result<PathBuf, AppError> {
 }
 
 /// 設定とナレッジの保存先から出力先を決め直す。ナレッジの保存先や設定を変えたときに呼ぶ。
-pub fn refresh(app: &AppHandle) -> Result<(), AppError> {
-    let db = app.state::<Db>();
-    let dir = if !is_enabled(&db)? {
+pub fn refresh(ctx: &WorkspaceCtx) -> Result<(), AppError> {
+    let db = &ctx.db;
+    let dir = if !is_enabled(db)? {
         None
-    } else if let Some(custom) = custom_dir(&db)? {
+    } else if let Some(custom) = custom_dir(db)? {
         Some(prepare_dir(&custom)?)
     } else {
-        Some(path::ensure_dir(&batch::knowledge_root(app)?, &[DIR_NAME.to_owned()])?)
+        Some(path::ensure_dir(&batch::knowledge_root(ctx)?, &[DIR_NAME.to_owned()])?)
     };
     *LOG_DIR.lock().unwrap_or_else(|e| e.into_inner()) = dir;
     Ok(())

@@ -6,7 +6,8 @@ use serde_json::{Value, json};
 
 use super::{
     aws, debug_log,
-    secrets::{self, Provider},
+    secrets::Provider,
+    workspace::WorkspaceCtx,
 };
 use crate::utils::error::AppError;
 
@@ -102,6 +103,7 @@ fn parse_tool_turn(body: &Value) -> Option<ToolTurn> {
 /// ツール使用API(Anthropic / Bedrock)。`messages`と`tools`はMessages APIのJSON形式のまま渡す。
 /// Bedrockはサーバーツール(検索・ページ取得)を持たないため、`tools`にはClient側ツールだけを渡すこと。
 pub async fn complete_with_tools(
+    ctx: &WorkspaceCtx,
     provider: Provider,
     model: &str,
     system: &str,
@@ -117,9 +119,9 @@ pub async fn complete_with_tools(
             "tools": tools,
         });
         let body = match provider {
-            Provider::Bedrock => invoke_bedrock(model, &request, AGENT_TIMEOUT).await?,
+            Provider::Bedrock => invoke_bedrock(ctx, model, &request, AGENT_TIMEOUT).await?,
             _ => {
-                let key = secrets::get_key(provider)?
+                let key = ctx.secrets.get_key(provider)?
                     .ok_or_else(|| AppError::KeyMissing(provider.as_str().to_owned()))?;
                 let client = reqwest::Client::builder()
                     .timeout(AGENT_TIMEOUT)
@@ -151,13 +153,13 @@ pub async fn complete_with_tools(
 }
 
 /// Bedrockへ送る。モデルIDはURLに入るため本文から外し、往復はデバッグモードなら記録する。
-async fn invoke_bedrock(model: &str, request: &Value, timeout: Duration) -> Result<Value, AppError> {
+async fn invoke_bedrock(ctx: &WorkspaceCtx, model: &str, request: &Value, timeout: Duration) -> Result<Value, AppError> {
     let mut body = request.clone();
     if let Some(o) = body.as_object_mut() {
         o.remove("model");
     }
     let label = format!("bedrock-runtime InvokeModel {model}");
-    match aws::invoke_model(model, &body, timeout).await {
+    match aws::invoke_model(ctx, model, &body, timeout).await {
         Ok(response) => {
             debug_log::record_api("bedrock", &label, &body, 200, &response);
             Ok(response)
@@ -183,17 +185,19 @@ fn anthropic_text(v: &Value) -> Option<String> {
 }
 
 pub async fn complete(
+    ctx: &WorkspaceCtx,
     provider: Provider,
     model: &str,
     system: Option<&str>,
     messages: &[ChatMessage],
 ) -> Result<Completion, AppError> {
-    complete_inner(provider, model, system, messages)
+    complete_inner(ctx, provider, model, system, messages)
         .await
         .map_err(|e| e.with_source(provider.as_str()))
 }
 
 async fn complete_inner(
+    ctx: &WorkspaceCtx,
     provider: Provider,
     model: &str,
     system: Option<&str>,
@@ -204,9 +208,9 @@ async fn complete_inner(
         request["system"] = json!(s);
     }
     let response = match provider {
-        Provider::Bedrock => invoke_bedrock(model, &request, Duration::from_secs(60)).await?,
+        Provider::Bedrock => invoke_bedrock(ctx, model, &request, Duration::from_secs(60)).await?,
         Provider::Anthropic => {
-            let key = secrets::get_key(provider)?
+            let key = ctx.secrets.get_key(provider)?
                 .ok_or_else(|| AppError::KeyMissing(provider.as_str().to_owned()))?;
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(60))

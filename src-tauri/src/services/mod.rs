@@ -26,3 +26,4 @@ pub mod vad;
 pub mod voice_phrases;
 pub mod voicevox;
 pub mod wake;
+pub mod workspace;

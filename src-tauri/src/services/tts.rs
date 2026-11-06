@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use super::{debug_log, secrets};
+use super::{debug_log, secrets::Secrets};
 use crate::utils::error::AppError;
 
 /// TTS APIの入力上限は5000バイト。
@@ -74,15 +74,15 @@ fn extract_audio(body: &Value) -> Result<String, AppError> {
         .ok_or(AppError::BadResponse)
 }
 
-pub async fn synthesize(text: &str) -> Result<String, AppError> {
-    synthesize_inner(text).await.map_err(|e| e.with_source("google_tts"))
+pub async fn synthesize(secrets: &Secrets, text: &str) -> Result<String, AppError> {
+    synthesize_inner(secrets, text).await.map_err(|e| e.with_source("google_tts"))
 }
 
-async fn synthesize_inner(text: &str) -> Result<String, AppError> {
+async fn synthesize_inner(secrets: &Secrets, text: &str) -> Result<String, AppError> {
     if text.trim().is_empty() {
         return Err(AppError::EmptyText);
     }
-    let key = secrets::get_tts_key()?.ok_or_else(|| AppError::KeyMissing("google_tts".into()))?;
+    let key = secrets.get_tts_key()?.ok_or_else(|| AppError::KeyMissing("google_tts".into()))?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()

@@ -7,13 +7,12 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
-
 use super::{
-    secrets::{self, Provider},
+    secrets::{Provider, Secrets},
     knowledge::{self, Entry},
     llm_client::{self, ChatMessage},
     llm_router::{self, Route},
+    workspace::WorkspaceCtx,
 };
 use crate::{
     db::{Db, PendingLog},
@@ -184,6 +183,7 @@ where
 /// ナレッジが更新されたことを画面へ知らせるイベント名。
 pub const KNOWLEDGE_UPDATED_EVENT: &str = "knowledge-updated";
 
+/// 整理バッチの多重実行を防ぐフラグ。ワークスペースごとに持つ。
 #[derive(Default)]
 pub struct BatchGuard(AtomicBool);
 
@@ -210,51 +210,50 @@ pub fn interval_minutes(db: &Db) -> Result<u32, AppError> {
 }
 
 /// 保存済みの指定、使えなければ既定を返す。
-pub fn effective_route(db: &Db, available: &[Provider]) -> Result<Option<Route>, AppError> {
-    let saved = db.get_setting(BATCH_ROUTE_KEY)?.and_then(|v| serde_json::from_str(&v).ok());
-    Ok(llm_router::effective(saved, available))
+pub fn effective_route(ctx: &WorkspaceCtx, available: &[Provider]) -> Result<Option<Route>, AppError> {
+    let saved = ctx.db.get_setting(BATCH_ROUTE_KEY)?.and_then(|v| serde_json::from_str(&v).ok());
+    Ok(llm_router::effective(ctx, saved, available))
 }
 
-pub fn available_providers() -> Vec<Provider> {
-    Provider::ALL.into_iter().filter(|p| secrets::has_key(*p).unwrap_or(false)).collect()
+pub fn available_providers(secrets: &Secrets) -> Vec<Provider> {
+    Provider::ALL.into_iter().filter(|p| secrets.has_key(*p).unwrap_or(false)).collect()
 }
 
-pub fn default_knowledge_root(app: &AppHandle) -> Result<std::path::PathBuf, AppError> {
-    Ok(app.path().app_data_dir().map_err(|e| AppError::Io(e.to_string()))?.join("knowledge"))
+/// ワークスペース既定のナレッジ保存先(`<ワークスペースのdir>/knowledge`)。
+pub fn default_knowledge_root(ctx: &WorkspaceCtx) -> std::path::PathBuf {
+    ctx.dir.join("knowledge")
 }
 
-pub fn knowledge_root(app: &AppHandle) -> Result<std::path::PathBuf, AppError> {
-    match app.state::<Db>().get_setting(KNOWLEDGE_DIR_KEY)?.filter(|p| !p.is_empty()) {
+pub fn knowledge_root(ctx: &WorkspaceCtx) -> Result<std::path::PathBuf, AppError> {
+    match ctx.db.get_setting(KNOWLEDGE_DIR_KEY)?.filter(|p| !p.is_empty()) {
         Some(custom) => Ok(custom.into()),
-        None => default_knowledge_root(app),
+        None => Ok(default_knowledge_root(ctx)),
     }
 }
 
 /// 実LLMを使うバッチ。多重実行・APIキー未登録・未処理ログなしの場合は`None`を返す。
-pub async fn run_guarded(app: &AppHandle) -> Result<Option<BatchReport>, AppError> {
-    let guard = app.state::<BatchGuard>();
+pub async fn run_guarded(ctx: &WorkspaceCtx) -> Result<Option<BatchReport>, AppError> {
+    let guard = &ctx.batch;
     if guard.0.swap(true, Ordering::SeqCst) {
         return Ok(None);
     }
     let result = async {
-        let db = app.state::<Db>();
+        let db = &ctx.db;
         if db.unprocessed(1)?.is_empty() {
             return Ok(None);
         }
-        let available = available_providers();
+        let available = available_providers(&ctx.secrets);
         if available.is_empty() {
             return Ok(None);
         }
-        let target = llm_router::resolve(&effective_route(&db, &available)?.ok_or(AppError::NoProvider)?, &available)?;
-        let root = knowledge_root(app)?;
-        let usage_db = app.state::<Db>();
-        let report = run(&db, &root, |prompt| {
-            let usage_db = usage_db.clone();
+        let target = llm_router::resolve(ctx, &effective_route(ctx, &available)?.ok_or(AppError::NoProvider)?, &available)?;
+        let root = knowledge_root(ctx)?;
+        let report = run(db, &root, |prompt| {
             let model = target.model.clone();
             async move {
                 let msg = [ChatMessage { role: "user".into(), content: prompt }];
-                let done = llm_client::complete(target.provider, &model, None, &msg).await?;
-                let _ = usage_db.record_usage(target.provider.as_str(), &model, done.input_tokens, done.output_tokens);
+                let done = llm_client::complete(ctx, target.provider, &model, None, &msg).await?;
+                let _ = db.record_usage(target.provider.as_str(), &model, done.input_tokens, done.output_tokens);
                 Ok(done.text)
             }
         })
@@ -344,17 +343,19 @@ mod tests {
 
     #[test]
     fn effective_route_uses_saved_then_default() {
-        let db = db();
-        assert_eq!(effective_route(&db, &[]).unwrap(), None);
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = WorkspaceCtx::open("t", dir.path()).unwrap();
+        let (db, ctx) = (&ctx.db, &ctx);
+        assert_eq!(effective_route(ctx, &[]).unwrap(), None);
         let sonnet = Route { provider: "anthropic".into(), model: "claude-sonnet-5-5".into() };
-        assert_eq!(effective_route(&db, &[Provider::Anthropic]).unwrap(), Some(sonnet));
+        assert_eq!(effective_route(ctx, &[Provider::Anthropic]).unwrap(), Some(sonnet));
         db.set_setting(BATCH_ROUTE_KEY, r#"{"provider":"anthropic","model":"claude-haiku-5-5"}"#).unwrap();
         let saved = Route { provider: "anthropic".into(), model: "claude-haiku-5-5".into() };
-        assert_eq!(effective_route(&db, &[Provider::Anthropic, Provider::Bedrock]).unwrap(), Some(saved));
+        assert_eq!(effective_route(ctx, &[Provider::Anthropic, Provider::Bedrock]).unwrap(), Some(saved));
         // 廃止したプロバイダーの保存値は既定に戻る
         db.set_setting(BATCH_ROUTE_KEY, r#"{"provider":"openai","model":"gpt-4o"}"#).unwrap();
         let sonnet = Route { provider: "anthropic".into(), model: "claude-sonnet-5-5".into() };
-        assert_eq!(effective_route(&db, &[Provider::Anthropic]).unwrap(), Some(sonnet));
+        assert_eq!(effective_route(ctx, &[Provider::Anthropic]).unwrap(), Some(sonnet));
     }
 
     #[test]

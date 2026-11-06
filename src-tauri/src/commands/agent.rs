@@ -10,6 +10,7 @@ use crate::{
         cancel::CancelToken,
         llm_client,
         secrets::Provider,
+        workspace::WorkspaceCtx,
     },
     utils::error::AppError,
 };
@@ -32,6 +33,7 @@ pub struct AgentState {
 /// `shell_access`が有効なときは、作業計画の提示とシェルコマンドの実行も渡す。
 /// 進捗(ツール呼び出し・承認要求・コマンド出力)は`on_event`へ流す。実行中は`agent_cancel`で中断できる。
 pub async fn run_with_tools(
+    ctx: &WorkspaceCtx,
     state: &AgentState,
     root: &Path,
     provider: Provider,
@@ -66,7 +68,7 @@ pub async fn run_with_tools(
         |msgs| {
             let on_usage = &on_usage;
             async move {
-                let turn = llm_client::complete_with_tools(provider, model, system, &msgs, tools).await?;
+                let turn = llm_client::complete_with_tools(ctx, provider, model, system, &msgs, tools).await?;
                 // 途中で失敗しても、ここまでに使った分は記録する
                 on_usage(turn.input_tokens, turn.output_tokens);
                 Ok(turn)

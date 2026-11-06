@@ -16,6 +16,7 @@ use crate::{
         voicevox::{self, VoicevoxEngine},
         vad::{self, VadEngine},
         voice_phrases, wake,
+        workspace::{Ctx, WorkspaceCtx},
     },
     utils::error::AppError,
 };
@@ -32,14 +33,14 @@ fn stt_engine(db: &Db) -> Result<&'static str, AppError> {
 }
 
 #[tauri::command]
-pub fn get_stt_engine(db: State<'_, Db>) -> Result<&'static str, AppError> {
-    stt_engine(&db)
+pub fn get_stt_engine(ctx: Ctx) -> Result<&'static str, AppError> {
+    stt_engine(&ctx.db)
 }
 
 #[tauri::command]
-pub fn set_stt_engine(db: State<'_, Db>, engine: String) -> Result<(), AppError> {
+pub fn set_stt_engine(ctx: Ctx, engine: String) -> Result<(), AppError> {
     if STT_ENGINES.contains(&engine.as_str()) {
-        db.set_setting(STT_ENGINE_KEY, &engine)
+        ctx.db.set_setting(STT_ENGINE_KEY, &engine)
     } else {
         Err(AppError::InvalidProvider(engine))
     }
@@ -57,16 +58,16 @@ fn stt_language(db: &Db) -> Result<String, AppError> {
 }
 
 #[tauri::command]
-pub fn get_stt_language(db: State<'_, Db>) -> Result<String, AppError> {
-    stt_language(&db)
+pub fn get_stt_language(ctx: Ctx) -> Result<String, AppError> {
+    stt_language(&ctx.db)
 }
 
 #[tauri::command]
-pub fn set_stt_language(db: State<'_, Db>, language: String) -> Result<(), AppError> {
+pub fn set_stt_language(ctx: Ctx, language: String) -> Result<(), AppError> {
     if !STT_LANGUAGES.contains(&language.as_str()) {
         return Err(AppError::Stt(format!("unsupported language: {language}")));
     }
-    db.set_setting(STT_LANGUAGE_KEY, &language)
+    ctx.db.set_setting(STT_LANGUAGE_KEY, &language)
 }
 
 fn model_path(app: &AppHandle) -> Result<std::path::PathBuf, AppError> {
@@ -93,9 +94,9 @@ pub fn stt_model_upgradable(app: AppHandle) -> Result<bool, AppError> {
 
 /// 優先モデルをダウンロードする(インストール済みなら再取得する)。設定のリビジョンから取得する。
 #[tauri::command]
-pub async fn download_stt_model(app: AppHandle, db: State<'_, Db>) -> Result<(), AppError> {
+pub async fn download_stt_model(app: AppHandle, ctx: Ctx) -> Result<(), AppError> {
     let dir = app.path().app_data_dir().map_err(|e| AppError::Stt(e.to_string()))?;
-    let revision = stt::revision(&db)?;
+    let revision = stt::revision(&ctx.db)?;
     stt::download_model(&stt::preferred_model_path(&dir), &revision).await
 }
 
@@ -110,11 +111,11 @@ pub struct ModelSources {
 }
 
 #[tauri::command]
-pub fn get_model_sources(app: AppHandle, db: State<'_, Db>) -> Result<ModelSources, AppError> {
+pub fn get_model_sources(app: AppHandle, ctx: Ctx) -> Result<ModelSources, AppError> {
     Ok(ModelSources {
-        whisper_revision: stt::revision(&db)?,
+        whisper_revision: stt::revision(&ctx.db)?,
         whisper_default: stt::DEFAULT_REVISION,
-        voicevox: voicevox::Versions::load(&db)?,
+        voicevox: voicevox::Versions::load(&ctx.db)?,
         voicevox_installed: voicevox::installed_versions(&app_data(&app)?),
         voicevox_default: voicevox::Versions::default(),
     })
@@ -122,12 +123,12 @@ pub fn get_model_sources(app: AppHandle, db: State<'_, Db>) -> Result<ModelSourc
 
 /// 取得するバージョンを保存する(取得は別途行う)。取得先のホストは変えられず、識別子だけを検証して受け付ける。
 #[tauri::command]
-pub fn set_whisper_revision(db: State<'_, Db>, revision: String) -> Result<(), AppError> {
-    stt::set_revision(&db, revision.trim())
+pub fn set_whisper_revision(ctx: Ctx, revision: String) -> Result<(), AppError> {
+    stt::set_revision(&ctx.db, revision.trim())
 }
 
 #[tauri::command]
-pub fn set_voicevox_versions(db: State<'_, Db>, versions: voicevox::Versions) -> Result<(), AppError> {
+pub fn set_voicevox_versions(ctx: Ctx, versions: voicevox::Versions) -> Result<(), AppError> {
     let trim = |s: String| s.trim().to_owned();
     voicevox::Versions {
         core: trim(versions.core),
@@ -136,7 +137,7 @@ pub fn set_voicevox_versions(db: State<'_, Db>, versions: voicevox::Versions) ->
         dict_release: trim(versions.dict_release),
         dict: trim(versions.dict),
     }
-    .save(&db)
+    .save(&ctx.db)
 }
 
 /// 認識の手がかりとして渡す語彙の上限(文字数)。長いと無音で語彙を復唱する幻聴を招く。
@@ -149,11 +150,11 @@ const ANSWER_TERMS: [&str; 2] = ["はい", "いいえ"];
 
 /// 起動ワードと訂正済みの用語から、認識の手がかりとなる語彙を作る。なければ`None`。
 /// `answering`が真(承認待ち)のときは、返事の語を先頭に加える。
-fn stt_prompt(app: &AppHandle, db: &Db, answering: bool) -> Option<String> {
+fn stt_prompt(ctx: &WorkspaceCtx, answering: bool) -> Option<String> {
     let mut terms: Vec<String> = if answering { ANSWER_TERMS.iter().map(|t| t.to_string()).collect() } else { Vec::new() };
-    let wake_words: Vec<String> = wake::load(db).ok().filter(|c| c.enabled).map(|c| c.words).unwrap_or_default();
+    let wake_words: Vec<String> = wake::load(&ctx.db).ok().filter(|c| c.enabled).map(|c| c.words).unwrap_or_default();
     terms.extend(wake_words);
-    if let Ok(root) = batch::knowledge_root(app) {
+    if let Ok(root) = batch::knowledge_root(ctx) {
         for t in knowledge::recent_correction_terms(&root, PROMPT_TERMS_MAX) {
             if !terms.contains(&t) {
                 terms.push(t);
@@ -190,18 +191,18 @@ pub fn recording_waveform(recorder: State<'_, Recorder>) -> Vec<f32> {
 
 /// 校正に使うモデル指定。未設定・使用不可なら`None`(校正しない)。
 #[tauri::command]
-pub fn load_proofread_route(db: State<'_, Db>) -> Result<Option<Route>, AppError> {
-    proofread::effective_route(&db, &batch::available_providers())
+pub fn load_proofread_route(ctx: Ctx) -> Result<Option<Route>, AppError> {
+    proofread::effective_route(&ctx, &batch::available_providers(&ctx.secrets))
 }
 
 /// 校正モデルを登録する。`None`で校正をオフにする。
 #[tauri::command]
-pub fn save_proofread_route(db: State<'_, Db>, route: Option<Route>) -> Result<(), AppError> {
+pub fn save_proofread_route(ctx: Ctx, route: Option<Route>) -> Result<(), AppError> {
     let Some(route) = route else {
-        return db.set_setting(proofread::ROUTE_KEY, "");
+        return ctx.db.set_setting(proofread::ROUTE_KEY, "");
     };
-    llm_router::resolve(&route, &batch::available_providers())?;
-    db.set_setting(
+    llm_router::resolve(&ctx, &route, &batch::available_providers(&ctx.secrets))?;
+    ctx.db.set_setting(
         proofread::ROUTE_KEY,
         &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?,
     )
@@ -212,9 +213,10 @@ pub fn save_proofread_route(db: State<'_, Db>, route: Option<Route>) -> Result<(
 async fn transcribe_recording(
     app: &AppHandle,
     recorder: &Recorder,
-    db: &Db,
+    ctx: &WorkspaceCtx,
     answering: bool,
 ) -> Result<String, AppError> {
+    let db = &ctx.db;
     let language = stt_language(db)?;
     let mut samples = recorder.stop()?;
     let peak = stt::peak(&samples);
@@ -232,7 +234,7 @@ async fn transcribe_recording(
     let engine = stt_engine(db)?;
     let seconds = samples.len() as f32 / crate::services::audio::WHISPER_RATE as f32;
     let vad_model = vad_model_path(app);
-    let prompt = if engine == "local" { stt_prompt(app, db, answering) } else { None };
+    let prompt = if engine == "local" { stt_prompt(ctx, answering) } else { None };
     // 増幅後の音声で判定する(VADは音量ではなく声らしさを見るため、小音量マイクでも取りこぼさない)
     let (samples, speech) = {
         let app = app.clone();
@@ -255,9 +257,9 @@ async fn transcribe_recording(
         return Err(AppError::NoAudio);
     }
     let text = if engine == "google" {
-        stt_google::transcribe(&samples, &language).await?
+        stt_google::transcribe(&ctx.secrets, &samples, &language).await?
     } else if engine == "aqua" {
-        stt_aqua::transcribe(&samples, &language).await?
+        stt_aqua::transcribe(&ctx.secrets, &samples, &language).await?
     } else {
         let model = model_path(app)?;
         let app = app.clone();
@@ -280,14 +282,14 @@ async fn transcribe_recording(
 }
 
 /// 校正モデルが登録されていれば、`session_id`の直近の会話と訂正履歴を文脈に校正する。
-async fn proofread_text(app: &AppHandle, db: &Db, session_id: Option<&str>, text: String) -> Result<String, AppError> {
-    let Some(route) = proofread::effective_route(db, &batch::available_providers())? else {
+async fn proofread_text(ctx: &WorkspaceCtx, session_id: Option<&str>, text: String) -> Result<String, AppError> {
+    let Some(route) = proofread::effective_route(&ctx, &batch::available_providers(&ctx.secrets))? else {
         return Ok(text);
     };
-    let corrections = batch::knowledge_root(app)
+    let corrections = batch::knowledge_root(ctx)
         .ok()
         .and_then(|root| knowledge::recent_corrections(&root, CORRECTIONS_MAX));
-    Ok(proofread::proofread(db, &route, session_id, corrections.as_deref(), &text).await)
+    Ok(proofread::proofread(ctx, &route, session_id, corrections.as_deref(), &text).await)
 }
 
 /// 録音を止めて文字起こしする。認識言語は設定(`stt_language`)に従う。
@@ -297,16 +299,16 @@ async fn proofread_text(app: &AppHandle, db: &Db, session_id: Option<&str>, text
 pub async fn stop_recording_and_transcribe(
     app: AppHandle,
     recorder: State<'_, Recorder>,
-    db: State<'_, Db>,
+    ctx: Ctx,
     session_id: Option<String>,
     answering: Option<bool>,
 ) -> Result<String, AppError> {
     let answering = answering.unwrap_or(false);
-    let text = transcribe_recording(&app, &recorder, &db, answering).await?;
+    let text = transcribe_recording(&app, &recorder, &ctx, answering).await?;
     if answering {
         return Ok(text);
     }
-    proofread_text(&app, &db, session_id.as_deref(), text).await
+    proofread_text(&ctx, session_id.as_deref(), text).await
 }
 
 /// 常時待機中の発話の判定結果。
@@ -324,15 +326,15 @@ pub struct WakeCheck {
 pub async fn stop_recording_and_check_wake(
     app: AppHandle,
     recorder: State<'_, Recorder>,
-    db: State<'_, Db>,
+    ctx: Ctx,
     session_id: Option<String>,
 ) -> Result<WakeCheck, AppError> {
-    let text = transcribe_recording(&app, &recorder, &db, false).await?;
-    let config = wake::load(&db)?;
+    let text = transcribe_recording(&app, &recorder, &ctx, false).await?;
+    let config = wake::load(&ctx.db)?;
     let Some(rest) = wake::detect(&text, &config.words).filter(|_| config.enabled) else {
         return Ok(WakeCheck { woke: false, text: String::new() });
     };
-    let text = if rest.is_empty() { rest } else { proofread_text(&app, &db, session_id.as_deref(), rest).await? };
+    let text = if rest.is_empty() { rest } else { proofread_text(&ctx, session_id.as_deref(), rest).await? };
     Ok(WakeCheck { woke: true, text })
 }
 
@@ -342,9 +344,9 @@ pub async fn stop_recording_and_check_wake(
 pub async fn transcribe_wake_sample(
     app: AppHandle,
     recorder: State<'_, Recorder>,
-    db: State<'_, Db>,
+    ctx: Ctx,
 ) -> Result<String, AppError> {
-    transcribe_recording(&app, &recorder, &db, false).await
+    transcribe_recording(&app, &recorder, &ctx, false).await
 }
 
 /// 直近`keep_ms`ミリ秒の入力だけを残して録音バッファを切り詰める(常時待機用)。
@@ -354,47 +356,47 @@ pub fn trim_recording(recorder: State<'_, Recorder>, keep_ms: u32) {
 }
 
 #[tauri::command]
-pub fn get_wake_config(db: State<'_, Db>) -> Result<wake::WakeConfig, AppError> {
-    wake::load(&db)
+pub fn get_wake_config(ctx: Ctx) -> Result<wake::WakeConfig, AppError> {
+    wake::load(&ctx.db)
 }
 
 /// 常時待機の設定を保存し、実際に保存した内容(整形後)を返す。
 #[tauri::command]
-pub fn set_wake_config(db: State<'_, Db>, config: wake::WakeConfig) -> Result<wake::WakeConfig, AppError> {
-    wake::save(&db, &config)
+pub fn set_wake_config(ctx: Ctx, config: wake::WakeConfig) -> Result<wake::WakeConfig, AppError> {
+    wake::save(&ctx.db, &config)
 }
 
 /// 読み上げ辞書(組み込みとユーザー登録)。
 #[tauri::command]
-pub fn get_tts_dictionary(app: AppHandle) -> Result<pronunciation::Listing, AppError> {
-    Ok(pronunciation::listing(&app_data(&app)?))
+pub fn get_tts_dictionary(ctx: Ctx) -> Result<pronunciation::Listing, AppError> {
+    Ok(pronunciation::listing(&ctx.dir))
 }
 
 /// ユーザー辞書を丸ごと保存し、整形後の内容を返す。
 #[tauri::command]
-pub fn set_tts_dictionary(app: AppHandle, entries: Vec<pronunciation::Entry>) -> Result<Vec<pronunciation::Entry>, AppError> {
-    pronunciation::save_user(&app_data(&app)?, entries)
+pub fn set_tts_dictionary(ctx: Ctx, entries: Vec<pronunciation::Entry>) -> Result<Vec<pronunciation::Entry>, AppError> {
+    pronunciation::save_user(&ctx.dir, entries)
 }
 
 /// ユーザー辞書を`dest`のJSONファイルへ書き出す。取り込みにそのまま使える形式。組み込みの読みは含めない。
 #[tauri::command]
-pub fn export_tts_dictionary(app: AppHandle, dest: String) -> Result<usize, AppError> {
+pub fn export_tts_dictionary(ctx: Ctx, dest: String) -> Result<usize, AppError> {
     let dest = super::settings_transfer::json_path(&dest)?;
-    let entries = pronunciation::load_user(&app_data(&app)?);
+    let entries = pronunciation::load_user(&ctx.dir);
     std::fs::write(&dest, pronunciation::to_json(&entries)?).map_err(|e| AppError::Io(e.to_string()))?;
     Ok(entries.len())
 }
 
 /// JSONファイルの語を、ユーザー辞書へまとめて取り込む。ファイル内で重複する語は後の項目で上書きし、登録済みの同じ語も上書きする。
 #[tauri::command]
-pub fn import_tts_dictionary(app: AppHandle, src: String) -> Result<pronunciation::ImportReport, AppError> {
+pub fn import_tts_dictionary(ctx: Ctx, src: String) -> Result<pronunciation::ImportReport, AppError> {
     let src = super::settings_transfer::json_path(&src)?;
     let meta = std::fs::metadata(&src).map_err(|e| AppError::Io(e.to_string()))?;
     if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
         return Err(AppError::InvalidDictionary("ファイルが大きすぎます".into()));
     }
     let text = std::fs::read_to_string(&src).map_err(|e| AppError::Io(e.to_string()))?;
-    pronunciation::import_user(&app_data(&app)?, pronunciation::parse_import(&text)?)
+    pronunciation::import_user(&ctx.dir, pronunciation::parse_import(&text)?)
 }
 
 fn app_data(app: &AppHandle) -> Result<std::path::PathBuf, AppError> {
@@ -423,36 +425,36 @@ fn current_voice(db: &Db) -> Result<Voice, AppError> {
 }
 
 #[tauri::command]
-pub fn get_tts_engine(db: State<'_, Db>) -> Result<&'static str, AppError> {
-    tts_engine(&db)
+pub fn get_tts_engine(ctx: Ctx) -> Result<&'static str, AppError> {
+    tts_engine(&ctx.db)
 }
 
 #[tauri::command]
-pub fn set_tts_engine(db: State<'_, Db>, engine: String) -> Result<(), AppError> {
+pub fn set_tts_engine(ctx: Ctx, engine: String) -> Result<(), AppError> {
     if TTS_ENGINES.contains(&engine.as_str()) {
-        db.set_setting(TTS_ENGINE_KEY, &engine)
+        ctx.db.set_setting(TTS_ENGINE_KEY, &engine)
     } else {
         Err(AppError::InvalidProvider(engine))
     }
 }
 
 #[tauri::command]
-pub fn get_voicevox_style(db: State<'_, Db>) -> Result<u32, AppError> {
-    voicevox_style(&db)
+pub fn get_voicevox_style(ctx: Ctx) -> Result<u32, AppError> {
+    voicevox_style(&ctx.db)
 }
 
 #[tauri::command]
-pub fn set_voicevox_style(db: State<'_, Db>, style: u32) -> Result<(), AppError> {
-    db.set_setting(VOICEVOX_STYLE_KEY, &style.to_string())
+pub fn set_voicevox_style(ctx: Ctx, style: u32) -> Result<(), AppError> {
+    ctx.db.set_setting(VOICEVOX_STYLE_KEY, &style.to_string())
 }
 
 /// 読み上げに必要なものが揃っているか(Google Cloudはキー登録、VOICEVOXはCOREの取得)。
 #[tauri::command]
-pub fn tts_ready(app: AppHandle, db: State<'_, Db>) -> Result<bool, AppError> {
-    if tts_engine(&db)? == "voicevox" {
+pub fn tts_ready(app: AppHandle, ctx: Ctx) -> Result<bool, AppError> {
+    if tts_engine(&ctx.db)? == "voicevox" {
         Ok(voicevox::installed(&app_data(&app)?))
     } else {
-        secrets::has_tts_key()
+        ctx.secrets.has_tts_key()
     }
 }
 
@@ -463,8 +465,8 @@ pub fn voicevox_installed(app: AppHandle) -> Result<bool, AppError> {
 
 /// VOICEVOX COREと辞書・音声モデルを取得する(取得済みでも再取得する)。利用規約への同意はフロントエンドで取る。
 #[tauri::command]
-pub async fn install_voicevox(app: AppHandle, db: State<'_, Db>) -> Result<(), AppError> {
-    let versions = voicevox::Versions::load(&db)?;
+pub async fn install_voicevox(app: AppHandle, ctx: Ctx) -> Result<(), AppError> {
+    let versions = voicevox::Versions::load(&ctx.db)?;
     voicevox::install(&app_data(&app)?, &versions).await?;
     // 差し替えたファイルを次の合成で読み直す
     app.state::<VoicevoxEngine>().reset();
@@ -481,21 +483,21 @@ pub async fn voicevox_speakers(app: AppHandle) -> Result<Vec<voicevox::Speaker>,
 }
 
 /// TTSへ送る文字列。英単語やサービス名を読み辞書でカタカナへ置き換える(字幕は元の文字列のまま)。
-fn pronounced(app: &AppHandle, text: &str) -> Result<String, AppError> {
-    Ok(pronunciation::Dictionary::load(&app_data(app)?).apply(tts::spoken_text(text)))
+fn pronounced(ctx: &WorkspaceCtx, text: &str) -> String {
+    pronunciation::Dictionary::load(&ctx.dir).apply(tts::spoken_text(text))
 }
 
 /// 現在のエンジンで`text`を音声化する。Google CloudはMP3、VOICEVOXはWAV。
-async fn synthesize_bytes(app: &AppHandle, voice: Voice, text: &str) -> Result<Vec<u8>, AppError> {
+async fn synthesize_bytes(app: &AppHandle, ctx: &WorkspaceCtx, voice: Voice, text: &str) -> Result<Vec<u8>, AppError> {
     match voice {
-        Voice::Google => STANDARD.decode(tts::synthesize(&pronounced(app, text)?).await?).map_err(|_| AppError::BadResponse),
+        Voice::Google => STANDARD.decode(tts::synthesize(&ctx.secrets, &pronounced(ctx, text)).await?).map_err(|_| AppError::BadResponse),
         Voice::Voicevox(style) => {
             if text.trim().is_empty() {
                 return Err(AppError::EmptyText);
             }
             let dir = app_data(app)?;
             let app = app.clone();
-            let text = pronounced(&app, text)?;
+            let text = pronounced(ctx, text);
             tauri::async_runtime::spawn_blocking(move || app.state::<VoicevoxEngine>().synthesize(&dir, &text, style))
                 .await
                 .map_err(|e| AppError::Voicevox(e.to_string()))?
@@ -505,73 +507,73 @@ async fn synthesize_bytes(app: &AppHandle, voice: Voice, text: &str) -> Result<V
 
 /// 定型音声ごとの作成状況(現在の声について)。
 #[tauri::command]
-pub fn voice_phrases_status(app: AppHandle, db: State<'_, Db>) -> Result<Vec<voice_phrases::PhraseStatus>, AppError> {
-    Ok(voice_phrases::status(&app_data(&app)?, current_voice(&db)?))
+pub fn voice_phrases_status(app: AppHandle, ctx: Ctx) -> Result<Vec<voice_phrases::PhraseStatus>, AppError> {
+    Ok(voice_phrases::status(&app_data(&app)?, current_voice(&ctx.db)?))
 }
 
 /// 未作成の定型音声を現在のエンジンで合成して保存する。作成済みは送らない。途中で失敗しても、保存済みの分は残る。
 #[tauri::command]
-pub async fn generate_voice_phrases(app: AppHandle, db: State<'_, Db>) -> Result<Vec<voice_phrases::PhraseStatus>, AppError> {
+pub async fn generate_voice_phrases(app: AppHandle, ctx: Ctx) -> Result<Vec<voice_phrases::PhraseStatus>, AppError> {
     let dir = app_data(&app)?;
-    let voice = current_voice(&db)?;
+    let voice = current_voice(&ctx.db)?;
     for p in voice_phrases::missing(&dir, voice) {
-        voice_phrases::save(&dir, voice, p, synthesize_bytes(&app, voice, p.text).await?)?;
+        voice_phrases::save(&dir, voice, p, synthesize_bytes(&app, &ctx, voice, p.text).await?)?;
     }
     Ok(voice_phrases::status(&dir, voice))
 }
 
 /// 作成済みの定型音声(base64のMP3またはWAV)。未作成なら`None`で、TTSへは送らない。
 #[tauri::command]
-pub fn voice_phrase_audio(app: AppHandle, db: State<'_, Db>, id: String) -> Result<Option<String>, AppError> {
-    Ok(voice_phrases::audio(&app_data(&app)?, current_voice(&db)?, &id))
+pub fn voice_phrase_audio(app: AppHandle, ctx: Ctx, id: String) -> Result<Option<String>, AppError> {
+    Ok(voice_phrases::audio(&app_data(&app)?, current_voice(&ctx.db)?, &id))
 }
 
 /// 応答テキストを現在のエンジンで音声化し、base64(Google CloudはMP3、VOICEVOXはWAV)を返す。
 #[tauri::command]
-pub async fn synthesize_speech(app: AppHandle, db: State<'_, Db>, text: String) -> Result<String, AppError> {
-    let voice = current_voice(&db)?;
+pub async fn synthesize_speech(app: AppHandle, ctx: Ctx, text: String) -> Result<String, AppError> {
+    let voice = current_voice(&ctx.db)?;
     if voice == Voice::Google {
-        return tts::synthesize(&pronounced(&app, &text)?).await;
+        return tts::synthesize(&ctx.secrets, &pronounced(&ctx, &text)).await;
     }
-    Ok(STANDARD.encode(synthesize_bytes(&app, voice, &text).await?))
+    Ok(STANDARD.encode(synthesize_bytes(&app, &ctx, voice, &text).await?))
 }
 
 #[tauri::command]
-pub fn tts_key_registered() -> Result<bool, AppError> {
-    secrets::has_tts_key()
+pub fn tts_key_registered(ctx: Ctx) -> Result<bool, AppError> {
+    ctx.secrets.has_tts_key()
 }
 
 #[tauri::command]
-pub async fn save_tts_key(key: String) -> Result<(), AppError> {
+pub async fn save_tts_key(ctx: Ctx, key: String) -> Result<(), AppError> {
     let key = key.trim();
     if key.is_empty() {
         return Err(AppError::EmptyKey);
     }
     secrets::verify_tts_key(key).await?;
-    secrets::set_tts_key(key)
+    ctx.secrets.set_tts_key(key)
 }
 
 #[tauri::command]
-pub fn delete_tts_key() -> Result<(), AppError> {
-    secrets::delete_tts_key()
+pub fn delete_tts_key(ctx: Ctx) -> Result<(), AppError> {
+    ctx.secrets.delete_tts_key()
 }
 
 #[tauri::command]
-pub fn aqua_key_registered() -> Result<bool, AppError> {
-    secrets::has_aqua_key()
+pub fn aqua_key_registered(ctx: Ctx) -> Result<bool, AppError> {
+    ctx.secrets.has_aqua_key()
 }
 
 #[tauri::command]
-pub async fn save_aqua_key(key: String) -> Result<(), AppError> {
+pub async fn save_aqua_key(ctx: Ctx, key: String) -> Result<(), AppError> {
     let key = key.trim();
     if key.is_empty() {
         return Err(AppError::EmptyKey);
     }
     stt_aqua::verify_key(key).await?;
-    secrets::set_aqua_key(key)
+    ctx.secrets.set_aqua_key(key)
 }
 
 #[tauri::command]
-pub fn delete_aqua_key() -> Result<(), AppError> {
-    secrets::delete_aqua_key()
+pub fn delete_aqua_key(ctx: Ctx) -> Result<(), AppError> {
+    ctx.secrets.delete_aqua_key()
 }

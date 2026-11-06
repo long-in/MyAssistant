@@ -5,7 +5,7 @@
 //! 一時クレデンシャルはメモリ上にだけ置き、ディスクにもフロントエンドにも出さない。
 use std::{
     collections::BTreeMap,
-    sync::{Mutex, OnceLock},
+    sync::{Mutex, MutexGuard, OnceLock},
     time::{Duration, SystemTime},
 };
 
@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::oneshot;
 
-use super::secrets;
+use super::workspace::WorkspaceCtx;
 use crate::utils::error::AppError;
 
 /// フロントエンドへMFAコードの入力を求めるイベント名。
@@ -226,46 +226,46 @@ pub fn preview(config: &str, credentials: &str) -> Vec<ProfileInfo> {
     profiles_of(&merged(config, credentials))
 }
 
-pub fn status() -> Result<Status, AppError> {
-    let (config, credentials) = secrets::get_aws_files()?;
+pub fn status(ctx: &WorkspaceCtx) -> Result<Status, AppError> {
+    let (config, credentials) = ctx.secrets.get_aws_files()?;
     let ini = merged(&config, &credentials);
-    let saved = secrets::get_aws_profile()?;
+    let saved = ctx.secrets.get_aws_profile()?;
     let profiles = profiles_of(&ini);
-    let session_expires_at = session().as_ref().and_then(|s| {
+    let session_expires_at = session(ctx).as_ref().and_then(|s| {
         s.expires.duration_since(SystemTime::UNIX_EPOCH).ok().map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
     });
     let selected = selected(&ini, saved.as_deref());
-    let models = models();
+    let models = models(ctx);
     let suggested_models = suggested_models().into_iter().filter(|m| !models.contains(m)).collect();
-    Ok(Status { registered: secrets::has_aws()?, profiles, selected, session_expires_at, models, suggested_models })
+    Ok(Status { registered: ctx.secrets.has_aws()?, profiles, selected, session_expires_at, models, suggested_models })
 }
 
 /// 貼り付けた内容と、使うプロファイルを検証して保存する(ネットワークは使わない)。モデルが未登録なら初期候補を登録する。
 /// 選んだプロファイルが使えなければ保存しない。
-pub fn save(config: &str, credentials: &str, profile: &str) -> Result<(), AppError> {
+pub fn save(ctx: &WorkspaceCtx, config: &str, credentials: &str, profile: &str) -> Result<(), AppError> {
     resolve(&merged(config, credentials), profile)?;
-    secrets::set_aws_files(config.trim(), credentials.trim())?;
-    secrets::set_aws_profile(profile)?;
+    ctx.secrets.set_aws_files(config.trim(), credentials.trim())?;
+    ctx.secrets.set_aws_profile(profile)?;
     // 初回だけ初期候補を登録しておく(後から画面で入力し直せる)
-    if models().is_empty() {
-        set_models(&suggested_models())?;
+    if models(ctx).is_empty() {
+        set_models(ctx, &suggested_models())?;
     }
-    clear_session();
+    clear_session(ctx);
     Ok(())
 }
 
-pub fn select_profile(name: &str) -> Result<(), AppError> {
-    let (config, credentials) = secrets::get_aws_files()?;
+pub fn select_profile(ctx: &WorkspaceCtx, name: &str) -> Result<(), AppError> {
+    let (config, credentials) = ctx.secrets.get_aws_files()?;
     resolve(&merged(&config, &credentials), name)?;
-    secrets::set_aws_profile(name)?;
-    clear_session();
+    ctx.secrets.set_aws_profile(name)?;
+    clear_session(ctx);
     Ok(())
 }
 
-pub fn delete() -> Result<(), AppError> {
-    secrets::delete_aws()?;
-    clear_session();
-    cancel_mfa();
+pub fn delete(ctx: &WorkspaceCtx) -> Result<(), AppError> {
+    ctx.secrets.delete_aws()?;
+    clear_session(ctx);
+    cancel_mfa(ctx);
     Ok(())
 }
 
@@ -277,20 +277,25 @@ struct Session {
     expires: SystemTime,
 }
 
-static SESSION: Mutex<Option<Session>> = Mutex::new(None);
-/// 同時に複数の呼び出しが来ても、MFAの入力と取得は1回にまとめる。
-static REFRESH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-fn session() -> std::sync::MutexGuard<'static, Option<Session>> {
-    SESSION.lock().unwrap_or_else(|p| p.into_inner())
+/// ワークスペースごとの一時状態(一時クレデンシャル・MFA入力待ち)。
+#[derive(Default)]
+pub struct AwsState {
+    session: Mutex<Option<Session>>,
+    /// 同時に複数の呼び出しが来ても、MFAの入力と取得は1回にまとめる。
+    refresh: tokio::sync::Mutex<()>,
+    pending_mfa: Mutex<Option<oneshot::Sender<String>>>,
 }
 
-fn clear_session() {
-    *session() = None;
+fn session(ctx: &WorkspaceCtx) -> MutexGuard<'_, Option<Session>> {
+    ctx.aws.session.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-fn cached(profile: &str) -> Option<Keys> {
-    session()
+fn clear_session(ctx: &WorkspaceCtx) {
+    *session(ctx) = None;
+}
+
+fn cached(ctx: &WorkspaceCtx, profile: &str) -> Option<Keys> {
+    session(ctx)
         .as_ref()
         .filter(|s| s.profile == profile && s.expires > SystemTime::now() + EXPIRY_MARGIN)
         .map(|s| s.keys.clone())
@@ -299,7 +304,6 @@ fn cached(profile: &str) -> Option<Keys> {
 // ---- MFAコードの入力待ち ----
 
 static APP: OnceLock<AppHandle> = OnceLock::new();
-static PENDING_MFA: Mutex<Option<oneshot::Sender<String>>> = Mutex::new(None);
 
 /// 起動時に1回呼ぶ。MFAコードの入力要求をフロントエンドへ送るために使う。
 pub fn init(app: &AppHandle) {
@@ -314,19 +318,19 @@ struct MfaPrompt {
     error: Option<String>,
 }
 
-fn pending() -> std::sync::MutexGuard<'static, Option<oneshot::Sender<String>>> {
-    PENDING_MFA.lock().unwrap_or_else(|p| p.into_inner())
+fn pending(ctx: &WorkspaceCtx) -> MutexGuard<'_, Option<oneshot::Sender<String>>> {
+    ctx.aws.pending_mfa.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-async fn ask_mfa(prompt: MfaPrompt) -> Result<String, AppError> {
+async fn ask_mfa(ctx: &WorkspaceCtx, prompt: MfaPrompt) -> Result<String, AppError> {
     let app = APP.get().ok_or_else(|| AppError::AwsConfig("not initialized".into()))?;
     let (tx, rx) = oneshot::channel();
-    *pending() = Some(tx);
+    *pending(ctx) = Some(tx);
     app.emit(MFA_EVENT, prompt).map_err(|e| AppError::AwsConfig(e.to_string()))?;
     match tokio::time::timeout(MFA_TIMEOUT, rx).await {
         Ok(Ok(code)) => Ok(code),
         _ => {
-            pending().take();
+            pending(ctx).take();
             Err(AppError::MfaRequired)
         }
     }
@@ -337,20 +341,20 @@ fn valid_mfa_code(code: &str) -> bool {
 }
 
 /// 入力されたMFAコードを、待っている呼び出しへ渡す。待っていなければ何もしない。
-pub fn submit_mfa(code: &str) -> Result<(), AppError> {
+pub fn submit_mfa(ctx: &WorkspaceCtx, code: &str) -> Result<(), AppError> {
     let code = code.trim();
     if !valid_mfa_code(code) {
         return Err(AppError::AwsConfig("MFA code must be 6 digits".to_owned()));
     }
-    if let Some(tx) = pending().take() {
+    if let Some(tx) = pending(ctx).take() {
         let _ = tx.send(code.to_owned());
     }
     Ok(())
 }
 
 /// MFAコードの入力を取りやめる(待っている呼び出しは`MfaRequired`で失敗する)。
-pub fn cancel_mfa() {
-    pending().take();
+pub fn cancel_mfa(ctx: &WorkspaceCtx) {
+    pending(ctx).take();
 }
 
 // ---- AWS呼び出し ----
@@ -428,12 +432,12 @@ async fn assume_role(a: &AssumeRole, region: &str, code: Option<&str>) -> Result
 }
 
 /// MFAが必要なら画面でコードを入力してもらい、AssumeRoleする。コードが拒否されたら理由付きで再入力を求める。
-async fn assume_with_prompt(profile: &str, a: &AssumeRole, region: &str) -> Result<Keys, AppError> {
+async fn assume_with_prompt(ctx: &WorkspaceCtx, profile: &str, a: &AssumeRole, region: &str) -> Result<Keys, AppError> {
     let mut last_error: Option<String> = None;
     for _ in 0..MFA_ATTEMPTS {
         let code = match &a.mfa_serial {
             Some(serial) => Some(
-                ask_mfa(MfaPrompt {
+                ask_mfa(ctx, MfaPrompt {
                     profile: profile.to_owned(),
                     mfa_serial: serial.clone(),
                     error: last_error.take(),
@@ -444,7 +448,7 @@ async fn assume_with_prompt(profile: &str, a: &AssumeRole, region: &str) -> Resu
         };
         match assume_role(a, region, code.as_deref()).await {
             Ok((keys, expires)) => {
-                *session() = Some(Session { profile: profile.to_owned(), keys: keys.clone(), expires });
+                *session(ctx) = Some(Session { profile: profile.to_owned(), keys: keys.clone(), expires });
                 return Ok(keys);
             }
             Err(f) => match (f.into_error(), code) {
@@ -457,21 +461,21 @@ async fn assume_with_prompt(profile: &str, a: &AssumeRole, region: &str) -> Resu
 }
 
 /// 選択中のプロファイルで使うクレデンシャルとリージョン。
-async fn credentials() -> Result<(Keys, String), AppError> {
-    let (config, credentials) = secrets::get_aws_files()?;
+async fn credentials(ctx: &WorkspaceCtx) -> Result<(Keys, String), AppError> {
+    let (config, credentials) = ctx.secrets.get_aws_files()?;
     let ini = merged(&config, &credentials);
-    let saved = secrets::get_aws_profile()?;
+    let saved = ctx.secrets.get_aws_profile()?;
     let name = selected(&ini, saved.as_deref()).ok_or_else(|| AppError::KeyMissing("bedrock".to_owned()))?;
     let Resolved { region, source } = resolve(&ini, &name)?;
     let keys = match source {
         Source::Static(keys) => keys,
-        Source::AssumeRole(a) => match cached(&name) {
+        Source::AssumeRole(a) => match cached(ctx, &name) {
             Some(keys) => keys,
             None => {
-                let _guard = REFRESH.lock().await;
-                match cached(&name) {
+                let _guard = ctx.aws.refresh.lock().await;
+                match cached(ctx, &name) {
                     Some(keys) => keys,
-                    None => assume_with_prompt(&name, &a, &region).await?,
+                    None => assume_with_prompt(ctx, &name, &a, &region).await?,
                 }
             }
         },
@@ -499,44 +503,44 @@ fn valid_model_id(id: &str) -> bool {
 }
 
 /// 登録済みのBedrockモデルID(追加順)。
-pub fn models() -> Vec<String> {
-    secrets::get_aws_models()
+pub fn models(ctx: &WorkspaceCtx) -> Vec<String> {
+    ctx.secrets.get_aws_models()
         .ok()
         .flatten()
         .and_then(|v| serde_json::from_str(&v).ok())
         .unwrap_or_default()
 }
 
-fn set_models(list: &[String]) -> Result<(), AppError> {
-    secrets::set_aws_models(&serde_json::to_string(list).map_err(|e| AppError::AwsConfig(e.to_string()))?)
+fn set_models(ctx: &WorkspaceCtx, list: &[String]) -> Result<(), AppError> {
+    ctx.secrets.set_aws_models(&serde_json::to_string(list).map_err(|e| AppError::AwsConfig(e.to_string()))?)
 }
 
-pub fn add_model(id: &str) -> Result<(), AppError> {
+pub fn add_model(ctx: &WorkspaceCtx, id: &str) -> Result<(), AppError> {
     let id = id.trim();
     if !valid_model_id(id) {
         return Err(AppError::AwsConfig(format!("invalid model id: {id}")));
     }
-    let mut list = models();
+    let mut list = models(ctx);
     if !list.iter().any(|m| m == id) {
         list.push(id.to_owned());
-        set_models(&list)?;
+        set_models(ctx, &list)?;
     }
     Ok(())
 }
 
-pub fn remove_model(id: &str) -> Result<(), AppError> {
-    let list: Vec<String> = models().into_iter().filter(|m| m != id).collect();
-    set_models(&list)
+pub fn remove_model(ctx: &WorkspaceCtx, id: &str) -> Result<(), AppError> {
+    let list: Vec<String> = models(ctx).into_iter().filter(|m| m != id).collect();
+    set_models(ctx, &list)
 }
 
 /// Messages API形式のリクエスト(`model`なし)でInvokeModelを呼ぶ。`model_id`はBedrockのモデルID(または推論プロファイルID)。
 /// 応答はMessages API形式のJSON。
 /// クレデンシャルの期限切れで失敗したときは、取り直して1回だけ再試行する。
-pub async fn invoke_model(model_id: &str, request: &Value, timeout: Duration) -> Result<Value, AppError> {
+pub async fn invoke_model(ctx: &WorkspaceCtx, model_id: &str, request: &Value, timeout: Duration) -> Result<Value, AppError> {
     for attempt in 0..2 {
-        let (keys, region) = credentials().await?;
+        let (keys, region) = credentials(ctx).await?;
         match invoke_once(&keys, &region, model_id, request, timeout).await {
-            Err(f) if f.expired() && attempt == 0 => clear_session(),
+            Err(f) if f.expired() && attempt == 0 => clear_session(ctx),
             result => return result.map_err(Failure::into_error),
         }
     }
@@ -575,11 +579,11 @@ async fn invoke_once(
 
 /// Bedrockの推論プロファイルから、`global.anthropic.`で始まるClaudeのIDを取得する。
 /// `list-foundation-models`が返すのは接頭辞なしの基盤モデルIDだけで、`global.`付きのIDは推論プロファイル側にある。
-pub async fn fetch_global_models() -> Result<Vec<String>, AppError> {
+pub async fn fetch_global_models(ctx: &WorkspaceCtx) -> Result<Vec<String>, AppError> {
     for attempt in 0..2 {
-        let (keys, region) = credentials().await?;
+        let (keys, region) = credentials(ctx).await?;
         match list_global_profiles(&keys, &region).await {
-            Err(f) if f.expired() && attempt == 0 => clear_session(),
+            Err(f) if f.expired() && attempt == 0 => clear_session(ctx),
             result => return result.map_err(Failure::into_error),
         }
     }
@@ -626,13 +630,13 @@ fn global_claude_ids(mut ids: Vec<String>) -> Vec<String> {
 }
 
 /// 認証からモデル呼び出し(登録済みの先頭モデル)までを通しで確認する。MFAが必要なら画面でコード入力を求める。
-pub async fn test_connection() -> Result<(), AppError> {
-    let model = models()
+pub async fn test_connection(ctx: &WorkspaceCtx) -> Result<(), AppError> {
+    let model = models(ctx)
         .into_iter()
         .next()
         .ok_or_else(|| AppError::AwsConfig("no model registered".to_owned()))?;
     let request = json!({ "max_tokens": 8, "messages": [{ "role": "user", "content": "ping" }] });
-    invoke_model(&model, &request, Duration::from_secs(30)).await.map(|_| ())
+    invoke_model(ctx, &model, &request, Duration::from_secs(30)).await.map(|_| ())
 }
 
 #[cfg(test)]

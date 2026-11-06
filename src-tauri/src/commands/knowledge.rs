@@ -1,27 +1,27 @@
-use tauri::{AppHandle, State};
+
 
 use crate::{
-    db::Db,
     services::{
         batch::{self, BatchReport},
         debug_log,
         knowledge::{self, KnowledgeFile, TransferReport},
         llm_router::Route,
+        workspace::Ctx,
     },
     utils::error::AppError,
 };
 
 /// ナレッジの保存先。Obsidianのvaultとして開く、外部ツールから直接読み書きするために表示する。
 #[tauri::command]
-pub fn knowledge_dir(app: AppHandle) -> Result<String, AppError> {
-    let root = batch::knowledge_root(&app)?;
+pub fn knowledge_dir(ctx: Ctx) -> Result<String, AppError> {
+    let root = batch::knowledge_root(&ctx)?;
     std::fs::create_dir_all(&root).map_err(|e| AppError::Io(e.to_string()))?;
     Ok(root.to_string_lossy().into_owned())
 }
 
 /// ナレッジの保存先を変更する。`None`で既定の場所に戻す。既存ファイルは移動しない。
 #[tauri::command]
-pub fn set_knowledge_dir(app: AppHandle, db: State<'_, Db>, path: Option<String>) -> Result<String, AppError> {
+pub fn set_knowledge_dir(ctx: Ctx, path: Option<String>) -> Result<String, AppError> {
     let path = path.map(|p| p.trim().to_owned()).filter(|p| !p.is_empty());
     let root = match &path {
         Some(p) => {
@@ -31,15 +31,15 @@ pub fn set_knowledge_dir(app: AppHandle, db: State<'_, Db>, path: Option<String>
             }
             p
         }
-        None => batch::default_knowledge_root(&app)?,
+        None => batch::default_knowledge_root(&ctx),
     };
     std::fs::create_dir_all(&root).map_err(|e| AppError::Io(e.to_string()))?;
     let root = root.canonicalize().map_err(|e| AppError::Io(e.to_string()))?;
     // 書き込めない場所を保存しないよう、実際に書き込めるか確認する
     check_writable(&root)?;
     let resolved = root.to_string_lossy().into_owned();
-    db.set_setting(batch::KNOWLEDGE_DIR_KEY, if path.is_some() { &resolved } else { "" })?;
-    debug_log::refresh(&app)?;
+    ctx.db.set_setting(batch::KNOWLEDGE_DIR_KEY, if path.is_some() { &resolved } else { "" })?;
+    debug_log::refresh(&ctx)?;
     Ok(resolved)
 }
 
@@ -51,25 +51,25 @@ fn check_writable(dir: &std::path::Path) -> Result<(), AppError> {
 }
 
 #[tauri::command]
-pub fn list_knowledge(app: AppHandle) -> Result<Vec<KnowledgeFile>, AppError> {
-    knowledge::list(&batch::knowledge_root(&app)?)
+pub fn list_knowledge(ctx: Ctx) -> Result<Vec<KnowledgeFile>, AppError> {
+    knowledge::list(&batch::knowledge_root(&ctx)?)
 }
 
 /// Markdown以外のファイル一覧(閲覧専用)。
 #[tauri::command]
-pub fn list_other_knowledge(app: AppHandle) -> Result<Vec<KnowledgeFile>, AppError> {
-    knowledge::list_other(&batch::knowledge_root(&app)?)
+pub fn list_other_knowledge(ctx: Ctx) -> Result<Vec<KnowledgeFile>, AppError> {
+    knowledge::list_other(&batch::knowledge_root(&ctx)?)
 }
 
 /// Markdown以外のファイルの本文(閲覧専用)。
 #[tauri::command]
-pub fn read_other_knowledge(app: AppHandle, path: String) -> Result<String, AppError> {
-    knowledge::read_other(&batch::knowledge_root(&app)?, &path)
+pub fn read_other_knowledge(ctx: Ctx, path: String) -> Result<String, AppError> {
+    knowledge::read_other(&batch::knowledge_root(&ctx)?, &path)
 }
 
 #[tauri::command]
-pub fn read_knowledge(app: AppHandle, path: String) -> Result<String, AppError> {
-    knowledge::read(&batch::knowledge_root(&app)?, &path)
+pub fn read_knowledge(ctx: Ctx, path: String) -> Result<String, AppError> {
+    knowledge::read(&batch::knowledge_root(&ctx)?, &path)
 }
 
 fn now() -> String {
@@ -77,68 +77,68 @@ fn now() -> String {
 }
 
 #[tauri::command]
-pub fn list_knowledge_dirs(app: AppHandle) -> Result<Vec<String>, AppError> {
-    knowledge::list_dirs(&batch::knowledge_root(&app)?)
+pub fn list_knowledge_dirs(ctx: Ctx) -> Result<Vec<String>, AppError> {
+    knowledge::list_dirs(&batch::knowledge_root(&ctx)?)
 }
 
 /// 既存ノートの本文を保存する。
 #[tauri::command]
-pub fn write_knowledge(app: AppHandle, path: String, content: String) -> Result<(), AppError> {
-    knowledge::write(&batch::knowledge_root(&app)?, &path, &content)
+pub fn write_knowledge(ctx: Ctx, path: String, content: String) -> Result<(), AppError> {
+    knowledge::write(&batch::knowledge_root(&ctx)?, &path, &content)
 }
 
 #[tauri::command]
-pub fn create_knowledge_file(app: AppHandle, path: String) -> Result<String, AppError> {
-    knowledge::create_file(&batch::knowledge_root(&app)?, &path, &now())
+pub fn create_knowledge_file(ctx: Ctx, path: String) -> Result<String, AppError> {
+    knowledge::create_file(&batch::knowledge_root(&ctx)?, &path, &now())
 }
 
 #[tauri::command]
-pub fn create_knowledge_dir(app: AppHandle, path: String) -> Result<(), AppError> {
-    knowledge::create_dir(&batch::knowledge_root(&app)?, &path)
+pub fn create_knowledge_dir(ctx: Ctx, path: String) -> Result<(), AppError> {
+    knowledge::create_dir(&batch::knowledge_root(&ctx)?, &path)
 }
 
 /// ファイル・フォルダの名前変更と移動。
 #[tauri::command]
-pub fn rename_knowledge(app: AppHandle, from: String, to: String) -> Result<(), AppError> {
-    knowledge::rename(&batch::knowledge_root(&app)?, &from, &to)
+pub fn rename_knowledge(ctx: Ctx, from: String, to: String) -> Result<(), AppError> {
+    knowledge::rename(&batch::knowledge_root(&ctx)?, &from, &to)
 }
 
 /// ファイル、またはフォルダ(中身ごと)を削除する。確認は呼び出し側で行うこと。
 #[tauri::command]
-pub fn delete_knowledge(app: AppHandle, path: String) -> Result<(), AppError> {
-    knowledge::delete(&batch::knowledge_root(&app)?, &path)
+pub fn delete_knowledge(ctx: Ctx, path: String) -> Result<(), AppError> {
+    knowledge::delete(&batch::knowledge_root(&ctx)?, &path)
 }
 
 /// 手動トリガー。実行中・対象なし・キー未登録の場合は`None`。
 #[tauri::command]
-pub async fn run_batch(app: AppHandle) -> Result<Option<BatchReport>, AppError> {
-    batch::run_guarded(&app).await
+pub async fn run_batch(ctx: Ctx) -> Result<Option<BatchReport>, AppError> {
+    batch::run_guarded(&ctx).await
 }
 
 /// 整理バッチの実行間隔(分)。
 #[tauri::command]
-pub fn get_batch_interval(db: State<'_, Db>) -> Result<u32, AppError> {
-    batch::interval_minutes(&db)
+pub fn get_batch_interval(ctx: Ctx) -> Result<u32, AppError> {
+    batch::interval_minutes(&ctx.db)
 }
 
 /// 次の待ち時間から反映される。範囲外は拒否する。
 #[tauri::command]
-pub fn set_batch_interval(db: State<'_, Db>, minutes: u32) -> Result<(), AppError> {
+pub fn set_batch_interval(ctx: Ctx, minutes: u32) -> Result<(), AppError> {
     if !batch::INTERVAL_RANGE.contains(&minutes) {
         return Err(AppError::Db(format!("interval out of range: {minutes}")));
     }
-    db.set_setting(batch::BATCH_INTERVAL_KEY, &minutes.to_string())
+    ctx.db.set_setting(batch::BATCH_INTERVAL_KEY, &minutes.to_string())
 }
 
 /// 整理バッチのモデル指定。未設定・使用不可なら既定(Claudeが使えればSonnet)を返す。
 #[tauri::command]
-pub fn load_batch_route(db: State<'_, Db>) -> Result<Option<Route>, AppError> {
-    batch::effective_route(&db, &batch::available_providers())
+pub fn load_batch_route(ctx: Ctx) -> Result<Option<Route>, AppError> {
+    batch::effective_route(&ctx, &batch::available_providers(&ctx.secrets))
 }
 
 #[tauri::command]
-pub fn save_batch_route(db: State<'_, Db>, route: Route) -> Result<(), AppError> {
-    db.set_setting(batch::BATCH_ROUTE_KEY, &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?)
+pub fn save_batch_route(ctx: Ctx, route: Route) -> Result<(), AppError> {
+    ctx.db.set_setting(batch::BATCH_ROUTE_KEY, &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?)
 }
 
 /// 絶対パスのフォルダのみ受け付ける(ダイアログで選ばれたフォルダを想定)。
@@ -152,15 +152,15 @@ fn external_dir(path: &str) -> Result<std::path::PathBuf, AppError> {
 
 /// ナレッジ全体を`dest`直下の新しいフォルダへ書き出す。
 #[tauri::command]
-pub fn export_knowledge(app: AppHandle, dest: String) -> Result<TransferReport, AppError> {
+pub fn export_knowledge(ctx: Ctx, dest: String) -> Result<TransferReport, AppError> {
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
-    knowledge::export(&batch::knowledge_root(&app)?, &external_dir(&dest)?, &stamp)
+    knowledge::export(&batch::knowledge_root(&ctx)?, &external_dir(&dest)?, &stamp)
 }
 
 /// `src`フォルダのMarkdownをナレッジへ取り込む(既存は上書きしない)。
 #[tauri::command]
-pub fn import_knowledge(app: AppHandle, src: String) -> Result<TransferReport, AppError> {
-    let root = batch::knowledge_root(&app)?;
+pub fn import_knowledge(ctx: Ctx, src: String) -> Result<TransferReport, AppError> {
+    let root = batch::knowledge_root(&ctx)?;
     let src = external_dir(&src)?;
     std::fs::create_dir_all(&root).map_err(|e| AppError::Io(e.to_string()))?;
     // 保存先自身を取り込むと自己コピーになるため拒否する
@@ -172,6 +172,6 @@ pub fn import_knowledge(app: AppHandle, src: String) -> Result<TransferReport, A
 
 /// ナレッジのMarkdownをすべて削除する。元に戻せないため、呼び出し側で確認と事前エクスポートを促すこと。
 #[tauri::command]
-pub fn reset_knowledge(app: AppHandle) -> Result<TransferReport, AppError> {
-    knowledge::reset(&batch::knowledge_root(&app)?)
+pub fn reset_knowledge(ctx: Ctx) -> Result<TransferReport, AppError> {
+    knowledge::reset(&batch::knowledge_root(&ctx)?)
 }

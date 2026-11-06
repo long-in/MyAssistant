@@ -14,8 +14,9 @@ use crate::{
         knowledge,
         llm_router::{self, ModelInfo, Route},
         profile,
-        secrets::{self, Provider},
+        secrets::Provider,
         tuning,
+        workspace::{Ctx, WorkspaceCtx},
     },
     utils::error::AppError,
 };
@@ -72,53 +73,53 @@ fn shell_access(db: &Db) -> Result<bool, AppError> {
 }
 
 #[tauri::command]
-pub fn get_shell_access(db: State<'_, Db>) -> Result<bool, AppError> {
-    shell_access(&db)
+pub fn get_shell_access(ctx: Ctx) -> Result<bool, AppError> {
+    shell_access(&ctx.db)
 }
 
 #[tauri::command]
-pub fn set_shell_access(db: State<'_, Db>, enabled: bool) -> Result<(), AppError> {
-    db.set_setting(SHELL_ACCESS_KEY, if enabled { "1" } else { "0" })
+pub fn set_shell_access(ctx: Ctx, enabled: bool) -> Result<(), AppError> {
+    ctx.db.set_setting(SHELL_ACCESS_KEY, if enabled { "1" } else { "0" })
 }
 
 #[tauri::command]
-pub fn get_web_access(db: State<'_, Db>) -> Result<bool, AppError> {
-    web_access(&db)
+pub fn get_web_access(ctx: Ctx) -> Result<bool, AppError> {
+    web_access(&ctx.db)
 }
 
 #[tauri::command]
-pub fn set_web_access(db: State<'_, Db>, enabled: bool) -> Result<(), AppError> {
-    db.set_setting(WEB_ACCESS_KEY, if enabled { "1" } else { "0" })
+pub fn set_web_access(ctx: Ctx, enabled: bool) -> Result<(), AppError> {
+    ctx.db.set_setting(WEB_ACCESS_KEY, if enabled { "1" } else { "0" })
 }
 
 #[tauri::command]
-pub fn get_tuning(db: State<'_, Db>) -> Result<tuning::Tuning, AppError> {
-    tuning::load(&db)
+pub fn get_tuning(ctx: Ctx) -> Result<tuning::Tuning, AppError> {
+    tuning::load(&ctx.db)
 }
 
 /// 調整項目を保存し、範囲内へ丸めた実際の値を返す。
 #[tauri::command]
-pub fn set_tuning(db: State<'_, Db>, tuning: tuning::Tuning) -> Result<tuning::Tuning, AppError> {
-    tuning::save(&db, tuning)
+pub fn set_tuning(ctx: Ctx, tuning: tuning::Tuning) -> Result<tuning::Tuning, AppError> {
+    tuning::save(&ctx.db, tuning)
 }
 
 #[tauri::command]
-pub fn get_base_instructions(db: State<'_, Db>) -> Result<String, AppError> {
-    base_instructions(&db)
+pub fn get_base_instructions(ctx: Ctx) -> Result<String, AppError> {
+    base_instructions(&ctx.db)
 }
 
 /// ベース指示を保存する。空文字は既定値へ戻す扱い。
 #[tauri::command]
-pub fn save_base_instructions(db: State<'_, Db>, text: String) -> Result<(), AppError> {
-    db.set_setting(BASE_INSTRUCTIONS_KEY, text.trim())
+pub fn save_base_instructions(ctx: Ctx, text: String) -> Result<(), AppError> {
+    ctx.db.set_setting(BASE_INSTRUCTIONS_KEY, text.trim())
 }
 
 /// セッションごとの訂正履歴の節。最初の発話時に1回だけナレッジから作り、以降は使い回す。
 #[derive(Default)]
 pub struct SessionContexts(Mutex<HashMap<String, Option<String>>>);
 
-fn restore_corrections(app: &AppHandle) -> Option<String> {
-    let root = batch::knowledge_root(app).ok()?;
+fn restore_corrections(ctx: &WorkspaceCtx) -> Option<String> {
+    let root = batch::knowledge_root(ctx).ok()?;
     knowledge::recent_corrections(&root, CORRECTIONS_MAX).map(|c| {
         format!(
             "過去にユーザーが訂正した音声認識の聞き間違い(「誤」→「正」)です。同じ誤りがあれば正しい表記と解釈してください。\n\n\
@@ -164,7 +165,7 @@ const REFERENCE_NOTE: &str = "<stt_corrections>・<previous_context>・<related_
 /// 聞き取り間違いの訂正をナレッジ(Markdown)へ記録する。保存した場合は`true`。
 #[tauri::command]
 pub fn add_stt_correction(
-    app: AppHandle,
+    ctx: Ctx,
     contexts: State<'_, SessionContexts>,
     heard: String,
     correct: String,
@@ -173,7 +174,7 @@ pub fn add_stt_correction(
         return Err(AppError::EmptyMessage);
     }
     let now = chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
-    let saved = knowledge::add_correction(&batch::knowledge_root(&app)?, &heard, &correct, &now)?;
+    let saved = knowledge::add_correction(&batch::knowledge_root(&ctx)?, &heard, &correct, &now)?;
     if saved {
         // 進行中のセッションにも次の発話から反映する
         contexts.0.lock().unwrap_or_else(|p| p.into_inner()).clear();
@@ -189,26 +190,26 @@ pub struct ChatReply {
 }
 
 #[tauri::command]
-pub fn list_models() -> Vec<ModelInfo> {
-    llm_router::catalog()
+pub fn list_models(ctx: Ctx) -> Vec<ModelInfo> {
+    llm_router::catalog(&ctx)
 }
 
 /// 当月のトークン使用量(このアプリ経由の呼び出しのローカル集計)。
 #[tauri::command]
-pub fn get_usage_this_month(db: State<'_, Db>) -> Result<Vec<UsageRow>, AppError> {
-    db.usage_this_month()
+pub fn get_usage_this_month(ctx: Ctx) -> Result<Vec<UsageRow>, AppError> {
+    ctx.db.usage_this_month()
 }
 
 #[tauri::command]
 /// 前回選んだモデル。キー削除などで使えなくなっていれば既定にフォールバックする。
-pub fn load_routing(db: State<'_, Db>) -> Result<Option<Route>, AppError> {
-    let saved = db.get_setting(ROUTE_KEY)?.and_then(|v| serde_json::from_str(&v).ok());
-    Ok(llm_router::effective(saved, &batch::available_providers()))
+pub fn load_routing(ctx: Ctx) -> Result<Option<Route>, AppError> {
+    let saved = ctx.db.get_setting(ROUTE_KEY)?.and_then(|v| serde_json::from_str(&v).ok());
+    Ok(llm_router::effective(&ctx, saved, &batch::available_providers(&ctx.secrets)))
 }
 
 #[tauri::command]
-pub fn save_routing(db: State<'_, Db>, route: Route) -> Result<(), AppError> {
-    db.set_setting(ROUTE_KEY, &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?)
+pub fn save_routing(ctx: Ctx, route: Route) -> Result<(), AppError> {
+    ctx.db.set_setting(ROUTE_KEY, &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?)
 }
 
 /// ユーザー発話を保存 → ルーティング → LLM呼び出し → 応答を保存。
@@ -216,7 +217,7 @@ pub fn save_routing(db: State<'_, Db>, route: Route) -> Result<(), AppError> {
 #[tauri::command]
 pub async fn send_chat(
     app: AppHandle,
-    db: State<'_, Db>,
+    ctx: Ctx,
     contexts: State<'_, SessionContexts>,
     graphs: State<'_, GraphCache>,
     agents: State<'_, AgentState>,
@@ -231,9 +232,9 @@ pub async fn send_chat(
     }
     let available: Vec<Provider> = Provider::ALL
         .into_iter()
-        .filter(|p| secrets::has_key(*p).unwrap_or(false))
+        .filter(|p| ctx.secrets.has_key(*p).unwrap_or(false))
         .collect();
-    let target = llm_router::resolve(&route, &available)?;
+    let target = llm_router::resolve(&ctx, &route, &available)?;
 
     // 訂正履歴はセッションの最初の発話で1回だけ読む
     let corrections = contexts
@@ -241,20 +242,20 @@ pub async fn send_chat(
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .entry(session_id.clone())
-        .or_insert_with(|| restore_corrections(&app))
+        .or_insert_with(|| restore_corrections(&ctx))
         .clone();
-    let tuning = tuning::load(&db)?;
-    let base = base_instructions(&db)?;
-    db.insert_log(&session_id, "user", text, None, None)?;
+    let tuning = tuning::load(&ctx.db)?;
+    let base = base_instructions(&ctx.db)?;
+    ctx.db.insert_log(&session_id, "user", text, None, None)?;
     // 往復数が上限を超えていれば古い分を要約し、LLMへは「要約 + 直近の会話」だけを渡す
-    let window = compact::prepare(&db, &session_id, tuning.history_exchanges, target.provider, &target.model).await?;
+    let window = compact::prepare(&ctx, &session_id, tuning.history_exchanges, target.provider, &target.model).await?;
     // 関連ナレッジは話題に合わせて発話ごとに想起する。「それ」などに備えて直前のユーザー発話も手がかりにする
     let previous = window.recent.iter().rev().filter(|r| r.role == "user").nth(1).map_or("", |r| r.content.as_str());
-    let related = batch::knowledge_root(&app)
+    let related = batch::knowledge_root(&ctx)
         .ok()
         .and_then(|root| related_context(&root, &graphs, &format!("{text}\n{previous}")));
     // 基本情報は設定の変更を次の発話から反映するため、セッションのキャッシュに入れず毎回読む
-    let personal = profile::load(&db)?.prompt_block(chrono::Local::now().date_naive());
+    let personal = profile::load(&ctx.db)?.prompt_block(chrono::Local::now().date_naive());
     let reference: Vec<String> = personal
         .into_iter()
         .chain(corrections)
@@ -269,21 +270,21 @@ pub async fn send_chat(
     let rows = window.recent;
 
     let record_usage = |input: u64, output: u64| {
-        if let Err(e) = db.record_usage(target.provider.as_str(), &target.model, input, output) {
+        if let Err(e) = ctx.db.record_usage(target.provider.as_str(), &target.model, input, output) {
             log::warn!("usage record failed: {e}");
         }
     };
     // 今回の発話は保存済みなので履歴から外し、別に渡す
     let mut prior: Vec<Value> = rows.into_iter().map(|r| json!({ "role": r.role, "content": r.content })).collect();
     prior.pop();
-    let root = batch::knowledge_root(&app)?;
+    let root = batch::knowledge_root(&ctx)?;
     let system = system.as_deref().unwrap_or_default();
-    let out = agent_cmd::run_with_tools(&agents, &root, target.provider, &target.model, system, web_access(&db)?.then_some((tuning.web_search_max, tuning.web_fetch_max)), shell_access(&db)?, prior, text, &on_event, record_usage).await?;
+    let out = agent_cmd::run_with_tools(&ctx, &agents, &root, target.provider, &target.model, system, web_access(&ctx.db)?.then_some((tuning.web_search_max, tuning.web_fetch_max)), shell_access(&ctx.db)?, prior, text, &on_event, record_usage).await?;
     let content = out.text;
-    db.insert_log(&session_id, "assistant", &content, Some(target.provider.as_str()), Some(&target.model))?;
+    ctx.db.insert_log(&session_id, "assistant", &content, Some(target.provider.as_str()), Some(&target.model))?;
     // 会話内容は確認なしでキャプチャ(チャプター)として書き出す。整理は画面の「今すぐ整理」で行う
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    match batch::knowledge_root(&app).and_then(|root| knowledge::append_capture(&root, &session_id, text, &content, &now)) {
+    match batch::knowledge_root(&ctx).and_then(|root| knowledge::append_capture(&root, &session_id, text, &content, &now)) {
         Ok(()) => {
             let _ = app.emit(batch::KNOWLEDGE_UPDATED_EVENT, ());
         }

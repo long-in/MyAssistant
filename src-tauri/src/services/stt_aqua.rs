@@ -4,7 +4,7 @@ use std::time::Duration;
 use reqwest::multipart::{Form, Part};
 use serde_json::{Value, json};
 
-use super::{audio::WHISPER_RATE, debug_log, secrets};
+use super::{audio::WHISPER_RATE, debug_log, secrets::Secrets};
 use crate::utils::error::AppError;
 
 const BASE_URL: &str = "https://api.aquavoice.com/v1";
@@ -55,13 +55,13 @@ fn error_from(status: u16, body: &str) -> AppError {
     }
 }
 
-pub async fn transcribe(samples: &[f32], language: &str) -> Result<String, AppError> {
-    transcribe_inner(samples, language).await.map_err(|e| e.with_source("aqua_stt"))
+pub async fn transcribe(secrets: &Secrets, samples: &[f32], language: &str) -> Result<String, AppError> {
+    transcribe_inner(secrets, samples, language).await.map_err(|e| e.with_source("aqua_stt"))
 }
 
 /// `auto`は言語指定をAPIの自動判定に任せる。
-async fn transcribe_inner(samples: &[f32], language: &str) -> Result<String, AppError> {
-    let key = secrets::get_aqua_key()?.ok_or_else(|| AppError::KeyMissing("aqua".into()))?;
+async fn transcribe_inner(secrets: &Secrets, samples: &[f32], language: &str) -> Result<String, AppError> {
+    let key = secrets.get_aqua_key()?.ok_or_else(|| AppError::KeyMissing("aqua".into()))?;
     let client = reqwest::Client::builder().timeout(TIMEOUT).build().map_err(|_| AppError::Network)?;
     let url = format!("{BASE_URL}/audio/transcriptions");
     let wav = to_wav(samples);
