@@ -87,6 +87,15 @@ pub enum AppError {
     /// MFAコードの入力が取り消された、または時間内に入力されなかった。
     #[error("MFA code was not provided")]
     MfaRequired,
+    /// プロジェクトの名称・イメージカラーの不備。
+    #[error("invalid project: {0}")]
+    InvalidProject(String),
+    /// プロジェクト数が上限に達している。
+    #[error("project limit reached")]
+    ProjectLimit,
+    /// 指定したプロジェクトが無い。
+    #[error("project not found")]
+    ProjectNotFound,
 }
 
 impl AppError {
@@ -136,6 +145,9 @@ impl AppError {
             Self::InvalidProfile(_) => "invalid_profile",
             Self::AwsConfig(_) => "aws_config_error",
             Self::MfaRequired => "mfa_required",
+            Self::InvalidProject(_) => "invalid_project",
+            Self::ProjectLimit => "project_limit",
+            Self::ProjectNotFound => "project_not_found",
             Self::ProviderRejected(_) => "provider_rejected",
             Self::ApiDisabled => "api_disabled",
             Self::KeyRestricted => "key_restricted",

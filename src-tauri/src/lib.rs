@@ -127,6 +127,12 @@ pub fn run() {
       commands::knowledge::run_batch,
       commands::knowledge::load_batch_route,
       commands::knowledge::save_batch_route,
+      commands::workspace::list_projects,
+      commands::workspace::get_active_workspace,
+      commands::workspace::create_project,
+      commands::workspace::update_project,
+      commands::workspace::delete_project,
+      commands::workspace::switch_workspace,
     ])
     .setup(|app| {
       use tauri::Manager;
@@ -136,7 +142,7 @@ pub fn run() {
       services::aws::init(app.handle());
       // パーソナルは従来どおりアプリデータ直下(`timeline.db` / `secrets.json` / `knowledge`)
       let personal = services::workspace::WorkspaceCtx::open(services::workspace::PERSONAL_ID, &dir)?;
-      app.manage(services::workspace::Workspaces::new(personal));
+      app.manage(services::workspace::Workspaces::new(&dir, personal));
       app.manage(commands::chat::SessionContexts::default());
       app.manage(services::graph::GraphCache::default());
       app.manage(commands::agent::AgentState::default());
@@ -157,7 +163,8 @@ pub fn run() {
           let minutes = services::batch::interval_minutes(&services::workspace::active(&handle).db)
             .unwrap_or(services::batch::DEFAULT_INTERVAL_MINUTES);
           tokio::time::sleep(Duration::from_secs(u64::from(minutes) * 60)).await;
-          for ctx in handle.state::<services::workspace::Workspaces>().all() {
+          // プロジェクトも含め、切り替えていないワークスペースの整理も続ける
+          for ctx in handle.state::<services::workspace::Workspaces>().load_all() {
             if let Err(e) = services::batch::run_guarded(&ctx).await {
               log::warn!("periodic batch failed ({}): {e}", ctx.id);
             }

@@ -8,3 +8,4 @@ pub mod profile;
 pub mod settings;
 pub mod settings_transfer;
 pub mod voice;
+pub mod workspace;
