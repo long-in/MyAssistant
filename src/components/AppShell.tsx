@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Bug, BookOpen, FolderKanban, Keyboard, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings } from "lucide-react";
 import Chat from "@/components/Chat";
+import AttentionToasts from "@/components/AttentionToasts";
 import MfaModal from "@/components/MfaModal";
 import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
 import { DEBUG_MODE_EVENT, PERSONAL_ID, getDebugMode, getKeyStatus } from "@/lib/api";
@@ -186,6 +187,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         {!onChat && <div key={`${workspaceId}:${settingsVersion}`} className="h-full">{children}</div>}
       </main>
       <MfaModal />
+      <AttentionToasts />
     </div>
   );
 }

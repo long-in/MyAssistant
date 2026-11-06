@@ -9,6 +9,7 @@ use crate::{
     db::{Db, UsageRow},
     services::{
         agent::AgentEvent,
+        attention::{self, AttentionKind},
         batch, compact,
         graph::{self, GraphCache},
         knowledge,
@@ -244,6 +245,13 @@ pub async fn send_chat(
         Ok(reply) => Ok(serde_json::to_value(reply).unwrap_or(Value::Null)),
         Err(e) => Err(serde_json::to_value(e).unwrap_or(Value::Null)),
     });
+    // 開いていないスペースで依頼が終わったら、対応(結果の確認)が必要なことを知らせる。削除されたスペースは知らせない
+    if ctx.ensure_alive().is_ok() && attention::is_background(&app, &ctx.id) {
+        match &result {
+            Ok(_) => attention::notify(&app, &ctx.id, AttentionKind::Finished, None, None),
+            Err(e) => attention::notify(&app, &ctx.id, AttentionKind::Failed, None, serde_json::to_value(e).ok()),
+        }
+    }
     result
 }
 
@@ -315,7 +323,15 @@ async fn send_chat_inner(
         shell_access(&ctx.db)?,
         prior,
         text,
-        &|event| ctx.shared.agent.emit(event),
+        &|event| {
+            // 開いていないスペースで承認が必要になったら、すぐ知らせる(画面が見ていなくても、承認は回答を待っている)
+            if let AgentEvent::Approval(a) = &event
+                && attention::is_background(app, &ctx.id)
+            {
+                attention::notify(app, &ctx.id, AttentionKind::Approval, Some(attention::summarize(a)), None);
+            }
+            ctx.shared.agent.emit(event);
+        },
         record_usage,
         || active(app).id == ctx.id,
     )

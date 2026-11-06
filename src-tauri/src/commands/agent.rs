@@ -1,12 +1,13 @@
 use std::{path::Path, time::Duration};
 
 use serde_json::Value;
-use tauri::{State, ipc::Channel};
+use tauri::{AppHandle, State, ipc::Channel};
 
 use crate::{
     services::{
         agent::{self, AgentEvent, AgentOutcome, Env},
         agent_run::RunSnapshot,
+        attention::{self, AttentionKind},
         cancel::CancelToken,
         llm_client,
         secrets::Provider,
@@ -137,9 +138,15 @@ pub fn agent_resume(
 
 /// 画面がワークスペースを離れた。以降の進捗は記録だけにして、依頼は止めない。
 #[tauri::command]
-pub fn agent_detach(ws: State<'_, Workspaces>, workspace_id: String) {
+pub fn agent_detach(app: AppHandle, ws: State<'_, Workspaces>, workspace_id: String) {
     if let Ok(ctx) = ws.resolve(&workspace_id) {
         ctx.shared.agent.detach();
+        // 承認待ちのまま別のスペースへ移った: 対応が必要なことを、改めて知らせる
+        if let Some(a) = ctx.shared.agent.pending_approval()
+            && attention::is_background(&app, &workspace_id)
+        {
+            attention::notify(&app, &workspace_id, AttentionKind::Approval, Some(attention::summarize(&a)), None);
+        }
     }
 }
 

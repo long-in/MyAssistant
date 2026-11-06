@@ -652,6 +652,21 @@ export type ActiveWorkspace = { id: string; space: Space | null };
 
 export const WORKSPACE_CHANGED_EVENT = "workspace-changed";
 
+/** 開いていないスペースで、対応が必要になったときの通知。 */
+export const AGENT_ATTENTION_EVENT = "agent-attention";
+export type AgentAttention = {
+  /** 対象のワークスペース(`personal`またはスペースID)。 */
+  workspace_id: string;
+  /** スペースの名称とイメージカラー。パーソナルは`null`。 */
+  workspace_name: string | null;
+  workspace_color: string | null;
+  /** approval=承認が必要、finished=依頼が完了、failed=依頼が失敗。 */
+  kind: "approval" | "finished" | "failed";
+  /** 承認を求められている内容の要約。 */
+  detail: string | null;
+  error: AppError | null;
+};
+
 /** スペースに選べるイメージカラー(30色)。 */
 export const listSpaceColors = () => invoke<string[]>("list_space_colors");
 export const listSpaces = () => invoke<Space[]>("list_spaces");

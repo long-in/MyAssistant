@@ -175,6 +175,11 @@ impl AgentState {
         }
     }
 
+    /// 回答待ちの承認(あれば)。
+    pub fn pending_approval(&self) -> Option<Approval> {
+        lock(&self.inner).pending.clone()
+    }
+
     /// 画面が見なくなった(ワークスペースを切り替えた)。以降の進捗は記録だけにする。
     pub fn detach(&self) {
         lock(&self.inner).sink = None;
