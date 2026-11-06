@@ -13,7 +13,7 @@ Next.js 16(App Router、`output: "export"`)の静的サイト。Tauri の WebVie
 | `/shortcuts` | ショートカット | 一覧。定義は `lib/shortcuts.ts` と共有 |
 | `/debug` | デバッグ | デバッグモードが有効なときだけ([debug-log.md](debug-log.md)) |
 
-左のナビゲーション(`AppShell`)で移動する。幅の狭いウィンドウではアイコンだけになる。ナビゲーションの上部に、パーソナル / ワークの切り替えとスペース選択(`WorkspaceSwitcher`)がある。
+左のナビゲーション(`AppShell`)で移動する。幅の狭いウィンドウではアイコンだけになる。その左に、パーソナルと各スペースを並べたスペースレール(`SpaceRail`)がある。メニューの上部には、いまの居場所(パーソナル / スペース名)を示し、項目は主要と補助に分ける。
 
 ## 対話画面(`components/Chat.tsx`)
 
