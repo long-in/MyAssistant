@@ -90,6 +90,9 @@ pub enum AppError {
     /// プロジェクトの名称・イメージカラーの不備。
     #[error("invalid project: {0}")]
     InvalidProject(String),
+    /// 指定した名称を、別のプロジェクトがすでに使っている。
+    #[error("project name already in use")]
+    NameInUse,
     /// 指定した色を、別のプロジェクトがすでに使っている。
     #[error("project color already in use")]
     ColorInUse,
@@ -149,6 +152,7 @@ impl AppError {
             Self::AwsConfig(_) => "aws_config_error",
             Self::MfaRequired => "mfa_required",
             Self::InvalidProject(_) => "invalid_project",
+            Self::NameInUse => "name_in_use",
             Self::ColorInUse => "color_in_use",
             Self::ProjectLimit => "project_limit",
             Self::ProjectNotFound => "project_not_found",

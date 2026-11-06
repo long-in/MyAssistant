@@ -99,9 +99,14 @@ fn clean_color(color: &str) -> Result<String, AppError> {
     Ok(c)
 }
 
-/// `color`を、`except`以外のプロジェクトがすでに使っていれば拒否する。
-fn ensure_color_free(projects: &[Project], color: &str, except: Option<&str>) -> Result<(), AppError> {
-    if projects.iter().any(|p| p.color == color && Some(p.id.as_str()) != except) {
+/// `name`と`color`を、`except`以外のプロジェクトがすでに使っていれば拒否する。
+/// 名称は大文字小文字を区別せず比較する(`name`は整形済みであること)。
+fn ensure_unique(projects: &[Project], name: &str, color: &str, except: Option<&str>) -> Result<(), AppError> {
+    let others = || projects.iter().filter(|p| Some(p.id.as_str()) != except);
+    if others().any(|p| p.name.to_lowercase() == name.to_lowercase()) {
+        return Err(AppError::NameInUse);
+    }
+    if others().any(|p| p.color == color) {
         return Err(AppError::ColorInUse);
     }
     Ok(())
@@ -195,7 +200,7 @@ impl Workspaces {
         if projects.len() >= MAX_PROJECTS {
             return Err(AppError::ProjectLimit);
         }
-        ensure_color_free(&projects, &color, None)?;
+        ensure_unique(&projects, &name, &color, None)?;
         let project = Project {
             id: uuid::Uuid::new_v4().to_string(),
             name,
@@ -216,7 +221,7 @@ impl Workspaces {
     pub fn update(&self, id: &str, name: &str, color: &str) -> Result<Project, AppError> {
         let (name, color) = (clean_name(name)?, clean_color(color)?);
         let mut projects = self.projects();
-        ensure_color_free(&projects, &color, Some(id))?;
+        ensure_unique(&projects, &name, &color, Some(id))?;
         let mut next = projects.clone();
         let target = next.iter_mut().find(|p| p.id == id).ok_or(AppError::ProjectNotFound)?;
         target.name = name;
@@ -452,6 +457,27 @@ mod tests {
         // 削除すると、その色は空く
         ws.delete(&a.id).unwrap();
         assert!(ws.create("C", PALETTE[0]).is_ok());
+        assert_eq!(ws.list().len(), 2);
+    }
+
+    #[test]
+    fn names_cannot_be_shared_between_projects() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path());
+        let a = ws.create("Sales", PALETTE[0]).unwrap();
+        let b = ws.create("Dev", PALETTE[1]).unwrap();
+        // 前後の空白・大文字小文字の違いは同じ名称として扱う
+        for name in ["Sales", "  Sales ", "sales", "SALES"] {
+            assert!(matches!(ws.create(name, PALETTE[2]), Err(AppError::NameInUse)), "{name:?}");
+        }
+        assert!(matches!(ws.update(&b.id, "sales", PALETTE[1]), Err(AppError::NameInUse)));
+        // 自分の名称のまま色だけ変える、大文字小文字だけ変えるのは許可される
+        assert!(ws.update(&a.id, "Sales", PALETTE[3]).is_ok());
+        assert!(ws.update(&a.id, "SALES", PALETTE[3]).is_ok());
+        // 削除すると、その名称は空く
+        ws.delete(&a.id).unwrap();
+        assert!(ws.create("Sales", PALETTE[0]).is_ok());
+        // 拒否された操作では、一覧は変わらない
         assert_eq!(ws.list().len(), 2);
     }
 }

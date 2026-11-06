@@ -493,4 +493,5 @@ export const EN: Record<string, string> = {
   "その色は、ほかのプロジェクトがすでに使っています。別の色を選んでください。": "Another project already uses that color. Choose a different one.",
   "使用中: {name}": "In use: {name}",
   "{color}(使用中: {name})": "{color} (in use: {name})",
+  "その名称は、ほかのプロジェクトがすでに使っています。別の名称にしてください。": "Another project already uses that name. Choose a different one.",
 };
