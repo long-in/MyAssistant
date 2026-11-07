@@ -21,6 +21,7 @@ import CopySettingsCard from "@/components/CopySettingsCard";
 import CopyConfirmModal from "@/components/CopyConfirmModal";
 import { copyTargets, type CopyRequest } from "@/lib/copyTargets";
 import { PERSONAL_ID, type DeleteReport } from "@/lib/api";
+import { ensureOsPermission, osNotificationsEnabled, setOsNotificationsEnabled } from "@/lib/osNotify";
 import { bumpSettingsVersion, refreshWorkspace, useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
 import {
@@ -596,6 +597,37 @@ function LanguageSetting() {
 }
 
 /** デバッグモードのオン/オフ。ログにはAPIへ送る会話内容や文字起こしがそのまま残る。 */
+/** アプリが見えていない間に、ほかのスペースで対応が必要になったとき、macOSの通知も出すか。この端末の設定。 */
+function OsNotifications() {
+  const t = useT();
+  const [on, setOn] = useState(true);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOn(osNotificationsEnabled()); // 静的エクスポートのため、保存値はマウント後に読む
+  }, []);
+  const change = async (next: boolean) => {
+    if (next && !(await ensureOsPermission())) {
+      toast.error(t("通知が許可されていません。macOSのシステム設定の「通知」で、このアプリを許可してください。"));
+      return;
+    }
+    setOsNotificationsEnabled(next);
+    setOn(next);
+  };
+  return (
+    <section className="hud-panel px-5 py-4">
+      <label className="flex items-center justify-between gap-4 text-sm">
+        <span>
+          {t("OSの通知")}
+          <span className="block text-xs text-muted-foreground">
+            {t("アプリが背面にあるときや、ウィンドウを閉じているときに、ほかのスペースの承認待ち・完了・失敗を、macOSの通知でも知らせます(この端末の設定)。")}
+          </span>
+        </span>
+        <Switch checked={on} onCheckedChange={(v) => void change(v)} />
+      </label>
+    </section>
+  );
+}
+
 /** 選択中のスペースへ、パーソナルやほかのスペースの設定をコピーする。パーソナルには出さない。上書きの前に、確認のモーダルで必ず再確認する。 */
 function CopyIntoSpace() {
   const t = useT();
@@ -1997,6 +2029,7 @@ export default function Setup() {
           <LanguageSetting />
           <SettingsTransfer />
           <CopyIntoSpace />
+          <OsNotifications />
           <DebugMode />
           <DeleteSpace />
           </TabsContent>

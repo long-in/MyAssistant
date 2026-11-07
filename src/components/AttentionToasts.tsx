@@ -6,6 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { AGENT_ATTENTION_EVENT, type AgentAttention, errorMessage } from "@/lib/api";
 import { tr } from "@/lib/i18n";
+import { notifyOsIfBackground } from "@/lib/osNotify";
 import { switchTo, useWorkspace } from "@/lib/workspace";
 
 /** 通知の識別子。同じスペース・同じ種類の通知は、重ねずに置き換える。 */
@@ -50,11 +51,18 @@ export default function AttentionToasts() {
       const id = toastId(a.workspace_id, a.kind);
       const action = { label: tr("開く"), onClick: () => void open(a.workspace_id) };
       if (a.kind === "approval") {
-        toast.warning(tr("{who}: 承認が必要です", { who }), { id, description: approvalText(a), duration: Infinity, action });
+        const title = tr("{who}: 承認が必要です", { who });
+        toast.warning(title, { id, description: approvalText(a), duration: Infinity, action });
+        void notifyOsIfBackground(title, approvalText(a));
       } else if (a.kind === "finished") {
-        toast.success(tr("{who}: 依頼が完了しました", { who }), { id, duration: 30_000, action });
+        const title = tr("{who}: 依頼が完了しました", { who });
+        toast.success(title, { id, duration: 30_000, action });
+        void notifyOsIfBackground(title);
       } else {
-        toast.error(tr("{who}: 依頼が失敗しました", { who }), { id, description: a.error ? errorMessage(a.error) : undefined, duration: 30_000, action });
+        const title = tr("{who}: 依頼が失敗しました", { who });
+        const description = a.error ? errorMessage(a.error) : undefined;
+        toast.error(title, { id, description, duration: 30_000, action });
+        void notifyOsIfBackground(title, description);
       }
     });
     return () => {
