@@ -3,7 +3,10 @@
 import { useT } from "@/lib/i18n";
 import { useEffect, useRef, useState } from "react";
 import { Download, Ear, Loader2, MessageSquarePlus, Mic, Send, Square, Volume2, VolumeX } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { approvalLine } from "@/components/AttentionToasts";
+import { notifyOsIfBackground } from "@/lib/osNotify";
 import { createPortal } from "react-dom";
 import ModelSelector from "./ModelSelector";
 import { Button } from "@/components/ui/button";
@@ -129,6 +132,26 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
   const [draft, setDraft] = useState("");
   const [activity, setActivity] = useState<string | null>(null);
   const [approval, setApproval] = useState<Approval | null>(null);
+  const router = useRouter();
+
+  // 承認のダイアログは対話画面にある。設定などの別の画面を見ている間に承認が必要になったら、トーストで知らせる(「開く」で対話画面へ)。
+  // 承認に答えた・対話画面へ戻ったら、トーストを消す。ほかのスペースの通知(AttentionToasts)と、同じ識別子で重ならないようにする
+  useEffect(() => {
+    const id = `attention:${workspaceId}:approval`;
+    if (!approval || active) {
+      toast.dismiss(id);
+      return;
+    }
+    const one = (text: string) => {
+      const line = text.split(/\s+/).filter(Boolean).join(" ");
+      return line.length > 120 ? `${line.slice(0, 120)}…` : line;
+    };
+    const detail = approval.kind === "file" ? approval.path : approval.kind === "command" ? approval.preview : approval.kind === "allow_command" ? approval.steps.join(", ") : "";
+    const title = t("承認が必要です");
+    const description = approvalLine(approval.kind, one(detail));
+    toast.warning(title, { id, description, duration: Infinity, action: { label: t("開く"), onClick: () => router.push("/") } });
+    void notifyOsIfBackground(title, description);
+  }, [approval, active, workspaceId, router, t]);
   // 音声の返答の待ち受けは非同期で動くので、最新の承認要求をrefでも持つ
   const approvalRef = useRef<Approval | null>(null);
   const [listening, setListening] = useState<Listening>("idle");

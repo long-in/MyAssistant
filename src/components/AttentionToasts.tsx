@@ -13,10 +13,9 @@ import { switchTo, useWorkspace } from "@/lib/workspace";
 const toastId = (workspaceId: string, kind: AgentAttention["kind"]) => `attention:${workspaceId}:${kind}`;
 const KINDS: AgentAttention["kind"][] = ["approval", "finished", "failed"];
 
-/** 承認を求められている内容を、言語設定に合わせた1行にする。 */
-function approvalText(a: AgentAttention): string | undefined {
-  const detail = a.detail ?? "";
-  switch (a.approval_kind) {
+/** 承認を求められている内容を、言語設定に合わせた1行にする。`detail`は、ファイルは作成先、コマンドはその内容。 */
+export function approvalLine(kind: AgentAttention["approval_kind"], detail: string): string | undefined {
+  switch (kind) {
     case "file":
       return tr("ファイルを作成: {detail}", { detail });
     case "plan":
@@ -29,6 +28,8 @@ function approvalText(a: AgentAttention): string | undefined {
       return undefined;
   }
 }
+
+const approvalText = (a: AgentAttention) => approvalLine(a.approval_kind, a.detail ?? "");
 
 /**
  * 開いていないスペースで、依頼が完了・失敗したときや、承認が必要になったときに、トーストで知らせる。
