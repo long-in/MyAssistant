@@ -150,6 +150,20 @@ pub fn run() {
       commands::workspace::delete_space,
       commands::workspace::switch_workspace,
       commands::workspace::copy_workspace_settings,
+      commands::workspace::work_enabled,
+      commands::workspace::set_work_enabled,
+      commands::leader::leader_exists,
+      commands::leader::create_leader,
+      commands::leader::leader_get_prompt,
+      commands::leader::leader_set_prompt,
+      commands::leader::leader_key_status,
+      commands::leader::leader_save_api_key,
+      commands::leader::leader_delete_api_key,
+      commands::leader::leader_copy_api_key,
+      commands::leader::leader_suggest,
+      commands::leader::leader_dispatch,
+      commands::leader::leader_overview,
+      commands::leader::leader_set_confirmed,
     ])
     .setup(|app| {
       use tauri::Manager;

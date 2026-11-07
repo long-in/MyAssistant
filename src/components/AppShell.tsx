@@ -4,13 +4,13 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Bug, BookOpen, FolderKanban, Globe, Keyboard, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings, User } from "lucide-react";
+import { Bug, BookOpen, ClipboardList, Globe, Keyboard, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings, User } from "lucide-react";
 import Chat from "@/components/Chat";
 import AttentionToasts from "@/components/AttentionToasts";
 import MfaModal from "@/components/MfaModal";
 import SpacePalette from "@/components/SpacePalette";
 import SpaceRail from "@/components/SpaceRail";
-import { DEBUG_MODE_EVENT, PERSONAL_ID, getDebugMode, getKeyStatus } from "@/lib/api";
+import { DEBUG_MODE_EVENT, LEADER_COLOR, LEADER_ID, LEADER_NAME, PERSONAL_ID, getDebugMode, getKeyStatus } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
 import { syncGlobalPrefs } from "@/lib/globalSync";
 import { matchShortcut, type ShortcutId } from "@/lib/shortcuts";
@@ -25,9 +25,9 @@ const MAIN_NAV = [
 ] as const;
 
 /** 補助的な項目(メニューの下側にまとめる)。 */
-const SPACES_NAV = { href: "/workspace", label: "Manage spaces", icon: FolderKanban } as const;
 const GLOBAL_NAV = { href: "/global", label: "Global Settings", icon: Globe } as const;
 const HELP_NAV = { href: "/shortcuts", label: "Shortcuts", icon: Keyboard } as const;
+/** デバッグ(デバッグモードがオンのときだけ)。ログはワークスペースごとなので、主要メニューに置く。 */
 const DEBUG_NAV = { href: "/debug", label: "Debug", icon: Bug } as const;
 
 const NAV_SHORTCUTS: Partial<Record<ShortcutId, string>> = {
@@ -50,9 +50,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const onChat = pathname === "/";
   const { active, settingsVersion } = useWorkspace();
-  const accent = active.space?.color;
   const workspaceId = active.id;
   const personal = workspaceId === PERSONAL_ID;
+  const leader = workspaceId === LEADER_ID;
+  const accent = leader ? LEADER_COLOR : active.space?.color;
   const prevWorkspace = useRef(workspaceId);
 
   useEffect(() => {
@@ -175,21 +176,23 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <div
           className={cn("mb-3 flex w-full items-center justify-center rounded-md border px-2 py-2", !collapsed && "md:justify-start md:gap-2")}
           style={accent ? { borderColor: accent, backgroundColor: `${accent}14` } : undefined}
-          title={personal ? "Personal" : `Work / ${active.space?.name ?? ""}`}
+          title={personal ? "Personal" : `Work / ${leader ? LEADER_NAME : (active.space?.name ?? "")}`}
         >
           {personal ? (
             <User className="size-4 shrink-0 text-muted-foreground" />
+          ) : leader ? (
+            <ClipboardList className="size-4 shrink-0" style={{ color: accent }} />
           ) : (
             <span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: accent }} />
           )}
           <span className={cn("hidden min-w-0 flex-col leading-tight", !collapsed && "md:flex")}>
             <span className="hud-label text-[0.65rem] text-muted-foreground">{personal ? "PERSONAL" : "WORK"}</span>
-            <span className="truncate text-sm font-semibold">{personal ? "Personal" : (active.space?.name ?? "")}</span>
+            <span className="truncate text-sm font-semibold">{personal ? "Personal" : leader ? LEADER_NAME : (active.space?.name ?? "")}</span>
           </span>
         </div>
-        {MAIN_NAV.map((n) => navLink(n))}
+        {[...MAIN_NAV, ...(debug ? [DEBUG_NAV] : [])].map((n) => navLink(n))}
         <div className="my-2 h-px w-full bg-border" />
-        {[...(!personal ? [SPACES_NAV] : []), GLOBAL_NAV, HELP_NAV, ...(debug ? [DEBUG_NAV] : [])].map((n) => navLink(n, true))}
+        {[GLOBAL_NAV, HELP_NAV].map((n) => navLink(n, true))}
         <div ref={setModelSlot} className={cn("mt-auto hidden px-1 pt-4", !collapsed && "md:block")} />
         <button
           type="button"

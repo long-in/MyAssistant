@@ -36,7 +36,7 @@ flowchart LR
 
 | パス | 責務 |
 | --- | --- |
-| `src/app/` | 画面。`/`(対話)、`/knowledge`、`/setup`、`/workspace`(ワークのスペース管理)、`/shortcuts`、`/debug` |
+| `src/app/` | 画面。`/`(対話)、`/knowledge`、`/setup`、`/shortcuts`、`/debug` |
 | `src/components/` | 対話 UI(`Chat.tsx`)、字幕、波形、承認モーダル、実行ログなど。`ui/` は shadcn/ui |
 | `src/lib/` | Tauri 呼び出し(`api.ts`)、ワークスペースの状態(`workspace.ts`)、音声での承認・切り替えの判定、字幕の同期、ショートカット、料金の概算 |
 | `src-tauri/src/commands/` | フロントエンドから呼ぶ薄いコマンド層。入力検証と状態の受け渡しだけを行う |
@@ -59,7 +59,7 @@ flowchart LR
 
 | 型 | 役割 |
 | --- | --- |
-| `Workspaces` | ワークスペース(パーソナル + スペース)の一覧、読み込み済みの `WorkspaceCtx`、選択中の ID |
+| `Workspaces` | ワークスペース(パーソナル + スペース)の一覧、読み込み済みの `WorkspaceCtx`、選択中の ID。別枠のリーダー(`leader()`。スペースの一覧には入らないが、選択・整理バッチの対象)も持つ |
 | `SessionContexts` | 会話ごとの訂正履歴の節のキャッシュ(セッション ID で識別) |
 | `GraphCache` | ナレッジのグラフ索引のキャッシュ(ルートのパスで識別。1 件分) |
 | `Recorder` | マイク録音 |

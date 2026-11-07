@@ -18,6 +18,8 @@ import Subtitles from "./Subtitles";
 import ApprovalModal, { type Approval, type Listening } from "./ApprovalModal";
 import AbortButton from "./AbortButton";
 import SwitchConfirm from "./SwitchConfirm";
+import DispatchDraftCard from "./DispatchDraftCard";
+import LeaderLedger from "./LeaderLedger";
 import ExecutionLog, { applyAgentEvent, emptyLog, type LogState } from "./ExecutionLog";
 import { type Turn } from "./Reply";
 import OrbReadout, { type Phase } from "./OrbReadout";
@@ -26,7 +28,9 @@ import { isPlainSpace, matchShortcut } from "@/lib/shortcuts";
 import { judgeAnswer } from "@/lib/voiceApproval";
 import { detectSwitch } from "@/lib/voiceCommands";
 import {
+  LEADER_ID,
   type AgentEvent,
+  type DispatchDraft,
   type KeyStatus,
   type ModelInfo,
   type Route,
@@ -94,6 +98,9 @@ const TOOL_ACTIVITY: Record<string, string> = {
   read_file: "ファイルを読んでいます…",
   search_files: "ファイルを検索しています…",
   create_file: "ファイルを作成しています…",
+  space_list: "スペースの一覧を確認しています…",
+  ledger_list: "台帳を確認しています…",
+  draft_dispatch: "配布の下書きを作っています…",
 };
 
 /** `standby`: 常時待機が起動ワードを聞き取るために録音している。手動の操作が始まれば譲る。 */
@@ -132,6 +139,8 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
   const [draft, setDraft] = useState("");
   const [activity, setActivity] = useState<string | null>(null);
   const [approval, setApproval] = useState<Approval | null>(null);
+  // リーダーが作った配布の下書き。利用者が確かめて配布する
+  const [dispatchDraft, setDispatchDraft] = useState<DispatchDraft | null>(null);
   const router = useRouter();
 
   // 承認のダイアログは対話画面にある。設定などの別の画面を見ている間に承認が必要になったら、トーストで知らせる(「開く」で対話画面へ)。
@@ -276,6 +285,7 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
     if (e.type === "tool_call") setActivity(t(TOOL_ACTIVITY[e.name] ?? "ファイルを操作しています…"));
     else if (e.type === "tool_result") setActivity(null);
     else if (e.type === "approval") showApproval(e);
+    else if (e.type === "dispatch_draft") setDispatchDraft({ id: e.id, instruction: e.instruction, targets: e.targets });
     else if (e.type === "finished") finishResumed(e);
   };
 
@@ -310,6 +320,8 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
     setBusy(true);
     setTurns([turn]);
     setLog(snap.events.reduce(applyAgentEvent, emptyLog));
+    const lastDraft = [...snap.events].reverse().find((x) => x.type === "dispatch_draft");
+    if (lastDraft?.type === "dispatch_draft") setDispatchDraft({ id: lastDraft.id, instruction: lastDraft.instruction, targets: lastDraft.targets });
     // 離れている間に求められた承認は、回答を待っている。戻ったので、ここで答えられる
     if (snap.pending) showApproval({ type: "approval", ...snap.pending });
   };
@@ -363,6 +375,7 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
     if (gate.current.busy || approvalRef.current) cancelTask();
     setTurns([]);
     setLog(emptyLog);
+    setDispatchDraft(null);
     toast.success(t("新しい会話を始めました。"));
   };
 
@@ -927,7 +940,7 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
       <WorkspaceBadge className="pointer-events-none absolute top-4 right-4 z-10" />
       {modelSlot && createPortal(<ModelSelector route={route} models={models} keyStatus={keyStatus} onChange={changeRoute} />, modelSlot)}
       {needModel && (
-        <div className="mx-6 mt-4 flex items-center justify-between gap-3 rounded-lg border bg-muted/40 p-3 text-sm">
+        <div className="hud-panel hud-accent mx-6 mt-4 flex items-center justify-between gap-3 px-5 py-3 text-sm">
           <span>{t("音声入力にはローカル音声認識モデル(約470MB)のダウンロードが必要です。")}</span>
           <Button size="sm" disabled={downloading} onClick={download}>
             {downloading ? <Loader2 className="animate-spin" /> : <Download />}
@@ -936,8 +949,10 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
         </div>
       )}
 
+      {/* リーダーのときだけ、右に台帳を置く(円形波形は左のカラムの中央になる) */}
+      <div className="flex min-h-0 flex-1">
       {/* 中央: 読み上げ音声の円形波形 */}
-      <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 py-4">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-4 px-6 py-4">
         <div className={HIDE_WHEN_SMALL}>
           <UsageHud rows={usage} />
         </div>
@@ -956,7 +971,7 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
             type="button"
             variant="outline"
             size="sm"
-            className="pointer-events-auto self-start bg-background/80 backdrop-blur"
+            className="hud-label pointer-events-auto self-start border-primary/40 bg-background/80 backdrop-blur hover:border-primary"
             title={t("これまでの会話の流れを引き継がず、新しい会話を始める")}
             onClick={() => startNewConversation(true)}
           >
@@ -981,11 +996,21 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
           </div>
         </div>
       </div>
+      {workspaceId === LEADER_ID && <LeaderLedger active={active} className={cn("w-72 shrink-0 xl:w-[26rem]", HIDE_WHEN_SMALL)} />}
+      </div>
 
-      {approval && <ApprovalModal approval={approval} listening={listening} onAnswer={answerApproval} />}
+      {approval &&<ApprovalModal approval={approval} listening={listening} onAnswer={answerApproval} />}
+      {dispatchDraft && (
+        <DispatchDraftCard
+          key={dispatchDraft.id}
+          draft={dispatchDraft}
+          onClose={() => setDispatchDraft(null)}
+          className="absolute inset-x-6 bottom-28 z-20 mx-auto max-w-2xl"
+        />
+      )}
 
       {/* 下部: 操作ボタンと入力欄 */}
-      <div className="border-t border-primary/20 px-6 py-4">
+      <div className="border-t border-primary/30 bg-background/60 px-6 py-4 shadow-[0_-8px_24px_-12px_oklch(0.85_0.13_180/25%)] backdrop-blur">
         <div className="mx-auto flex max-w-4xl items-center gap-4">
           <Button
             type="button"
@@ -1049,7 +1074,7 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
               disabled={busy || needModel}
               placeholder={status}
               aria-label={t("メッセージ")}
-              className="max-h-48 min-h-20 resize-none bg-background/60"
+              className="max-h-48 min-h-20 resize-none border-primary/30 bg-background/60 focus-visible:border-primary"
             />
             <Button
               type="submit"

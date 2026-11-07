@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ArrowRight, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Heading } from "@/components/GlobalPanels";
 import { useT } from "@/lib/i18n";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { CopyRequest, CopyTarget } from "@/lib/copyTargets";
@@ -48,14 +48,13 @@ export default function CopySettingsCard({ targets, suggestedTo, fixedTo, onRequ
     ));
 
   return (
-    <Card id="copy-settings">
-      <CardHeader>
-        <CardTitle>{t("設定のコピー")}</CardTitle>
-        <CardDescription>
+    <section id="copy-settings" className="hud-panel hud-accent scroll-mt-6 px-5 py-4">
+      <Heading title="Copy Settings" help={t("設定のコピー")}>
+        <p>
           {t("パーソナルまたはほかのスペースの設定を、そのまま写します。モデル・音声・起動ワード・コマンド権限などが対象で、ナレッジ・会話は写しません。APIキー・読み上げ辞書は、選んだときだけ写します。パーソナルデータとスペースデータは写しません。コピー先の同じ設定は上書きされるため、コピーの前に確認します。")}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
+        </p>
+      </Heading>
+      <div className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-2">
           <Select items={items(targets.filter((t) => t.id !== to))} value={fromId} onValueChange={(v) => v && setPickedFrom(v as string)}>
             <SelectTrigger className="min-w-40" aria-label={t("コピー元")}>
@@ -85,7 +84,7 @@ export default function CopySettingsCard({ targets, suggestedTo, fixedTo, onRequ
           </Button>
           {to === null && <span className="text-xs text-muted-foreground">{t("コピー先を選んでください。")}</span>}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   );
 }

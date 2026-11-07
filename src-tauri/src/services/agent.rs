@@ -417,9 +417,23 @@ pub enum AgentEvent {
     Approval(Approval),
     /// 実行中のコマンドの出力。`id`は`run_command`の`tool_use`のid。
     CommandOutput { id: String, stream: Stream, text: String },
+    /// リーダーが作った配布の下書き。画面が、宛先を確認するカードを出す。配布は、利用者が押したときだけ(モデルは配布できない)。
+    DispatchDraft { id: String, instruction: String, targets: Vec<DraftTarget> },
     /// 依頼の完了。切り替えから戻って接続し直した画面にだけ送る(最初の画面は、コマンドの戻り値で結果を受け取る)。`reply`か`error`のどちらか。
     Finished { reply: Option<Value>, error: Option<Value> },
 }
+
+/// 配布の下書きの宛先(スペース)。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct DraftTarget {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+}
+
+/// ファイル操作に代わる、独自のツールの実行役(リーダーの台帳の参照・配布の下書き)。
+/// 引数は`tool_use`のid・ツール名・入力。実行結果と、画面へ流すイベント(あれば)を返す。
+pub type ToolHost<'a> = &'a (dyn Fn(&str, &str, &Value) -> (Result<String, String>, Option<AgentEvent>) + Sync);
 
 #[derive(Debug)]
 pub struct AgentOutcome {
@@ -431,16 +445,23 @@ pub struct Env<'a> {
     root: &'a Path,
     cancel: CancelToken,
     shell: bool,
+    /// 指定すると、ファイル操作ツールの代わりにこの実行役がツールを実行する(リーダー)。
+    host: Option<ToolHost<'a>>,
 }
 
 impl<'a> Env<'a> {
     /// ファイル操作だけの環境。コマンド実行は`with_shell`で有効にする。
     pub fn new(root: &'a Path) -> Self {
-        Self { root, cancel: CancelToken::default(), shell: false }
+        Self { root, cancel: CancelToken::default(), shell: false, host: None }
     }
 
     pub fn with_cancel(mut self, cancel: CancelToken) -> Self {
         self.cancel = cancel;
+        self
+    }
+
+    pub fn with_host(mut self, host: Option<ToolHost<'a>>) -> Self {
+        self.host = host;
         self
     }
 
@@ -571,6 +592,13 @@ where
 {
     emit(AgentEvent::ToolCall { id: call.id.clone(), name: call.name.clone(), input: call.input.clone() });
     let outcome = match call.name.as_str() {
+        _ if env.host.is_some() => {
+            let (result, event) = (env.host.expect("checked"))(&call.id, &call.name, &call.input);
+            if let Some(event) = event {
+                emit(event);
+            }
+            result
+        }
         "create_file" => create_with_approval(env, call, approve, emit).await,
         "propose_plan" if env.shell => propose_plan(call, plan, approve, emit).await,
         "run_command" if env.shell => run_command(env, call, plan.as_deref(), approve, emit).await,

@@ -51,13 +51,11 @@ pub fn is_background<R: Runtime>(app: &impl Manager<R>, workspace_id: &str) -> b
 
 /// 通知を出す。呼び出す側で、裏のワークスペースのときだけ呼ぶこと。
 pub fn notify(app: &AppHandle, workspace_id: &str, kind: AttentionKind, approval: Option<&Approval>, error: Option<Value>) {
-    let space = app
-        .try_state::<Workspaces>()
-        .and_then(|ws| ws.list().into_iter().find(|s| s.id == workspace_id));
+    let label = app.try_state::<Workspaces>().and_then(|ws| ws.label(workspace_id));
     let event = Attention {
         workspace_id: workspace_id.to_owned(),
-        workspace_name: space.as_ref().map(|s| s.name.clone()),
-        workspace_color: space.map(|s| s.color),
+        workspace_name: label.as_ref().map(|(n, _)| n.clone()),
+        workspace_color: label.map(|(_, c)| c),
         kind,
         approval_kind: approval.map(|a| kind_name(a.kind)),
         detail: approval.map(detail_of),

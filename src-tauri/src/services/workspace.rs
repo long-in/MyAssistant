@@ -20,12 +20,19 @@ use tauri::{
 };
 
 use super::{
-    agent_run::AgentState, aws::AwsState, batch, batch::BatchGuard, debug_log, debug_log::DebugLog, global_settings::GlobalStore, secrets::Secrets,
+    agent_run::{AgentState, RunStatus}, aws::AwsState, batch, batch::BatchGuard, debug_log, debug_log::DebugLog, global_settings::{GlobalStore, SettingsStore}, secrets::Secrets,
 };
 use crate::{db::Db, utils::error::AppError};
 
 /// パーソナルワークスペースのID。保存先は従来どおりアプリデータ直下。
 pub const PERSONAL_ID: &str = "personal";
+/// リーダー(各スペースのタスク進捗を管理する特別なスペース)のID。スペースの一覧・上限・色には含めない。
+/// ワークの有効/無効(`1` / `0`)を全体設定に保存するキー。全体設定のバックアップや設定のコピーの対象には入れない。
+pub const WORK_ENABLED_KEY: &str = "work_enabled";
+pub const LEADER_ID: &str = "leader";
+/// リーダーの表示名とイメージカラー(固定。スペースの色パレットとは別)。
+pub const LEADER_NAME: &str = "Leader";
+pub const LEADER_COLOR: &str = "#f59e0b";
 /// 作れるスペースの上限。
 pub const MAX_SPACES: usize = 30;
 /// スペース名の最大文字数。
@@ -117,7 +124,7 @@ pub struct ActiveWorkspace {
 }
 
 /// スペース名にできない名称(切り替えやバッジで、パーソナル・ワークと紛らわしくなるもの)。大文字小文字・前後の空白は無視して比べる。
-const RESERVED_NAMES: [&str; 4] = ["パーソナル", "ワーク", "personal", "work"];
+const RESERVED_NAMES: [&str; 6] = ["パーソナル", "ワーク", "リーダー", "personal", "work", "leader"];
 
 /// 名称を整える。前後の空白を除き、1〜`NAME_MAX_CHARS`文字で、制御文字を含まず、予約名でないこと。
 fn clean_name(name: &str) -> Result<String, AppError> {
@@ -168,6 +175,8 @@ pub struct Workspaces {
     shared: Mutex<HashMap<String, Arc<Shared>>>,
     active: RwLock<String>,
     spaces: Mutex<Vec<Space>>,
+    /// リーダー。作るまでは`None`。選択(`active`)の対象にはならず、`spaces`にも入らない。
+    leader: RwLock<Option<Arc<WorkspaceCtx>>>,
 }
 
 impl Workspaces {
@@ -181,12 +190,32 @@ impl Workspaces {
     pub fn new(root: &Path, personal: WorkspaceCtx) -> Self {
         let spaces = load_registry(root);
         let id = personal.id.clone();
+        let global = personal.global.clone();
+        // リーダーは、作成済み(フォルダがある)なら開く。開けなければ警告して、未作成として扱う
+        let leader_dir = root.join(DIR_NAME).join(LEADER_ID);
+        let leader = leader_dir
+            .join("timeline.db")
+            .exists()
+            .then(|| WorkspaceCtx::open_shared(LEADER_ID, &leader_dir, Arc::new(Shared::default()), global.clone()))
+            .and_then(|r| r.map_err(|e| log::warn!("leader not opened: {e}")).ok())
+            .map(Arc::new);
+        // リーダーは、選択できるよう、読み込み済み・共有状態の一覧にも入れる(`spaces`には入れない)
+        let mut shared = HashMap::from([(id.clone(), personal.shared.clone())]);
+        let mut loaded = HashMap::from([(id.clone(), Arc::new(personal))]);
+        if let Some(l) = &leader {
+            shared.insert(LEADER_ID.to_owned(), l.shared.clone());
+            loaded.insert(LEADER_ID.to_owned(), l.clone());
+            if let Err(e) = debug_log::refresh(l) {
+                log::warn!("debug log init failed for leader: {e}");
+            }
+        }
         Self {
+            leader: RwLock::new(leader),
             root: root.to_owned(),
-            global: personal.global.clone(),
+            global,
             op: Mutex::new(()),
-            shared: Mutex::new(HashMap::from([(id.clone(), personal.shared.clone())])),
-            loaded: RwLock::new(HashMap::from([(id.clone(), Arc::new(personal))])),
+            shared: Mutex::new(shared),
+            loaded: RwLock::new(loaded),
             active: RwLock::new(id),
             spaces: Mutex::new(spaces),
         }
@@ -202,6 +231,88 @@ impl Workspaces {
 
     fn space_dir(&self, id: &str) -> PathBuf {
         self.root.join(DIR_NAME).join(id)
+    }
+
+    /// スペースまたはリーダーの表示用の名称とイメージカラー。パーソナルや一覧に無いIDは`None`。
+    pub fn label(&self, id: &str) -> Option<(String, String)> {
+        if id == LEADER_ID {
+            return self.leader().map(|_| (LEADER_NAME.to_owned(), LEADER_COLOR.to_owned()));
+        }
+        self.spaces().iter().find(|s| s.id == id).map(|s| (s.name.clone(), s.color.clone()))
+    }
+
+    /// リーダー。作成前は`None`。
+    pub fn leader(&self) -> Option<Arc<WorkspaceCtx>> {
+        self.leader.read().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// ワークが有効か。全体設定に`0`と保存されているときだけ無効(未保存は有効)。
+    /// 無効のあいだも、リーダー・スペースのデータはディスクに残る。選択・配布・バックグラウンド処理の入口だけを閉じる。
+    pub fn work_enabled(&self) -> bool {
+        self.global.get_setting(WORK_ENABLED_KEY).ok().flatten().as_deref() != Some("0")
+    }
+
+    /// ワークの有効/無効を切り替える。無効にするときは、リーダーが作成済みで、ワークの中に実行中・承認待ちが無いこと。
+    /// ワークを開いていたらパーソナルへ戻す。戻したかを返す。
+    pub fn set_work_enabled(&self, enabled: bool) -> Result<bool, AppError> {
+        let _op = self.op();
+        if self.leader().is_none() {
+            return Err(AppError::LeaderRequired);
+        }
+        let mut moved = false;
+        if !enabled {
+            let busy = |id: &str| matches!(self.run_status(id), RunStatus::Running | RunStatus::AwaitingApproval);
+            if busy(LEADER_ID) || self.spaces().iter().any(|p| busy(&p.id)) {
+                return Err(AppError::WorkBusy);
+            }
+            let mut active = self.active.write().unwrap_or_else(|p| p.into_inner());
+            if *active != PERSONAL_ID {
+                *active = PERSONAL_ID.to_owned();
+                moved = true;
+            }
+        }
+        self.global.set_setting(WORK_ENABLED_KEY, if enabled { "1" } else { "0" })?;
+        Ok(moved)
+    }
+
+    /// リーダーがあり、ワークが有効であることを確かめる(スペースを作る前の条件)。
+    pub fn ensure_leader(&self) -> Result<Arc<WorkspaceCtx>, AppError> {
+        let leader = self.leader().ok_or(AppError::LeaderRequired)?;
+        if !self.work_enabled() {
+            return Err(AppError::WorkDisabled);
+        }
+        Ok(leader)
+    }
+
+    /// リーダーを作る(1つだけ)。専用の`timeline.db`と`secrets.json`を`workspaces/leader/`に持つ。
+    pub fn create_leader(&self) -> Result<Arc<WorkspaceCtx>, AppError> {
+        let _op = self.op();
+        let mut slot = self.leader.write().unwrap_or_else(|p| p.into_inner());
+        if slot.is_some() {
+            return Err(AppError::LeaderExists);
+        }
+        let dir = self.root.join(DIR_NAME).join(LEADER_ID);
+        let ctx = Arc::new(WorkspaceCtx::open_shared(LEADER_ID, &dir, Arc::new(Shared::default()), self.global.clone())?);
+        if let Err(e) = debug_log::refresh(&ctx) {
+            log::warn!("debug log init failed for leader: {e}");
+        }
+        // 選択・整理バッチ・保存先の確認の対象にするため、読み込み済み・共有状態にも登録する
+        self.shared.lock().unwrap_or_else(|p| p.into_inner()).insert(LEADER_ID.to_owned(), ctx.shared.clone());
+        self.loaded.write().unwrap_or_else(|p| p.into_inner()).insert(LEADER_ID.to_owned(), ctx.clone());
+        *slot = Some(ctx.clone());
+        Ok(ctx)
+    }
+
+    /// 開いている(読み込み済みの)ワークスペースの依頼の状態。一度も開いていなければ`Idle`。開かず、中身も読まない。
+    pub fn run_status(&self, id: &str) -> RunStatus {
+        let shared = self.shared.lock().unwrap_or_else(|p| p.into_inner()).get(id).cloned();
+        shared.map_or(RunStatus::Idle, |s| s.agent.status())
+    }
+
+    /// ワークスペースの直近の依頼のセッションID(無ければ空)。
+    pub fn run_session(&self, id: &str) -> String {
+        let shared = self.shared.lock().unwrap_or_else(|p| p.into_inner()).get(id).cloned();
+        shared.map(|s| s.agent.session_id()).unwrap_or_default()
     }
 
     fn personal(&self) -> Arc<WorkspaceCtx> {
@@ -224,19 +335,31 @@ impl Workspaces {
         self.loaded.read().unwrap_or_else(|p| p.into_inner()).get(id).cloned()
     }
 
-    /// 読み込み済みのすべて。
+    /// 読み込み済みのすべて。ワークが無効のあいだは、パーソナルだけ(終了時のバッチの対象)。
     pub fn all(&self) -> Vec<Arc<WorkspaceCtx>> {
-        self.loaded.read().unwrap_or_else(|p| p.into_inner()).values().cloned().collect()
+        let enabled = self.work_enabled();
+        self.loaded.read().unwrap_or_else(|p| p.into_inner()).values().filter(|c| enabled || c.id == PERSONAL_ID).cloned().collect()
     }
 
     fn shared_for(&self, id: &str) -> Arc<Shared> {
         self.shared.lock().unwrap_or_else(|p| p.into_inner()).entry(id.to_owned()).or_default().clone()
     }
 
-    /// バックグラウンド処理の対象になるワークスペースのID(パーソナルとすべてのスペース)。開かずに返す。
+    /// バックグラウンド処理の対象になるワークスペースのID(パーソナル・リーダー・すべてのスペース)。開かずに返す。
     pub fn batch_ids(&self) -> Vec<String> {
         let _op = self.op();
-        std::iter::once(PERSONAL_ID.to_owned()).chain(self.spaces().iter().map(|p| p.id.clone())).collect()
+        self.ids_locked()
+    }
+
+    /// パーソナル・(あれば)リーダー・すべてのスペースのID。
+    fn ids_locked(&self) -> Vec<String> {
+        if !self.work_enabled() {
+            return vec![PERSONAL_ID.to_owned()];
+        }
+        std::iter::once(PERSONAL_ID.to_owned())
+            .chain(self.leader().map(|_| LEADER_ID.to_owned()))
+            .chain(self.spaces().iter().map(|p| p.id.clone()))
+            .collect()
     }
 
     /// 読み込み済みならそれを、未読み込みなら一時的に開いて返す(読み込み済みの一覧には加えない)。`op`を持った状態で呼ぶ。
@@ -263,7 +386,7 @@ impl Workspaces {
 
     /// すべてのワークスペースを、保存先の確認のために開く(未読み込みは一時的に開くだけ)。開けないものは警告して飛ばす。
     fn all_for_check_locked(&self) -> Vec<Arc<WorkspaceCtx>> {
-        let ids: Vec<String> = std::iter::once(PERSONAL_ID.to_owned()).chain(self.spaces().iter().map(|p| p.id.clone())).collect();
+        let ids = self.ids_locked();
         ids.iter()
             .filter_map(|id| {
                 self.open_transient_locked(id).map_err(|e| log::warn!("workspace {id} not opened: {e}")).ok()
@@ -391,6 +514,9 @@ impl Workspaces {
     pub fn switch(&self, id: &str) -> Result<ActiveWorkspace, AppError> {
         let _op = self.op();
         if id != PERSONAL_ID {
+            if !self.work_enabled() {
+                return Err(AppError::WorkDisabled);
+            }
             self.load_locked(id)?;
         }
         *self.active.write().unwrap_or_else(|p| p.into_inner()) = id.to_owned();
@@ -582,6 +708,84 @@ mod tests {
 
     fn workspaces(root: &Path) -> Workspaces {
         Workspaces::new(root, WorkspaceCtx::open(PERSONAL_ID, root).unwrap())
+    }
+
+    #[test]
+    fn disabling_work_closes_the_entrances_but_keeps_the_data() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path());
+        assert!(ws.work_enabled(), "未保存は有効");
+        assert!(matches!(ws.set_work_enabled(false), Err(AppError::LeaderRequired)));
+        ws.create_leader().unwrap();
+        let space = ws.create("A", PALETTE[0]).unwrap();
+        ws.switch(&space.id).unwrap();
+        // 開いていたら、パーソナルへ戻る
+        assert!(ws.set_work_enabled(false).unwrap());
+        assert!(!ws.work_enabled());
+        assert_eq!(ws.active().id, PERSONAL_ID);
+        assert!(matches!(ws.switch(&space.id), Err(AppError::WorkDisabled)));
+        assert!(matches!(ws.switch(LEADER_ID), Err(AppError::WorkDisabled)));
+        assert!(matches!(ws.ensure_leader(), Err(AppError::WorkDisabled)));
+        assert_eq!(ws.batch_ids(), vec![PERSONAL_ID.to_owned()]);
+        assert!(ws.all().iter().all(|c| c.id == PERSONAL_ID));
+        // データは残り、再起動後も無効のまま。有効に戻せば元どおり使える
+        drop(ws);
+        let again = workspaces(d.path());
+        assert!(!again.work_enabled());
+        assert_eq!(again.list().len(), 1);
+        assert!(again.leader().is_some());
+        assert!(!again.set_work_enabled(true).unwrap());
+        assert_eq!(again.switch(&space.id).unwrap().id, space.id);
+    }
+
+    #[test]
+    fn leader_is_created_once_outside_the_space_list() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path());
+        assert!(matches!(ws.ensure_leader(), Err(AppError::LeaderRequired)));
+        let leader = ws.create_leader().unwrap();
+        assert_eq!(leader.id, LEADER_ID);
+        assert!(matches!(ws.create_leader(), Err(AppError::LeaderExists)));
+        // スペースの一覧・上限・色には入らない
+        assert!(ws.list().is_empty());
+        assert_eq!(ws.active().id, PERSONAL_ID);
+        // 選択はできる。Ctxの元になる`active()`も、パーソナルに落ちずリーダーを返す
+        assert_eq!(ws.switch(LEADER_ID).unwrap().id, LEADER_ID);
+        assert_eq!(ws.active().id, LEADER_ID);
+        assert!(ws.active_info().space.is_none());
+        assert!(Arc::ptr_eq(&ws.resolve(LEADER_ID).unwrap(), &leader));
+        assert_eq!(ws.run_status(LEADER_ID), RunStatus::Idle);
+        assert_eq!(ws.label(LEADER_ID), Some((LEADER_NAME.into(), LEADER_COLOR.into())));
+        assert_eq!(ws.label(PERSONAL_ID), None);
+        assert!(ws.batch_ids().contains(&LEADER_ID.to_owned()), "整理バッチの対象に入る");
+        assert!(ws.all().iter().any(|c| c.id == LEADER_ID), "終了時のバッチの対象に入る");
+        ws.switch(PERSONAL_ID).unwrap();
+        // 専用のDBとキーを持ち、パーソナルと混ざらない
+        leader.secrets.set_tts_key("leader-only").unwrap();
+        assert!(!ws.resolve(PERSONAL_ID).unwrap().secrets.has_tts_key().unwrap());
+        // 再起動後も開き直される
+        drop(ws);
+        let again = workspaces(d.path());
+        assert!(again.leader().unwrap().secrets.has_tts_key().unwrap());
+    }
+
+    #[test]
+    fn leader_names_are_reserved() {
+        assert!(matches!(clean_name("リーダー"), Err(AppError::ReservedName)));
+        assert!(matches!(clean_name(" Leader "), Err(AppError::ReservedName)));
+        assert!(clean_name("リーダー補佐").is_ok());
+    }
+
+    #[test]
+    fn run_status_reads_loaded_space_without_opening() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path());
+        let a = ws.create("A", PALETTE[0]).unwrap();
+        assert_eq!(ws.run_status(&a.id), RunStatus::Idle);
+        let ctx = ws.resolve(&a.id).unwrap();
+        assert!(ctx.shared.agent.try_begin_detached("s1", "x"));
+        assert_eq!((ws.run_status(&a.id), ws.run_session(&a.id).as_str()), (RunStatus::Running, "s1"));
+        assert_eq!(ws.run_status("unknown"), RunStatus::Idle);
     }
 
     #[test]
@@ -807,6 +1011,26 @@ mod tests {
         // パーソナルから見ても、スペースの場所は使えない
         assert!(ws.ensure_paths_free(PERSONAL_ID, &a_default).is_err());
         assert!(ws.ensure_paths_free(PERSONAL_ID, free.path()).is_ok());
+    }
+
+    #[test]
+    fn leader_storage_is_protected_and_can_use_its_own_default() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path());
+        ws.create_leader().unwrap();
+        let a = ws.create("A", PALETTE[0]).unwrap();
+        let leader_default = d.path().join(DIR_NAME).join(LEADER_ID).join("knowledge");
+        let free = tempfile::tempdir().unwrap();
+        // スペースやパーソナルは、リーダーのナレッジの場所(その中・その親)を使えない
+        for bad in [leader_default.clone(), leader_default.join("sub"), d.path().join(DIR_NAME).join(LEADER_ID)] {
+            assert!(matches!(ws.ensure_paths_free(&a.id, &bad), Err(AppError::PathInUse)), "{bad:?}");
+            assert!(matches!(ws.ensure_paths_free(PERSONAL_ID, &bad), Err(AppError::PathInUse)), "{bad:?}");
+        }
+        // リーダー自身は、自分の既定の場所へ戻せる。別の空いた場所も使える。スペースの場所は使えない
+        assert!(ws.ensure_paths_free(LEADER_ID, &leader_default).is_ok());
+        assert!(ws.ensure_paths_free(LEADER_ID, free.path()).is_ok());
+        assert!(ws.ensure_paths_free(LEADER_ID, &d.path().join(DIR_NAME).join(&a.id).join("knowledge")).is_err());
+        assert!(ws.ensure_paths_free(LEADER_ID, d.path()).is_err(), "アプリのデータ全体は保存先にできない");
     }
 
     #[test]

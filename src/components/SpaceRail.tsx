@@ -1,9 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Plus, User } from "lucide-react";
+import { ClipboardList, Plus, User } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
-import { PERSONAL_ID, errorMessage } from "@/lib/api";
+import CreateSpaceDialog from "./CreateSpaceDialog";
+import { LEADER_COLOR, LEADER_ID, PERSONAL_ID, errorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { switchTo, useWorkspace } from "@/lib/workspace";
 
@@ -16,7 +18,9 @@ const initial = (name: string) => Array.from(name.trim())[0]?.toUpperCase() ?? "
  */
 export default function SpaceRail() {
   const router = useRouter();
-  const { active, spaces } = useWorkspace();
+  const { active, spaces, hasLeader, workOn } = useWorkspace();
+  const onLeader = active.id === LEADER_ID;
+  const [creating, setCreating] = useState(false);
 
   const go = (id: string) => {
     if (id === active.id) return;
@@ -56,20 +60,61 @@ export default function SpaceRail() {
 
   return (
     <div className="flex w-14 shrink-0 flex-col items-center gap-1 border-r bg-sidebar/90 py-3 backdrop-blur" aria-label="Spaces">
+      {/* パーソナル: 単独のエージェントとして先頭に置く */}
       {item(PERSONAL_ID, "Personal", null, <User className="size-4" />)}
-      {spaces.length > 0 && <div className="my-1 h-px w-6 bg-border" />}
-      <div className="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto overflow-x-hidden">
-        {spaces.map((p) => item(p.id, p.name, p.color, initial(p.name)))}
-      </div>
+      <div className="my-1 h-px w-6 bg-border" />
+      {/* ワークが使えないあいだ(未有効・無効)は、枠を出さず、全体設定の「Work」への入口だけを出す */}
+      {!workOn && (
+        <button
+          type="button"
+          onClick={() => router.push("/global#work")}
+          title={hasLeader ? "Work is off (turn on in Global Settings)" : "Enable Work"}
+          aria-label={hasLeader ? "Work is off" : "Enable Work"}
+          className="flex w-12 flex-col items-center gap-1 rounded-xl border border-dashed py-2 text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+        >
+          <Plus className="size-4" />
+          <span className="text-[9px] font-semibold tracking-wider">WORK</span>
+        </button>
+      )}
+      {workOn && <>
+      <div className="px-1 text-[9px] font-semibold tracking-wider text-muted-foreground">WORK</div>
+      {/* ワーク: リーダーと各スペースを、ひとつの枠にまとめて包含関係を示す */}
+      <div className="flex min-h-0 w-12 flex-col items-center gap-1 rounded-xl bg-muted/50 py-2" aria-label="Work">
+      {/* リーダー: スペースと同じように切り替えて、チャットを開く */}
       <button
         type="button"
-        onClick={() => router.push("/workspace")}
-        title="Create or manage spaces"
-        aria-label="Create or manage spaces"
-        className="mt-1 flex size-9 shrink-0 items-center justify-center rounded-full border border-dashed text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+        onClick={() => {
+          router.push("/");
+          if (active.id !== LEADER_ID) switchTo(LEADER_ID).catch((e) => toast.error(errorMessage(e)));
+        }}
+        title="Leader"
+        aria-label="Leader"
+        aria-current={active.id === LEADER_ID ? "true" : onLeader ? "page" : undefined}
+        className={cn(
+          "flex size-9 shrink-0 items-center justify-center rounded-lg border text-muted-foreground transition-colors hover:border-primary hover:text-primary",
+          onLeader && "border-primary text-primary",
+        )}
+        style={active.id === LEADER_ID ? { borderColor: LEADER_COLOR, color: LEADER_COLOR } : undefined}
       >
-        <Plus className="size-4" />
+        <ClipboardList className="size-4" />
       </button>
+      {spaces.length > 0 && <div className="my-1 h-px w-6 bg-border" />}
+      {/* スペースの一覧。追加ボタンは、最後のスペースの直下に置く(一覧が長ければ、一覧の中でスクロールする) */}
+      <div className="flex min-h-0 w-full flex-col items-center gap-1 overflow-y-auto overflow-x-hidden">
+        {spaces.map((p) => item(p.id, p.name, p.color, initial(p.name)))}
+        <button
+          type="button"
+          onClick={() => setCreating(true)}
+          title="Create a space"
+          aria-label="Create a space"
+          className="flex size-9 shrink-0 items-center justify-center rounded-full border border-dashed text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+        >
+          <Plus className="size-4" />
+        </button>
+      </div>
+      </div>
+      </>}
+      {creating && <CreateSpaceDialog onClose={() => setCreating(false)} />}
     </div>
   );
 }

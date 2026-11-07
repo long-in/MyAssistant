@@ -56,6 +56,7 @@ const ENTRIES: &[(&str, Kind)] = &[
     (voice::VOICEVOX_STYLE_KEY, Kind::Text),
     (tuning::KEY, Kind::Json),
     (super::batch::BATCH_ROUTE_KEY, Kind::Json),
+    (proofread::ROUTE_KEY, Kind::Json),
     (debug_log::ENABLED_KEY, Kind::Flag),
 ];
 
@@ -64,7 +65,6 @@ const GLOBAL_ENTRIES: &[(&str, Kind)] = &[
     (chat::BASE_INSTRUCTIONS_KEY, Kind::Text),
     (global_settings::OS_NOTIFICATIONS_KEY, Kind::Flag),
     (global_settings::LANGUAGE_KEY, Kind::OneOf(&["ja", "en"])),
-    (proofread::ROUTE_KEY, Kind::Json),
     (tuning::VOICE_KEY, Kind::Json),
     (wake::ENABLED_KEY, Kind::Flag),
     (wake::WORDS_KEY, Kind::Json),
@@ -340,7 +340,7 @@ mod tests {
     #[test]
     fn space_export_excludes_global_items() {
         let (_da, a) = mem();
-        for key in [profile::KEY, chat::BASE_INSTRUCTIONS_KEY, wake::WORDS_KEY, proofread::ROUTE_KEY, batch::BATCH_INTERVAL_KEY] {
+        for key in [profile::KEY, chat::BASE_INSTRUCTIONS_KEY, wake::WORDS_KEY, batch::BATCH_INTERVAL_KEY] {
             a.set_setting(key, "x").unwrap();
         }
         a.set_setting(chat::SHELL_ACCESS_KEY, "1").unwrap();

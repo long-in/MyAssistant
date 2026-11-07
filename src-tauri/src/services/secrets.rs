@@ -93,6 +93,18 @@ impl Secrets {
         Ok(count)
     }
 
+    /// `src`のAPIキー(Anthropic)だけを写す。TTS・音声認識・AWSの設定は写さない。写したら`true`、`src`に無ければ`false`。
+    /// 生値はこのモジュールの外へ出さない。リーダーが他のワークスペースのキーを使うときに使う。
+    pub fn copy_api_key_from(&self, src: &Secrets, provider: Provider) -> Result<bool, AppError> {
+        if std::ptr::eq(self, src) || provider == Provider::Bedrock {
+            return Ok(false);
+        }
+        match src.get_key(provider)? {
+            Some(key) => self.set_key(provider, &key).map(|()| true),
+            None => Ok(false),
+        }
+    }
+
     /// Bedrockのモデル一覧(秘密ではない設定項目)だけを`src`から写す。キーは写さない。`src`に無ければ何もしない。
     pub fn copy_aws_models_from(&self, src: &Secrets) -> Result<(), AppError> {
         if std::ptr::eq(self, src) {
@@ -336,6 +348,21 @@ mod tests {
         assert_eq!(Secrets::open(d.path()).unwrap().get("anthropic").as_deref(), Some("k1"));
         s.delete("anthropic").unwrap();
         assert_eq!(Secrets::open(d.path()).unwrap().get("anthropic"), None);
+    }
+
+    #[test]
+    fn copy_api_key_copies_only_the_provider_key() {
+        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (src, leader) = (Secrets::open(a.path()).unwrap(), Secrets::open(b.path()).unwrap());
+        assert!(!leader.copy_api_key_from(&src, Provider::Anthropic).unwrap(), "コピー元にキーが無ければ何も写さない");
+        src.set_key(Provider::Anthropic, "ka").unwrap();
+        src.set_tts_key("tts-a").unwrap();
+        leader.set_key(Provider::Anthropic, "old").unwrap();
+        assert!(leader.copy_api_key_from(&src, Provider::Anthropic).unwrap());
+        assert_eq!(leader.get_key(Provider::Anthropic).unwrap().as_deref(), Some("ka")); // 上書き
+        assert!(!leader.has_tts_key().unwrap(), "キー以外(TTSなど)は写さない");
+        assert!(!leader.copy_api_key_from(&src, Provider::Bedrock).unwrap(), "Bedrockは対象外");
+        assert_eq!(src.get_key(Provider::Anthropic).unwrap().as_deref(), Some("ka")); // コピー元は変えない
     }
 
     #[test]

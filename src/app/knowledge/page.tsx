@@ -2,7 +2,7 @@
 
 import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useState } from "react";
-import { Download, Eye, FolderOpen, Loader2, Pencil, RotateCcw, Save, Sparkles, Trash2, Upload } from "lucide-react";
+import { BookOpen, Download, Eye, FileText, FolderOpen, Loader2, Pencil, RotateCcw, Save, Sparkles, Trash2, Upload } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import ReactMarkdown from "react-markdown";
@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import KnowledgeTree, { type NodeKind } from "@/components/KnowledgeTree";
 import ModelSelector from "@/components/ModelSelector";
+import { EmptyState, PaneHeader, StatusPill } from "@/components/GlobalPanels";
 import {
   type KeyStatus,
   type KnowledgeFile,
@@ -310,8 +311,18 @@ export default function Knowledge() {
   return (
     <div className="flex h-full">
       <aside className="flex w-72 shrink-0 flex-col border-r bg-background/40 backdrop-blur">
-        <div className="border-b px-4 py-3">
-          <h1 className="hud-label mb-3 text-[0.8rem] font-semibold text-foreground">Knowledge</h1>
+        <PaneHeader
+          icon={BookOpen}
+          title="Knowledge"
+          chips={
+            <>
+              <StatusPill on={files.length > 0}>{t("ノート {n}件", { n: files.length })}</StatusPill>
+              <StatusPill on={running}>{running ? t("整理中…") : t("待機")}</StatusPill>
+            </>
+          }
+        />
+        <div className="hud-panel hud-accent m-3 px-4 py-3">
+          <p className="hud-label mb-2">Organize</p>
           <p className="mb-2 text-xs text-muted-foreground">{t("整理に使うモデル")}</p>
           <ModelSelector route={route} models={models} keyStatus={keyStatus} onChange={changeRoute} />
           <Button size="sm" className="mt-2 w-full" disabled={running} onClick={organize}>
@@ -334,7 +345,7 @@ export default function Knowledge() {
             <p className="px-4 py-6 text-center text-sm text-muted-foreground">{t("ノートはまだありません。")}</p>
           )}
         </div>
-        <div className="flex flex-wrap gap-2 border-t px-4 py-2">
+        <div className="flex flex-wrap gap-2 border-t px-4 py-3">
           <Button size="sm" variant="outline" onClick={exportAll}>
             <Download /> {t("エクスポート")}
           </Button>
@@ -346,7 +357,8 @@ export default function Knowledge() {
           </Button>
         </div>
         {dir && (
-          <div className="border-t px-4 py-2 text-xs text-muted-foreground">
+          <div className="border-t px-4 py-3 text-xs text-muted-foreground">
+            <p className="hud-label mb-1">Location</p>
             <p className="break-all" title={t("Obsidianのvaultとして開けます")}>
               {t("保存先:")} {dir}
             </p>
@@ -365,9 +377,11 @@ export default function Knowledge() {
         {doc && selected ? (
           <>
             <div className="flex items-center justify-between gap-3 border-b px-4 py-2">
-              <span className="truncate text-sm text-muted-foreground">
-                {selected}
-                {dirty && <span className="ml-2 text-foreground">●</span>}
+              <span className="flex min-w-0 items-center gap-2 text-sm">
+                <FileText className="size-4 shrink-0 text-primary" />
+                <span className="truncate">{selected}</span>
+                {dirty && <StatusPill on>{t("未保存")}</StatusPill>}
+                {readOnly && <StatusPill on={false}>{t("読み取り専用")}</StatusPill>}
               </span>
               {!readOnly && (
               <div className="flex shrink-0 gap-2">
@@ -409,7 +423,7 @@ export default function Knowledge() {
             )}
           </>
         ) : (
-          <div className="mt-32 text-center text-sm text-muted-foreground">{t("ノートを選択してください。")}</div>
+          <EmptyState icon={BookOpen}>{t("ノートを選択してください。")}</EmptyState>
         )}
       </article>
     </div>

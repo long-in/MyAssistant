@@ -28,7 +28,6 @@ pub const KEYS: &[&str] = &[
     crate::commands::chat::BASE_INSTRUCTIONS_KEY,
     OS_NOTIFICATIONS_KEY,
     LANGUAGE_KEY,
-    super::proofread::ROUTE_KEY,
     super::tuning::VOICE_KEY,
     super::wake::ENABLED_KEY,
     super::wake::WORDS_KEY,

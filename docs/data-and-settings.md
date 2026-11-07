@@ -73,12 +73,13 @@ erDiagram
 | `voicevox_versions` | 取得する配布物のバージョン(JSON: `core` / `onnxruntime` / `models` / `dict_release` / `dict`。未指定の項目は既定値) | CORE `0.17.1`、ONNX Runtime `1.23.2`、音声モデル `0.17.0`、辞書 `v1.11.1` / `1.11` | Voice Link(取得バージョン) |
 | `tuning` | 上限の調整項目(JSON) | 下表 | Limits |
 | `batch_route` | `Route`(JSON) | 既定 | ナレッジ画面 |
+| `proofread_route` | `Route`(JSON)。空は校正オフ | オフ | Proofread(設定の音声タブ) |
 | `debug_mode` | `0` / `1` | 無効 | Debug Mode |
 | `space_data` | スペースデータ(JSON `{enabled, text}`。スペースのみ。コピー・エクスポートの対象外) | 有効・空 | Space Data |
 | `knowledge_dir` | 絶対パス(空なら既定) | 既定 | ナレッジ画面 |
 | `summary:<session_id>` | 会話の要約(JSON) | — | — |
 
-**全体設定に移した項目**(ベースプロンプト `base_instructions`、OS通知、表示言語、校正 `proofread_route`、音声入力の待ち時間 `voice_timing`、起動ワード `wake_enabled` / `wake_words`、パーソナルデータ `user_profile`、ナレッジ整理の間隔 `batch_interval_minutes`)は、`app_settings` ではなく `workspaces/global_settings.json` に保存する。スペースのDBに残った同名の値は読まない([global-settings.md](global-settings.md))。
+**全体設定に移した項目**(ベースプロンプト `base_instructions`、OS通知、表示言語、音声入力の待ち時間 `voice_timing`、起動ワード `wake_enabled` / `wake_words`、パーソナルデータ `user_profile`、ナレッジ整理の間隔 `batch_interval_minutes`)は、`app_settings` ではなく `workspaces/global_settings.json` に保存する。スペースのDBに残った同名の値は読まない([global-settings.md](global-settings.md))。
 
 自動保存: 調整項目と Command Policy は、入力欄を離れたときに保存する。
 
@@ -111,8 +112,8 @@ erDiagram
 
 - `app_settings` のうち上表の**設定項目**(`routing` から `knowledge_dir` の手前まで。全体設定の項目は含まない)と、**コマンド権限**(`command-policy.json`)。
 - **含まない**: API キー、スペースデータ(`space_data`)、端末ごとに異なるナレッジの保存先(`knowledge_dir`)、会話ごとの要約、会話の履歴。
-- 全体設定の項目(ベースプロンプト・パーソナルデータ・起動ワード・校正・音声入力の待ち時間・ナレッジ整理の間隔・表示言語・OS通知)は含まない。全体設定には別のエクスポート/インポートがある([global-settings.md](global-settings.md))。
-- 書き出し・取り込みの対象は、選択中のワークスペースの設定。ワークスペース間で設定を写すには、`/workspace` の設定のコピーを使う([workspace.md](workspace.md))。
+- 全体設定の項目(ベースプロンプト・パーソナルデータ・起動ワード・音声入力の待ち時間・ナレッジ整理の間隔・表示言語・OS通知)は含まない。全体設定には別のエクスポート/インポートがある([global-settings.md](global-settings.md))。
+- 書き出し・取り込みの対象は、選択中のワークスペースの設定。ワークスペース間で設定を写すには、各スペースの設定の「その他」にある設定のコピーを使う([workspace.md](workspace.md))。
 
 ### ファイル
 

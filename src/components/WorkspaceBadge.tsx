@@ -1,13 +1,15 @@
 "use client";
 
-import { Briefcase, User } from "lucide-react";
+import { Briefcase, ClipboardList, User } from "lucide-react";
+import { LEADER_COLOR, LEADER_ID, LEADER_NAME } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace";
 
 /** いまどのエージェント(パーソナル / ワークのスペース)と話しているかを、名称とイメージカラーで示す。 */
 export default function WorkspaceBadge({ className }: { className?: string }) {
   const { active } = useWorkspace();
-  const space = active.space;
+  const leader = active.id === LEADER_ID;
+  const space = leader ? { name: LEADER_NAME, color: LEADER_COLOR } : active.space;
   return (
     <div
       className={cn(
@@ -15,15 +17,17 @@ export default function WorkspaceBadge({ className }: { className?: string }) {
         className,
       )}
       style={space ? { borderColor: space.color } : undefined}
-      title={space ? `Work: ${space.name}` : "Personal"}
+      title={leader ? LEADER_NAME : space ? `Work: ${space.name}` : "Personal"}
     >
-      {space ? (
+      {leader ? (
+        <ClipboardList className="size-3 shrink-0" style={{ color: LEADER_COLOR }} />
+      ) : space ? (
         <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: space.color }} />
       ) : (
         <User className="size-3 shrink-0 text-muted-foreground" />
       )}
       <span className="truncate">{space ? space.name : "Personal"}</span>
-      {space && <Briefcase className="size-3 shrink-0 text-muted-foreground" />}
+      {space && !leader && <Briefcase className="size-3 shrink-0 text-muted-foreground" />}
     </div>
   );
 }

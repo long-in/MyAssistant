@@ -200,10 +200,10 @@ pub fn load_proofread_route(ctx: Ctx) -> Result<Option<Route>, AppError> {
 #[tauri::command]
 pub fn save_proofread_route(ctx: Ctx, route: Option<Route>) -> Result<(), AppError> {
     let Some(route) = route else {
-        return ctx.global.set_setting(proofread::ROUTE_KEY, "");
+        return ctx.db.set_setting(proofread::ROUTE_KEY, "");
     };
     llm_router::resolve(&ctx, &route, &batch::available_providers(&ctx.secrets))?;
-    ctx.global.set_setting(
+    ctx.db.set_setting(
         proofread::ROUTE_KEY,
         &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?,
     )

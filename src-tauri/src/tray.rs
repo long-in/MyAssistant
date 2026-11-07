@@ -6,7 +6,7 @@ use tauri::{
   tray::TrayIconBuilder,
 };
 
-use crate::services::workspace::{ActiveWorkspace, PERSONAL_ID, Workspaces};
+use crate::services::workspace::{ActiveWorkspace, LEADER_ID, PERSONAL_ID, Workspaces};
 
 const MAIN_WINDOW: &str = "main";
 const MENU_SHOW: &str = "show";
@@ -88,7 +88,9 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 /// 選択中のワークスペースと、スペース一覧。状態の登録前(起動の途中)はパーソナルだけ。
 fn workspace_state(app: &AppHandle) -> (ActiveWorkspace, Vec<crate::services::workspace::Space>) {
   match app.try_state::<Workspaces>() {
-    Some(ws) => (ws.active_info(), ws.list()),
+    // ワークが無効のあいだは、スペースを並べない
+    Some(ws) if ws.work_enabled() => (ws.active_info(), ws.list()),
+    Some(ws) => (ws.active_info(), Vec::new()),
     None => (ActiveWorkspace { id: PERSONAL_ID.to_owned(), space: None }, Vec::new()),
   }
 }
@@ -101,8 +103,17 @@ fn spaces_submenu(app: &AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
     .iter()
     .map(|p| CheckMenuItem::with_id(app, format!("{WORKSPACE_PREFIX}{}", p.id), &p.name, true, active.id == p.id, None::<&str>))
     .collect::<tauri::Result<Vec<_>>>()?;
+  // リーダー(スペースの一覧には入らない別枠)。作成済みのときだけ
+  let leader = if app.try_state::<Workspaces>().is_some_and(|w| w.leader().is_some() && w.work_enabled()) {
+    Some(CheckMenuItem::with_id(app, format!("{WORKSPACE_PREFIX}{LEADER_ID}"), "Leader", true, active.id == LEADER_ID, None::<&str>)?)
+  } else {
+    None
+  };
   let separator = PredefinedMenuItem::separator(app)?;
   let mut all: Vec<&dyn IsMenuItem<tauri::Wry>> = vec![&personal];
+  if let Some(l) = &leader {
+    all.push(l);
+  }
   if !items.is_empty() {
     all.push(&separator);
     all.extend(items.iter().map(|i| i as &dyn IsMenuItem<tauri::Wry>));

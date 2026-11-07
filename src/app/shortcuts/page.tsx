@@ -3,7 +3,7 @@
 import { useT } from "@/lib/i18n";
 import { useSyncExternalStore } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Heading, PageHeader, StatusPill } from "@/components/GlobalPanels";
 import { SHORTCUTS, isMac, keyLabel } from "@/lib/shortcuts";
 
 function Kbd({ children }: { children: React.ReactNode }) {
@@ -22,22 +22,18 @@ export default function Shortcuts() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex max-w-2xl flex-col gap-5 px-6 py-10">
-        <div>
-          <p className="hud-label mb-1">{"// Shortcuts"}</p>
-          <h1 className="text-2xl font-semibold tracking-tight">{t("ショートカット")}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t("キーボードだけでマイク入力や画面移動ができます。アプリのウィンドウがアクティブなときに使えます。")}
-          </p>
-        </div>
+        <PageHeader
+          label="// Shortcuts"
+          title={t("ショートカット")}
+          description={t("キーボードだけでマイク入力や画面移動ができます。アプリのウィンドウがアクティブなときに使えます。")}
+          chips={<StatusPill on>{mac ? "⌘ Command" : "Ctrl"}</StatusPill>}
+        />
 
-        <Card>
-          <CardHeader>
-            <CardTitle>{t("キーボードショートカット")}</CardTitle>
-            <CardDescription>
-              {mac ? t("⌘ は Command キーです。") : t("Ctrl キーを使います。macOS では ⌘ (Command) になります。")}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col divide-y">
+        <section className="hud-panel hud-accent px-5 py-4">
+          <Heading title="Shortcuts" help={t("キーボードショートカット")}>
+            <p>{mac ? t("⌘ は Command キーです。") : t("Ctrl キーを使います。macOS では ⌘ (Command) になります。")}</p>
+          </Heading>
+          <div className="flex flex-col divide-y">
             {SHORTCUTS.map((s) => (
               <div key={s.id} className="flex items-center justify-between gap-4 py-3">
                 <div className="min-w-0">
@@ -54,20 +50,27 @@ export default function Shortcuts() {
                 </div>
               </div>
             ))}
-          </CardContent>
-        </Card>
+          </div>
+        </section>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>{t("音声入力の使い方")}</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2 text-sm text-muted-foreground">
-            <p>{t("1. マイクのショートカット(またはマイクボタン)で録音を開始します。録音中は下部の波形が動き、ボタンが赤く点滅します。")}</p>
-            <p>{t("2. もう一度押すと録音を止め、ローカルで文字起こしして、そのまま送信されます。キーボードで文字を入力する場合は、下部の入力欄に書いてEnterで送信します。")}</p>
-            <p>{t("3. 応答は「音声応答」がオンなら自動で読み上げられます。")}</p>
+        <section className="hud-panel hud-accent px-5 py-4">
+          <Heading title="Voice Guide" help={t("音声入力の使い方")}>
             <p>{t("初回のみ、音声認識モデルのダウンロードとマイクの使用許可が必要です。")}</p>
-          </CardContent>
-        </Card>
+          </Heading>
+          <ol className="flex flex-col gap-2">
+            {[
+              "1. マイクのショートカット(またはマイクボタン)で録音を開始します。録音中は下部の波形が動き、ボタンが赤く点滅します。",
+              "2. もう一度押すと録音を止め、ローカルで文字起こしして、そのまま送信されます。キーボードで文字を入力する場合は、下部の入力欄に書いてEnterで送信します。",
+              "3. 応答は「音声応答」がオンなら自動で読み上げられます。",
+            ].map((x, i) => (
+              <li key={x} className="flex items-start gap-3 rounded-xl border bg-background/40 px-4 py-3 text-sm text-muted-foreground">
+                <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 font-mono text-xs text-primary">{i + 1}</span>
+                <span>{t(x).replace(/^\d\.\s*/, "")}</span>
+              </li>
+            ))}
+          </ol>
+          <p className="mt-3 text-xs text-muted-foreground">{t("初回のみ、音声認識モデルのダウンロードとマイクの使用許可が必要です。")}</p>
+        </section>
       </div>
     </div>
   );

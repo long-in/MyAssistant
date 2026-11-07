@@ -211,7 +211,7 @@ export default function KnowledgeTree({
         return (
           <li key={f.path}>
             <button
-              className={cn(row, selected === f.path && "bg-primary/15 text-foreground hover:bg-primary/20")}
+              className={cn(row, selected === f.path && "relative bg-primary/15 text-foreground hover:bg-primary/20 before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:bg-primary before:shadow-[0_0_8px_var(--primary)]")}
               style={{ paddingLeft: BASE + depth * INDENT + 20 }}
               onClick={() => {
                 setFocusDir(dir.key);

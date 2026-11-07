@@ -111,6 +111,18 @@ pub enum AppError {
     /// 指定したスペースが無い。
     #[error("space not found")]
     SpaceNotFound,
+    /// スペースを作る前に、リーダーの作成が必要。
+    #[error("leader is required")]
+    LeaderRequired,
+    /// リーダーはすでにある(1つだけ)。
+    #[error("leader already exists")]
+    LeaderExists,
+    /// ワークが無効になっている(リーダーとスペースは使えない)。
+    #[error("work is disabled")]
+    WorkDisabled,
+    /// ワークの中に実行中・承認待ちの依頼があり、無効にできない。
+    #[error("work is busy")]
+    WorkBusy,
 }
 
 impl AppError {
@@ -168,6 +180,10 @@ impl AppError {
             Self::ColorInUse => "color_in_use",
             Self::SpaceLimit => "space_limit",
             Self::SpaceNotFound => "space_not_found",
+            Self::LeaderRequired => "leader_required",
+            Self::LeaderExists => "leader_exists",
+            Self::WorkDisabled => "work_disabled",
+            Self::WorkBusy => "work_busy",
             Self::ProviderRejected(_) => "provider_rejected",
             Self::ApiDisabled => "api_disabled",
             Self::KeyRestricted => "key_restricted",

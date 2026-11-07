@@ -34,9 +34,27 @@ pub struct Finished {
     pub error: Option<Value>,
 }
 
+/// 依頼の状態(リーダーの台帳が、中身を読まずに進捗だけを知るためのもの)。
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunStatus {
+    /// 動いていない(まだ始まっていない、または、記録が無い)。
+    Idle,
+    /// 実行中。
+    Running,
+    /// 承認の回答を待っている。
+    AwaitingApproval,
+    /// 直近の依頼が完了した。
+    Done,
+    /// 直近の依頼が失敗した。
+    Failed,
+}
+
 #[derive(Default)]
 struct Inner {
     running: bool,
+    /// 直近に終わった依頼の結果(完了/失敗)。画面が見ていても残し、`begin`で消す。結果の本文は持たない。
+    outcome: Option<RunStatus>,
     session_id: String,
     user_text: String,
     events: Vec<AgentEvent>,
@@ -139,6 +157,39 @@ impl AgentState {
         };
     }
 
+    /// 画面を介さない依頼(リーダーからの配布)の開始。実行中なら始めずに`false`を返す(確認と開始は同じロックの中)。
+    /// 接続先が無いので、終わった結果は取っておかれ、そのスペースを開いたときに受け取れる。
+    pub fn try_begin_detached(&self, session_id: &str, user_text: &str) -> bool {
+        let mut inner = lock(&self.inner);
+        if inner.running {
+            return false;
+        }
+        *inner = Inner {
+            running: true,
+            session_id: session_id.to_owned(),
+            user_text: user_text.to_owned(),
+            ..Inner::default()
+        };
+        true
+    }
+
+    /// 直近の依頼のセッションID(依頼が無ければ空)。リーダーの台帳の行が、いまの状態と同じ依頼のものかを確かめるのに使う。
+    pub fn session_id(&self) -> String {
+        lock(&self.inner).session_id.clone()
+    }
+
+    /// 依頼の状態。記録を消費せず、本文も返さない。
+    pub fn status(&self) -> RunStatus {
+        let inner = lock(&self.inner);
+        if inner.pending.is_some() {
+            RunStatus::AwaitingApproval
+        } else if inner.running {
+            RunStatus::Running
+        } else {
+            inner.outcome.unwrap_or(RunStatus::Idle)
+        }
+    }
+
     /// 進捗を記録し、画面が接続していれば流す。
     pub fn emit(&self, event: AgentEvent) {
         let mut inner = lock(&self.inner);
@@ -166,6 +217,7 @@ impl AgentState {
         let mut inner = lock(&self.inner);
         inner.running = false;
         inner.pending = None;
+        inner.outcome = Some(if finished.error.is_some() { RunStatus::Failed } else { RunStatus::Done });
         match inner.sink.take() {
             Some(Sink { resumed: true, channel }) => {
                 let _ = channel.send(AgentEvent::Finished { reply: finished.reply, error: finished.error });
@@ -213,6 +265,24 @@ mod tests {
     };
 
     use crate::services::agent::ApprovalKind;
+
+    #[test]
+    fn status_follows_the_run_without_consuming_it() {
+        let a = AgentState::default();
+        assert_eq!(a.status(), RunStatus::Idle);
+        assert!(a.try_begin_detached("s1", "調べて"));
+        assert!(!a.try_begin_detached("s2", "別件"), "実行中は二重に始めない");
+        assert_eq!((a.status(), a.session_id().as_str()), (RunStatus::Running, "s1"));
+        a.finish(Ok(Value::Null));
+        // 何度読んでも変わらず、結果は消費されない。誰も見ていないので、結果は取っておかれる
+        assert_eq!((a.status(), a.status()), (RunStatus::Done, RunStatus::Done));
+        assert!(a.snapshot_and_attach(counting_channel().0).finished.is_some());
+        assert_eq!(a.status(), RunStatus::Done, "結果を受け取った後も、状態は残る");
+        assert!(a.try_begin_detached("s3", "次"));
+        assert_eq!(a.status(), RunStatus::Running, "新しい依頼で前回の結果は消える");
+        a.finish(Err(serde_json::json!({ "code": "timeout" })));
+        assert_eq!(a.status(), RunStatus::Failed);
+    }
 
     /// 受け取ったメッセージを数えるチャンネル。
     fn counting_channel() -> (Channel<AgentEvent>, Arc<AtomicUsize>) {

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { Search } from "lucide-react";
 import { toast } from "sonner";
-import { PERSONAL_ID, errorMessage } from "@/lib/api";
+import { LEADER_COLOR, LEADER_ID, LEADER_NAME, PERSONAL_ID, errorMessage } from "@/lib/api";
 import { copyTargets } from "@/lib/copyTargets";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -19,7 +19,7 @@ import SpaceChip from "./SpaceChip";
 export default function SpacePalette({ onClose }: { onClose: () => void }) {
   const t = useT();
   const router = useRouter();
-  const { active, spaces } = useWorkspace();
+  const { active, spaces, workOn } = useWorkspace();
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
   const listRef = useRef<HTMLUListElement>(null);
@@ -28,8 +28,11 @@ export default function SpacePalette({ onClose }: { onClose: () => void }) {
     const q = query.trim().toLowerCase();
     // パーソナルは、表示の言語によらず日本語・英語のどちらでも見つかるようにする
     const names = (x: { id: string; name: string }) => (x.id === PERSONAL_ID ? [x.name, "パーソナル", "Personal"] : [x.name]);
-    return copyTargets(spaces).filter((x) => names(x).some((n) => n.toLowerCase().includes(q)));
-  }, [spaces, query]);
+    // リーダー(別枠)は、パーソナルの次に出す
+    const all = copyTargets(spaces);
+    if (workOn) all.splice(1, 0, { id: LEADER_ID, name: LEADER_NAME, color: LEADER_COLOR });
+    return all.filter((x) => names(x).some((n) => n.toLowerCase().includes(q)));
+  }, [spaces, workOn, query]);
   const at = Math.min(cursor, Math.max(items.length - 1, 0));
 
   useEffect(() => {

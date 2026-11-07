@@ -8,6 +8,13 @@
 - **各スペースから上書きできない。** スペースのDBに同名の設定が残っていても読まない(消さずに無視する)。
 - 保存先はアプリデータの `workspaces/global_settings.json`(キーと文字列値の対応)。共通データと同じく、スペースを削除しても残る。書き込みは一時ファイルからのリネームで、壊れていたら `.corrupt` へ退避して空から始める。
 
+## 画面の構成(タブ)
+
+- **AIの動作**: ベースプロンプト、パーソナルデータ。
+- **音声**: 起動ワード、音声入力の待ち時間。
+- **アプリ**: ナレッジ整理の間隔、表示言語、OS通知、全体設定のバックアップ。
+- **ワーク**: ワークの有効化・無効化(`work_enabled`。バックアップ・設定のコピーの対象外。[workspace.md](workspace.md))。`/global#work` で、このタブを開く。
+
 ## 項目
 
 | 項目 | 画面 | キー | 備考 |
@@ -15,7 +22,6 @@
 | ベースプロンプト | Base Prompt | `base_instructions` | 空は既定文 |
 | OS通知 | OS Notifications | `os_notifications` | 旧 `localStorage` の値は初回に取り込む |
 | 表示言語 | Language | `language` | `ja` / `en`。音声認識の言語(`stt_language`)はスペースごとのまま |
-| 文字起こしの校正 | Proofread | `proofread_route` | |
 | 音声入力の待ち時間 | Voice Timing | `voice_timing` | `voice_idle_secs` / `utterance_silence_secs` / `release_tail_secs`。Limits(検索回数など)はスペースごと |
 | 起動ワード | Wake Words | `wake_enabled` / `wake_words` | |
 | パーソナルデータ | Personal Data | `user_profile` | **渡す先は従来どおりパーソナルのみ**。スペースには渡さない([user-profile.md](user-profile.md)) |
@@ -34,4 +40,4 @@
 
 ## 注意
 
-- Wake Words の動作確認(定型音声・音声認識エンジン)と Proofread のモデル選択は、いま開いているスペースのAPIキー・音声の状態を使う。設定の値そのものは全スペース共通。
+- Wake Words の動作確認(定型音声・音声認識エンジン)は、いま開いているスペースのAPIキー・音声の状態を使う。設定の値そのものは全スペース共通。

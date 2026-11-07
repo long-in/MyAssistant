@@ -336,9 +336,9 @@ fn pending(ctx: &WorkspaceCtx) -> MutexGuard<'_, Option<oneshot::Sender<String>>
 async fn ask_mfa(ctx: &WorkspaceCtx, mut prompt: MfaPrompt) -> Result<String, AppError> {
     let app = APP.get().ok_or_else(|| AppError::AwsConfig("not initialized".into()))?;
     if let Some(ws) = app.try_state::<super::workspace::Workspaces>()
-        && let Some(p) = ws.list().into_iter().find(|p| p.id == ctx.id)
+        && let Some((name, color)) = ws.label(&ctx.id)
     {
-        (prompt.workspace_name, prompt.workspace_color) = (Some(p.name), Some(p.color));
+        (prompt.workspace_name, prompt.workspace_color) = (Some(name), Some(color));
     }
     let (tx, rx) = oneshot::channel();
     *pending(ctx) = Some(tx);

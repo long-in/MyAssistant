@@ -3,7 +3,7 @@ import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Check, ChevronDown, Download, KeyRound, Loader2, Pencil, Play, Plus, Square, Trash2, Upload, X } from "lucide-react";
+import { Archive, ArrowRight, AudioLines, Brain, Check, ChevronDown, Download, KeyRound, Loader2, Pencil, Play, Plug, Plus, ShieldCheck, Square, Trash2, Upload, X } from "lucide-react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -18,28 +18,30 @@ import NotePanel from "@/components/NotePanel";
 import CopySettingsCard from "@/components/CopySettingsCard";
 import CopyConfirmModal from "@/components/CopyConfirmModal";
 import { copyTargets, type CopyRequest } from "@/lib/copyTargets";
-import { DEFAULT_TUNING, getTuning, setTuning, PERSONAL_ID, getSpaceData, saveSpaceData, type DeleteReport } from "@/lib/api";
+import { DEFAULT_TUNING, getTuning, setTuning, LEADER_ID, PERSONAL_ID, getSpaceData, saveSpaceData, errorMessage, updateSpace, SPACE_NAME_MAX, leaderCopyApiKey, leaderGetPrompt, leaderSetPrompt, type DeleteReport } from "@/lib/api";
 import { bumpSettingsVersion, refreshWorkspace, useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
 import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, aquaKeyRegistered, deleteAquaKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, setCommandPolicy, type CommandPolicy, getShellAccess, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, saveAquaKey, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setShellAccess, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
-import { Heading, TuningPanel, type TuningField } from "@/components/GlobalPanels";
+import { Heading, PageHeader, Proofread, StatusPill, TuningPanel, type TuningField } from "@/components/GlobalPanels";
 
 type KeyRowProps = {
   title: string;
   description?: string;
   registered: boolean;
   busy: boolean;
+  /** カードとして出す(AI接続のプロバイダー一覧)。登録済みは縁が発光する。 */
+  card?: boolean;
   onSave: (key: string) => Promise<void>;
   onDelete: () => Promise<void>;
 };
 
 /** 1行のコンパクトな接続モジュール。キー入力は「接続」を押すまで隠しておく。 */
-function KeyRow({ title, description, registered, busy, onSave, onDelete }: KeyRowProps) {
+function KeyRow({ title, description, registered, busy, card, onSave, onDelete }: KeyRowProps) {
   const t = useT();
   const [value, setValue] = useState("");
   const [open, setOpen] = useState(false);
   return (
-    <div className="py-3">
+    <div className={card ? cn("rounded-xl border px-4 py-3 transition-colors", registered ? "border-primary/40 bg-primary/5 shadow-[0_0_14px_oklch(0.85_0.14_180/12%)]" : "border-dashed") : "py-3"}>
       <div className="flex items-center gap-3">
         <span
           aria-hidden
@@ -52,8 +54,8 @@ function KeyRow({ title, description, registered, busy, onSave, onDelete }: KeyR
           <div className="text-sm font-medium">{title}</div>
           {description && <div className="text-xs text-muted-foreground">{description}</div>}
         </div>
-        <span className="hud-label hidden text-[0.6rem] sm:inline" aria-live="polite">
-          {registered ? "linked" : ""}
+        <span className="hidden sm:inline" aria-live="polite">
+          {registered && <StatusPill on>linked</StatusPill>}
         </span>
         {registered && (
           <Button type="button" variant="ghost" size="icon-sm" aria-label={t("削除")} disabled={busy} onClick={onDelete}>
@@ -120,7 +122,7 @@ function WebAccess() {
   };
 
   return (
-    <section className="hud-panel flex items-center justify-between gap-4 px-5 py-4">
+    <section className="hud-panel hud-accent flex items-center justify-between gap-4 px-5 py-4">
       <div>
         <Heading title="Web Search" help={t("インターネット検索")}>
           <p>{t("調査の依頼などで、AIがインターネットを検索してページを読めるようにします。")}</p>
@@ -162,7 +164,7 @@ function ShellAccess() {
   };
 
   return (
-    <section className="hud-panel flex items-center justify-between gap-4 px-5 py-4">
+    <section className="hud-panel hud-accent flex items-center justify-between gap-4 px-5 py-4">
       <div>
         <Heading title="Command Tasks" help={t("コマンドによる作業")}>
           <p>{t("「〜してください」という依頼に対し、AIが手順を提示し、あなたが音声で「はい」と承認すると、コマンドを実行して作業を進めます。")}</p>
@@ -270,7 +272,7 @@ function CommandPolicyEditor() {
   };
 
   return (
-    <section className="hud-panel space-y-3 px-5 py-4">
+    <section className="hud-panel hud-accent space-y-3 px-5 py-4">
       <Heading title="Command Policy" help={t("コマンドの権限")}>
         <p>{t("コマンドごとの実行ルールです。1行に1つ、コマンド名と引数を書きます。")}</p>
         <ul>
@@ -332,7 +334,7 @@ function CopyIntoSpace() {
   const t = useT();
   const { active, spaces } = useWorkspace();
   const [request, setRequest] = useState<CopyRequest | null>(null);
-  if (active.id === PERSONAL_ID) return null;
+  if (active.id === PERSONAL_ID || active.id === LEADER_ID) return null; // リーダーは、設定のコピー先にしない
   const targets = copyTargets(spaces);
   return (
     <>
@@ -352,6 +354,86 @@ function CopyIntoSpace() {
   );
 }
 
+/** 選択中のスペースの名称とイメージカラーの変更。パーソナルとリーダーには出さない(固定のため)。 */
+function EditSpace() {
+  const t = useT();
+  const { active, spaces, palette } = useWorkspace();
+  const space = spaces.find((p) => p.id === active.id);
+  const [name, setName] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  if (active.id === PERSONAL_ID || active.id === LEADER_ID || !space) return null;
+
+  // 未編集のあいだは、いまの値を表示する。ほかのスペースが使っている色は選べない
+  const shownName = name ?? space.name;
+  const color = picked ?? space.color;
+  const usedBy = new Map(spaces.filter((p) => p.id !== space.id).map((p) => [p.color, p.name]));
+  const dirty = shownName.trim() !== space.name || color !== space.color;
+  const save = async () => {
+    setBusy(true);
+    try {
+      await updateSpace(space.id, shownName, color);
+      await refreshWorkspace();
+      setName(null);
+      setPicked(null);
+      toast.success(t("スペースを更新しました。"));
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="hud-panel hud-accent px-5 py-4">
+      <Heading title="Space" help={t("スペースの名称と色")}>
+        <p>{t("名称とイメージカラーは、どのエージェントと話しているかを見分けるために表示されます。名称と色はスペースごとに重複できず、「パーソナル」「ワーク」などは予約名です。")}</p>
+      </Heading>
+      <div className="flex flex-col gap-4">
+        <Input
+          value={shownName}
+          maxLength={SPACE_NAME_MAX}
+          placeholder={t("スペース名")}
+          aria-label={t("スペース名")}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <div className="grid grid-cols-10 gap-2" role="radiogroup" aria-label={t("イメージカラー")}>
+          {palette.map((c) => {
+            const owner = usedBy.get(c);
+            return (
+              <button
+                key={c}
+                type="button"
+                role="radio"
+                aria-checked={color === c}
+                aria-label={owner ? t("{color}(使用中: {name})", { color: c, name: owner }) : c}
+                title={owner ? t("使用中: {name}", { name: owner }) : c}
+                disabled={owner !== undefined}
+                onClick={() => setPicked(c)}
+                className={cn(
+                  "relative flex aspect-square w-full max-w-8 items-center justify-center rounded-full ring-offset-2 ring-offset-background transition",
+                  color === c && "ring-2 ring-foreground",
+                  owner !== undefined && "cursor-not-allowed opacity-25",
+                )}
+                style={{ backgroundColor: c }}
+              >
+                {color === c && <Check className="size-4 text-white drop-shadow" />}
+                {owner !== undefined && <X className="size-4 text-white drop-shadow" />}
+              </button>
+            );
+          })}
+        </div>
+        <div>
+          <Button onClick={() => void save()} disabled={busy || !dirty || shownName.trim().length === 0}>
+            {busy ? <Loader2 className="animate-spin" /> : <Check />}
+            {t("保存")}
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /** 選択中のスペースの削除。パーソナルには出さない。削除の前に、確認のモーダルで必ず再確認する。 */
 function DeleteSpace() {
   const t = useT();
@@ -368,7 +450,7 @@ function DeleteSpace() {
   };
 
   return (
-    <section className="hud-panel px-5 py-4">
+    <section className="hud-panel hud-accent px-5 py-4">
       <Heading title="Danger Zone" help={t("スペースの削除")}>
         <p>{t("このスペースを、会話・設定・APIキーごと削除します。元に戻せません。")}</p>
         <ul>
@@ -426,7 +508,7 @@ function DebugMode() {
   };
 
   return (
-    <section className="hud-panel space-y-3 px-5 py-4">
+    <section className="hud-panel hud-accent space-y-3 px-5 py-4">
       <div className="flex items-center justify-between gap-4">
       <div>
         <Heading title="Debug Mode" help={t("デバッグログの記録")}>
@@ -459,16 +541,74 @@ function DebugMode() {
 function SpaceData() {
   const t = useT();
   return (
-    <section className="hud-panel px-5 py-4">
+    <section className="hud-panel hud-accent px-5 py-4">
       <Heading title="Space Data" help={t("スペースデータ")}>
         <p>{t("このスペースだけで、AIへ毎回渡す指示です。スペースの目的や前提、口調などを書きます。")}</p>
         <ul>
-          <li>{t("全スペース共通の指示は、スペース管理の「共通データ」に書きます。共通データのあとに、このデータを渡します。")}</li>
+          <li>{t("全スペース共通の指示は、全体設定の「ワーク」の「共通データ」に書きます。共通データのあとに、このデータを渡します。")}</li>
           <li>{t("入力した内容は、選んでいるAIのプロバイダへ送られます。")}</li>
           <li>{t("設定のコピーでは写されません。次の送信から反映されます。")}</li>
         </ul>
       </Heading>
       <NotePanel load={getSpaceData} save={saveSpaceData} label={t("スペースデータ")} placeholder={t("例: このスペースは営業支援用です。提案書の下書きでは、箇条書きを使ってください。")} />
+    </section>
+  );
+}
+
+/** リーダープロンプト。リーダーの行動原理・役割を書く自由記述の指示。コピーの対象外。 */
+function LeaderPrompt() {
+  const t = useT();
+  return (
+    <section className="hud-panel hud-accent px-5 py-4">
+      <Heading title="Leader Prompt" help={t("リーダープロンプト")}>
+        <p>{t("リーダーの行動原理や役割を書きます(例: 経理の案件は必ず経理へ)。リーダーとの会話と、宛先の提案で、AIへ毎回渡されます。")}</p>
+        <ul>
+          <li>{t("入力した内容は、選んでいるAIのプロバイダへ送られます。")}</li>
+          <li>{t("設定のコピーでは写されません。次の送信から反映されます。")}</li>
+        </ul>
+      </Heading>
+      <NotePanel load={leaderGetPrompt} save={leaderSetPrompt} label={t("リーダープロンプト")} placeholder={t("例: 宛先は、過去の履歴で同じ種類の指示を担当したスペースを優先してください。")} />
+    </section>
+  );
+}
+
+/** リーダーのAPIキーを、パーソナルまたはスペースのキーからコピーする(コピー元は変わらない)。 */
+function LeaderKeyCopy({ onCopied }: { onCopied: () => void }) {
+  const t = useT();
+  const { spaces } = useWorkspace();
+  const [from, setFrom] = useState(PERSONAL_ID);
+  const [busy, setBusy] = useState(false);
+  const copy = async () => {
+    setBusy(true);
+    try {
+      if (await leaderCopyApiKey(from)) {
+        toast.success(t("APIキーをコピーしました。"));
+        onCopied();
+      } else toast.error(t("コピー元にAPIキーが登録されていません。"));
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="hud-panel hud-accent px-5 py-4">
+      <Heading title="Copy API key" help={t("APIキーのコピー")}>
+        <p>{t("リーダーのAPIキー(Anthropic)を、パーソナルまたはスペースのキーからコピーします。コピー元は変わりません。")}</p>
+      </Heading>
+      <div className="flex items-center gap-2">
+        <select className="h-9 flex-1 rounded-md border bg-background px-2 text-sm" value={from} onChange={(e) => setFrom(e.target.value)} aria-label={t("コピー元")}>
+          <option value={PERSONAL_ID}>{t("パーソナル")}</option>
+          {spaces.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+        <Button variant="outline" disabled={busy} onClick={() => void copy()}>
+          {t("キーをコピー")}
+        </Button>
+      </div>
     </section>
   );
 }
@@ -796,7 +936,7 @@ function SettingsTransfer() {
   };
 
   return (
-    <section className="hud-panel px-5 py-4">
+    <section className="hud-panel hud-accent px-5 py-4">
       <Heading title="Backup" help={t("設定の移行")}>
         <p>{t("AIの動作、モデル選択、音声、呼びかけ、コマンド権限などの設定をJSONファイルで書き出し・読み込みできます。")}</p>
         <ul>
@@ -1059,29 +1199,33 @@ export default function Setup() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex max-w-2xl flex-col gap-6 px-6 py-10">
-        <div>
-          <p className="hud-label mb-1">{"// System config"}</p>
-          <h1 className="text-2xl font-semibold tracking-tight">{t("設定")}</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {t("ベースプロンプト、パーソナルデータ、ナレッジ整理の間隔、起動ワード、音声入力の待ち時間、文字起こしの校正、表示言語、OSの通知は、全スペース共通の")}{" "}
-            <Link href="/global" className="underline underline-offset-2">{t("全体設定")}</Link>
-            {t("で管理します。")}
-          </p>
-        </div>
+        <PageHeader
+          label="// System config"
+          title={t("設定")}
+          description={t("ベースプロンプト、パーソナルデータ、ナレッジ整理の間隔、起動ワード、音声入力の待ち時間、表示言語、OSの通知は、全スペース共通の全体設定で管理します。")}
+          chips={
+            <>
+              <StatusPill on>{active.id === PERSONAL_ID ? "Personal" : active.id === LEADER_ID ? "Work / Leader" : `Work / ${active.space?.name ?? ""}`}</StatusPill>
+              <StatusPill on={linked > 0}>{t("AI接続")}: {linked} / {PROVIDERS.length}</StatusPill>
+              <Link href="/global" className="inline-flex items-center rounded-full border border-dashed px-2 py-0.5 text-[0.65rem] text-muted-foreground transition-colors hover:border-primary hover:text-primary">
+                {t("全体設定")} →
+              </Link>
+            </>
+          }
+        />
 
         <Tabs defaultValue="ai" className="gap-6">
           <TabsList variant="line" className="w-full justify-start overflow-x-auto border-b pb-1">
-            <TabsTrigger value="ai" className="flex-none px-3">{t("AI接続")}</TabsTrigger>
-            <TabsTrigger value="voice" className="flex-none px-3">{t("音声")}</TabsTrigger>
-            <TabsTrigger value="behavior" className="flex-none px-3">{t("AIの動作")}</TabsTrigger>
-            <TabsTrigger value="access" className="flex-none px-3">{t("権限")}</TabsTrigger>
-            <TabsTrigger value="data" className="flex-none px-3">{t("その他")}</TabsTrigger>
+            <TabsTrigger value="ai" className="flex-none gap-1.5 px-3"><Plug className="size-3.5" />{t("AI接続")}</TabsTrigger>
+            <TabsTrigger value="voice" className="flex-none gap-1.5 px-3"><AudioLines className="size-3.5" />{t("音声")}</TabsTrigger>
+            <TabsTrigger value="behavior" className="flex-none gap-1.5 px-3"><Brain className="size-3.5" />{t("AIの動作")}</TabsTrigger>
+            {active.id !== LEADER_ID && <TabsTrigger value="access" className="flex-none gap-1.5 px-3"><ShieldCheck className="size-3.5" />{t("権限")}</TabsTrigger>}
+            <TabsTrigger value="data" className="flex-none gap-1.5 px-3"><Archive className="size-3.5" />{t("その他")}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="ai" className="flex flex-col gap-6">
-          <section className="hud-panel px-5 py-4">
-            <div className="mb-1 flex items-center justify-between">
-              <Heading title="AI Link" help={t("AIの接続")}>
+          <section className="hud-panel hud-accent px-5 py-4">
+              <Heading title="AI Link" help={t("AIの接続")} status={<StatusPill on={linked > 0}>{linked} / {PROVIDERS.length}</StatusPill>}>
                 <p>{t("使いたいAIのAPIキーを登録します。全部は不要で、1つ以上あれば使えます。")}</p>
                 <ul>
                   <li>{t("Amazon Bedrockは、APIキーではなく~/.aws/configと~/.aws/credentialsの中身を貼り付けて登録します。MFA付きのスイッチロール(role_arn + source_profile)に対応し、コードが必要なときは入力欄が開きます。")}</li>
@@ -1090,11 +1234,10 @@ export default function Setup() {
                   <li>{t("保存先は平文のJSONファイルです(OSのキーチェーンは使っていません)。")}</li>
                 </ul>
               </Heading>
-              <span className="hud-label text-muted-foreground">{linked} / {PROVIDERS.length}</span>
-            </div>
-            <div className="divide-y divide-border">
+            <div className="flex flex-col gap-2">
               {PROVIDERS.filter((p) => p !== "bedrock").map((p: Provider) => (
                 <KeyRow
+                  card
                   key={p}
                   title={PROVIDER_LABELS[p]}
                   registered={!!status[p]}
@@ -1106,22 +1249,23 @@ export default function Setup() {
               <AwsPanel onChanged={refresh} />
             </div>
           </section>
+          {active.id === LEADER_ID && <LeaderKeyCopy onCopied={refresh} />}
 
           </TabsContent>
 
           <TabsContent value="voice" className="flex flex-col gap-6">
-          <section className="hud-panel px-5 py-1">
-            <div className="pt-3">
-              <Heading title="Voice Link" help={t("Google Cloudの音声機能")}>
-                <p>{t("応答の読み上げ(Text-to-Speech)と、Google音声認識(Speech-to-Text)で共通のキーです。")}</p>
-                <ul>
-                  <li>{t("Google Cloud ConsoleでCloud Text-to-Speech API(認識も使うならCloud Speech-to-Text API)の有効化が必要です。")}</li>
-                  <li>{t("音声認識のエンジンがローカルの間は、Whisperで認識します(無料)。Aqua Voiceは音声認識のみで、読み上げ(TTS)には対応していません。")}</li>
-                  <li>{t("音声認識にGoogleを選ぶと録音音声がGoogleへ送信され、課金対象になります。")}</li>
-                </ul>
-              </Heading>
-            </div>
+          {/* 読み上げ(出力) */}
+          <section className="hud-panel hud-accent px-5 py-4">
+            <Heading title="Voice Output" help={t("読み上げ")} status={<StatusPill on={speechReady}>{ttsEngine === "voicevox" ? "VOICEVOX" : "Google Cloud"}</StatusPill>}>
+              <p>{t("応答の読み上げ(Text-to-Speech)です。Google Cloudはキーが必要で課金対象、VOICEVOXは端末内で合成し無料です。")}</p>
+              <ul>
+                <li>{t("Google Cloud ConsoleでCloud Text-to-Speech API(認識も使うならCloud Speech-to-Text API)の有効化が必要です。")}</li>
+                <li>{t("音声認識にGoogleを選ぶと録音音声がGoogleへ送信され、課金対象になります。")}</li>
+              </ul>
+            </Heading>
+            <div className="flex flex-col gap-2">
             <KeyRow
+              card
               title="Google Cloud"
               description={t("読み上げ・音声認識用のAPIキー")}
               registered={ttsReady}
@@ -1134,13 +1278,7 @@ export default function Setup() {
                 })
               }
             />
-            <VoicevoxPanel
-              installed={vvInstalled}
-              style={vvStyle}
-              onChanged={refresh}
-              onStyle={(id) => run("vv-style", () => setVoicevoxStyle(id))}
-            />
-            <ModelSourcesPanel onChanged={refresh} />
+            </div>
             <div className="flex items-center gap-3 border-t py-3">
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">{t("読み上げエンジン")}</div>
@@ -1160,21 +1298,24 @@ export default function Setup() {
                 <option value="voicevox">VOICEVOX</option>
               </select>
             </div>
+            <VoicevoxPanel
+              installed={vvInstalled}
+              style={vvStyle}
+              onChanged={refresh}
+              onStyle={(id) => run("vv-style", () => setVoicevoxStyle(id))}
+            />
             <VoicePhrases ready={speechReady} engine={ttsEngine} style={vvStyle} />
             <PronunciationDictionary />
-            <KeyRow
-              title="Aqua Voice"
-              description={t("音声認識用のAPIキー(読み上げには使えません)")}
-              registered={aquaReady}
-              busy={busy === "aqua"}
-              onSave={(k) => run("aqua", () => saveAquaKey(k), t("APIキーを保存しました。"))}
-              onDelete={() =>
-                run("aqua", async () => {
-                  await deleteAquaKey();
-                  if (sttEngine === "aqua") await setSttEngine("local"); // キーがないAqua認識は使えない
-                })
-              }
-            />
+          </section>
+
+          {/* 音声認識(入力) */}
+          <section className="hud-panel hud-accent px-5 py-4">
+            <Heading title="Voice Input" help={t("音声認識")} status={<StatusPill on>{sttEngine === "local" ? t("ローカル (Whisper)") : sttEngine === "google" ? "Google Cloud" : "Aqua Voice"}</StatusPill>}>
+              <p>{t("音声認識のエンジンがローカルの間は、Whisperで認識します(無料)。Aqua Voiceは音声認識のみで、読み上げ(TTS)には対応していません。")}</p>
+              <ul>
+                <li>{t("GoogleとAquaは録音音声を送信し、課金対象です。")}</li>
+              </ul>
+            </Heading>
             <div className="flex items-center gap-3 border-t py-3">
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">{t("音声認識エンジン")}</div>
@@ -1194,6 +1335,22 @@ export default function Setup() {
                 <option value="google" disabled={!ttsReady}>Google Cloud</option>
                 <option value="aqua" disabled={!aquaReady}>Aqua Voice</option>
               </select>
+            </div>
+            <div className="flex flex-col gap-2 pb-3">
+            <KeyRow
+              card
+              title="Aqua Voice"
+              description={t("音声認識用のAPIキー(読み上げには使えません)")}
+              registered={aquaReady}
+              busy={busy === "aqua"}
+              onSave={(k) => run("aqua", () => saveAquaKey(k), t("APIキーを保存しました。"))}
+              onDelete={() =>
+                run("aqua", async () => {
+                  await deleteAquaKey();
+                  if (sttEngine === "aqua") await setSttEngine("local"); // キーがないAqua認識は使えない
+                })
+              }
+            />
             </div>
             {sttEngine === "local" && sttUpgradable && (
               <div className="flex items-center gap-3 border-t py-3">
@@ -1239,11 +1396,21 @@ export default function Setup() {
               </select>
             </div>
           </section>
+
+          <Proofread keyStatus={status} />
+
+          {/* モデルの取得元 */}
+          <section className="hud-panel hud-accent px-5 py-4">
+            <Heading title="Model Sources" help={t("モデルの取得元")}>
+              <p>{t("音声認識(Whisper)と読み上げ(VOICEVOX)のモデルの取得元と版を指定します。")}</p>
+            </Heading>
+            <ModelSourcesPanel onChanged={refresh} />
+          </section>
           </TabsContent>
 
           <TabsContent value="behavior" className="flex flex-col gap-6">
-          {active.id !== PERSONAL_ID && <SpaceData />}
-          <TuningPanel
+          {active.id === LEADER_ID ? <LeaderPrompt /> : active.id !== PERSONAL_ID && <SpaceData />}
+          {active.id !== LEADER_ID && <TuningPanel
             title="Limits"
             help={t("検索回数などの上限")}
             helpBody={
@@ -1259,16 +1426,19 @@ export default function Setup() {
             load={getTuning}
             store={setTuning}
             defaults={DEFAULT_TUNING}
-          />
+          />}
           </TabsContent>
 
-          <TabsContent value="access" className="flex flex-col gap-6">
-          <WebAccess />
-          <ShellAccess />
-          <CommandPolicyEditor />
-          </TabsContent>
+          {active.id !== LEADER_ID && (
+            <TabsContent value="access" className="flex flex-col gap-6">
+              <WebAccess />
+              <ShellAccess />
+              <CommandPolicyEditor />
+            </TabsContent>
+          )}
 
           <TabsContent value="data" className="flex flex-col gap-6">
+          <EditSpace />
           <SettingsTransfer />
           <CopyIntoSpace />
           <DebugMode />

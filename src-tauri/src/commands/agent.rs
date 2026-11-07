@@ -9,7 +9,7 @@ use crate::{
         agent_run::RunSnapshot,
         attention::{self, AttentionKind},
         cancel::CancelToken,
-        llm_client,
+        leader, llm_client,
         secrets::Provider,
         workspace::{Ctx, WorkspaceCtx, Workspaces},
     },
@@ -59,6 +59,7 @@ pub async fn run_with_tools(
     system: &str,
     web_access: Option<(u32, u32)>,
     shell_access: bool,
+    host: Option<agent::ToolHost<'_>>,
     mut history: Vec<Value>,
     user_text: &str,
     on_event: &(impl Fn(AgentEvent) + Sync),
@@ -67,8 +68,14 @@ pub async fn run_with_tools(
 ) -> Result<AgentOutcome, AppError> {
     let state = &ctx.shared.agent;
     std::fs::create_dir_all(root).map_err(|e| AppError::Io(e.to_string()))?;
-    let mut system = format!("{system}\n\n{}", agent::TOOL_GUIDE);
-    let mut tools = agent::tool_definitions(shell_access);
+    // リーダーは、ファイル・コマンド・Webに代えて、台帳の参照と配布の下書きのツールだけを使う
+    let leader = host.is_some();
+    let (mut system, mut tools) = if leader {
+        (format!("{system}\n\n{}", leader::TOOL_GUIDE), leader::tool_definitions())
+    } else {
+        (format!("{system}\n\n{}", agent::TOOL_GUIDE), agent::tool_definitions(shell_access))
+    };
+    let (shell_access, web_access) = if leader { (false, None) } else { (shell_access, web_access) };
     if shell_access {
         system.push_str(&format!("\n\n{}", agent::shell_guide()));
     }
@@ -80,7 +87,7 @@ pub async fn run_with_tools(
     let (system, tools) = (&system, &tools);
     let cancel = CancelToken::default();
     state.set_cancel(cancel.clone());
-    let env = Env::new(root).with_cancel(cancel.clone()).with_shell(shell_access);
+    let env = Env::new(root).with_cancel(cancel.clone()).with_shell(shell_access).with_host(host);
     let is_foreground = &is_foreground;
     let result = agent::run(
         &env,

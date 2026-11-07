@@ -1,47 +1,79 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AppWindow, AudioLines, Brain, Briefcase } from "lucide-react";
 import { toast } from "sonner";
 import {
   BaseInstructions,
   BatchInterval,
+  PageHeader,
+  StatusPill,
   GlobalBackup,
   LanguageSetting,
   OsNotifications,
   PersonalData,
-  Proofread,
   TuningPanel,
   VOICE_FIELDS,
   WakeWords,
+  WorkEnable,
+  SharedData,
 } from "@/components/GlobalPanels";
 import {
   DEFAULT_VOICE_TIMING,
-  getKeyStatus,
+  getBatchInterval,
+  getWakeConfig,
+  leaderExists,
+  workEnabled,
   getSttEngine,
   getTtsEngine,
   getVoiceTiming,
   reportError,
   setVoiceTiming,
   ttsReady as fetchTtsReady,
-  type KeyStatus,
   type SttEngine,
   type TtsEngine,
 } from "@/lib/api";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useT } from "@/lib/i18n";
 
 /** 全体設定。全スペース(パーソナルを含む)で共通の項目を管理する。各スペースからは上書きできない。 */
 export default function GlobalSettings() {
   const t = useT();
-  const [status, setStatus] = useState<Partial<KeyStatus>>({});
   const [speechReady, setSpeechReady] = useState(false);
   const [ttsEngine, setTtsEngine] = useState<TtsEngine>("google");
   const [sttEngine, setSttEngine] = useState<SttEngine>("local");
+  const [tab, setTab] = useState("ai");
+  const [hasLeader, setHasLeader] = useState(false);
+  const [workOn, setWorkOn] = useState(false);
+  const [wakeOn, setWakeOn] = useState(false);
+  const [interval, setInterval] = useState<number | null>(null);
 
-  // 校正のモデル選択と起動ワードの確認は、いま開いているスペースのAPIキー・音声の状態を使う
+  // ページ上部の状態バッジ用
   useEffect(() => {
-    Promise.all([getKeyStatus(), fetchTtsReady(), getTtsEngine(), getSttEngine()])
-      .then(([k, ready, te, se]) => {
-        setStatus(k);
+    Promise.all([leaderExists(), workEnabled(), getWakeConfig(), getBatchInterval()])
+      .then(([e, on, wake, min]) => {
+        setHasLeader(e);
+        setWorkOn(e && on);
+        setWakeOn(wake.enabled);
+        setInterval(min);
+      })
+      .catch(() => {});
+  }, []);
+
+  // レールの「WORK」ボタンなどから `#work` で開かれたときは、「ワーク」のタブを開く(静的エクスポートのため、保存値はマウント後に読む)
+  useEffect(() => {
+    const sync = () => {
+      if (location.hash === "#work") setTab("work");
+    };
+    sync();
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
+
+  // 起動ワードの確認は、いま開いているスペースのAPIキー・音声の状態を使う
+  useEffect(() => {
+    Promise.all([fetchTtsReady(), getTtsEngine(), getSttEngine()])
+      .then(([ready, te, se]) => {
         setSpeechReady(ready);
         setTtsEngine(te);
         setSttEngine(se);
@@ -52,18 +84,33 @@ export default function GlobalSettings() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex max-w-2xl flex-col gap-6 px-6 py-10">
-        <div>
-          <p className="hud-label mb-1">{"// Global config"}</p>
-          <h1 className="text-2xl font-semibold tracking-tight">{t("全体設定")}</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {t("すべてのスペース(パーソナルを含む)で共通の設定です。各スペースの設定からは変更できません。")}
-          </p>
-        </div>
+        <PageHeader
+          label="// Global config"
+          title={t("全体設定")}
+          description={t("すべてのスペース(パーソナルを含む)で共通の設定です。各スペースの設定からは変更できません。")}
+          chips={
+            <>
+              <StatusPill on={workOn}>{t("ワーク")}: {!hasLeader ? t("未作成") : workOn ? t("有効") : t("無効")}</StatusPill>
+              <StatusPill on={wakeOn}>{t("起動ワード")}: {wakeOn ? t("待機中") : t("オフ")}</StatusPill>
+              <StatusPill on={interval !== null}>{t("ナレッジ整理")}: {interval !== null ? t("{n}分ごと", { n: interval }) : "-"}</StatusPill>
+            </>
+          }
+        />
 
-        <BaseInstructions />
-        <PersonalData />
-        <BatchInterval />
+        <Tabs value={tab} onValueChange={setTab} className="gap-6">
+          <TabsList variant="line" className="w-full justify-start overflow-x-auto border-b pb-1">
+            <TabsTrigger value="ai" className="flex-none gap-1.5 px-3"><Brain className="size-3.5" />{t("AIの動作")}</TabsTrigger>
+            <TabsTrigger value="voice" className="flex-none gap-1.5 px-3"><AudioLines className="size-3.5" />{t("音声")}</TabsTrigger>
+            <TabsTrigger value="app" className="flex-none gap-1.5 px-3"><AppWindow className="size-3.5" />{t("アプリ")}</TabsTrigger>
+            <TabsTrigger value="work" className="flex-none gap-1.5 px-3"><Briefcase className="size-3.5" />{t("ワーク")}</TabsTrigger>
+          </TabsList>
 
+          <TabsContent value="ai" className="flex flex-col gap-6">
+            <BaseInstructions />
+            <PersonalData />
+          </TabsContent>
+
+          <TabsContent value="voice" className="flex flex-col gap-6">
         <WakeWords ttsReady={speechReady} engine={ttsEngine} cloudStt={sttEngine === "google" ? "Google Speech-to-Text" : sttEngine === "aqua" ? "Aqua Voice" : null} />
         <TuningPanel
           title="Voice Timing"
@@ -82,11 +129,20 @@ export default function GlobalSettings() {
           store={setVoiceTiming}
           defaults={DEFAULT_VOICE_TIMING}
         />
-        <Proofread keyStatus={status} />
+          </TabsContent>
 
-        <LanguageSetting />
-        <OsNotifications />
-        <GlobalBackup />
+          <TabsContent value="app" className="flex flex-col gap-6">
+            <BatchInterval />
+            <LanguageSetting />
+            <OsNotifications />
+            <GlobalBackup />
+          </TabsContent>
+
+          <TabsContent value="work" className="flex flex-col gap-6">
+            <WorkEnable />
+            <SharedData />
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );

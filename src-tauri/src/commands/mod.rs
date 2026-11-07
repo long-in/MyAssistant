@@ -5,6 +5,7 @@ pub mod command_policy;
 pub mod debug;
 pub mod global_settings;
 pub mod knowledge;
+pub mod leader;
 pub mod profile;
 pub mod settings;
 pub mod settings_transfer;

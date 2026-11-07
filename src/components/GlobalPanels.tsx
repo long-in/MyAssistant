@@ -1,25 +1,117 @@
 "use client";
 import { LANGS, setLang, tr, useLang, useT, type Lang } from "@/lib/i18n";
 import { useEffect, useRef, useState } from "react";
-import { Download, Upload, Loader2, Mic, Plus, Square, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Archive, AudioLines, Bell, Copy, BookOpen, Keyboard, Pencil, Share2, HardDriveDownload, Volume2, Briefcase, ClipboardList, Download, FolderKanban, Languages, Link2, ListOrdered, Loader2, Mic, Plus, ScrollText, Send, Settings2, ShieldCheck, SlidersHorizontal, SpellCheck, Square, Timer, Upload, UserRound, X, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { refreshWorkspace, switchTo } from "@/lib/workspace";
 import ModelSelector from "@/components/ModelSelector";
 import HelpDrawer from "@/components/HelpDrawer";
 import { ensureOsPermission, osNotificationsEnabled, setOsNotificationsEnabled, syncOsNotifications } from "@/lib/osNotify";
-import { type KeyStatus, setGlobalLanguage, exportGlobalSettings, importGlobalSettings, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, getBatchInterval, setBatchInterval, listModels, loadProofreadRoute, saveProofreadRoute, type ModelInfo, type Route, type WakeConfig, reportError, saveBaseInstructions, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
+import NotePanel from "@/components/NotePanel";
+import { getSharedData, saveSharedData, LEADER_COLOR, LEADER_ID, createLeader, errorMessage, leaderExists, setWorkEnabled, workEnabled, type KeyStatus, setGlobalLanguage, exportGlobalSettings, importGlobalSettings, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, getBatchInterval, setBatchInterval, listModels, loadProofreadRoute, saveProofreadRoute, type ModelInfo, type Route, type WakeConfig, reportError, saveBaseInstructions, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
 
-/** セクション見出し。名前の横の「?」から詳しい説明を開く。 */
-export function Heading({ title, help, children }: { title: string; help: string; children: React.ReactNode }) {
+/** 見出しの左に出すアイコン(英字の見出しごと)。無いものは歯車。 */
+const HEADING_ICONS: Record<string, LucideIcon> = {
+  "Base Prompt": ScrollText,
+  "Personal Data": UserRound,
+  "Knowledge Interval": Timer,
+  Language: Languages,
+  Proofread: SpellCheck,
+  "Wake Words": Mic,
+  "Voice Timing": AudioLines,
+  Limits: SlidersHorizontal,
+  Backup: Archive,
+  Work: Briefcase,
+  "OS Notifications": Bell,
+  "Leader Prompt": ClipboardList,
+  "Space Data": FolderKanban,
+  "AI Link": Link2,
+  "New Space": Plus,
+  "Copy Settings": Copy,
+  "Edit Space": Pencil,
+  "Shared Data": Share2,
+  Spaces: FolderKanban,
+  Shortcuts: Keyboard,
+  "Voice Guide": BookOpen,
+  "Voice Output": Volume2,
+  "Voice Input": Mic,
+  "Model Sources": HardDriveDownload,
+};
+
+/** オン/オフなどの状態の小さな表示。オンは発光し、オフは控えめに出す。 */
+export function StatusPill({ on, children }: { on: boolean; children: React.ReactNode }) {
   return (
-    <div className="mb-1 flex items-center gap-2">
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[0.65rem] font-medium tracking-wide",
+        on ? "border-primary/50 bg-primary/10 text-primary" : "border-border text-muted-foreground",
+      )}
+    >
+      <span className={cn("size-1.5 rounded-full", on ? "bg-primary shadow-[0_0_6px_var(--primary)]" : "bg-muted-foreground/50")} />
+      {children}
+    </span>
+  );
+}
+
+/** セクション見出し。アイコン、名前、「?」(詳しい説明を開く)、右端の状態(`status`)を並べる。 */
+export function Heading({ title, help, status, children }: { title: string; help: string; status?: React.ReactNode; children: React.ReactNode }) {
+  const Icon = HEADING_ICONS[title] ?? Settings2;
+  return (
+    <div className="mb-2 flex items-center gap-2">
+      <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+        <Icon className="size-3.5" />
+      </span>
       <h2 className="hud-label">{title}</h2>
       <HelpDrawer title={help}>{children}</HelpDrawer>
+      {status && <span className="ml-auto">{status}</span>}
+    </div>
+  );
+}
+
+/** 2カラム画面(ナレッジ・デバッグ)の、左カラムの見出し。アイコン、ラベル、右端の操作、その下に状態のチップを並べる。 */
+export function PaneHeader({ icon: Icon, title, action, chips }: { icon: LucideIcon; title: string; action?: React.ReactNode; chips?: React.ReactNode }) {
+  return (
+    <div className="border-b px-4 py-3">
+      <div className="flex items-center gap-2">
+        <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+          <Icon className="size-3.5" />
+        </span>
+        <h1 className="hud-label">{title}</h1>
+        {action && <span className="ml-auto">{action}</span>}
+      </div>
+      {chips && <div className="mt-2 flex flex-wrap gap-1.5">{chips}</div>}
+    </div>
+  );
+}
+
+/** 空状態。アイコンと一言を中央に置く。 */
+export function EmptyState({ icon: Icon, children }: { icon: LucideIcon; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col items-center gap-3 px-6 py-16 text-center text-sm text-muted-foreground">
+      <span className="flex size-12 items-center justify-center rounded-full border border-dashed border-primary/40 text-primary/70">
+        <Icon className="size-5" />
+      </span>
+      {children}
+    </div>
+  );
+}
+
+/** ページの見出し。ラベル・タイトル・説明と、いまの状態をまとめた小さなバッジ(`chips`)を並べる。 */
+export function PageHeader({ label, title, description, chips }: { label: string; title: string; description: string; chips?: React.ReactNode }) {
+  return (
+    <div>
+      <p className="hud-label mb-1">{label}</p>
+      <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+      <p className="mt-2 text-sm text-muted-foreground">{description}</p>
+      {chips && <div className="mt-3 flex flex-wrap gap-2">{chips}</div>}
     </div>
   );
 }
@@ -78,7 +170,7 @@ export function TuningPanel<T extends Record<string, number>>({
   };
 
   return (
-    <section className="hud-panel px-5 py-4">
+    <section className="hud-panel hud-accent px-5 py-4">
       <Heading title={title} help={help}>
         {helpBody}
       </Heading>
@@ -149,7 +241,7 @@ export function BatchInterval() {
   const options = minutes !== null && !BATCH_INTERVALS.includes(minutes) ? [...BATCH_INTERVALS, minutes].sort((a, b) => a - b) : BATCH_INTERVALS;
 
   return (
-    <section className="hud-panel flex items-center justify-between gap-4 px-5 py-4">
+    <section className="hud-panel hud-accent flex items-center justify-between gap-4 px-5 py-4">
       <div>
         <Heading title="Knowledge Interval" help={t("ログ整理の間隔")}>
           <p>{t("会話ログをトピック別のナレッジへ整理する間隔です。")}</p>
@@ -183,7 +275,7 @@ export function LanguageSetting() {
   const t = useT();
   const lang = useLang();
   return (
-    <section className="hud-panel flex items-center justify-between gap-4 px-5 py-4">
+    <section className="hud-panel hud-accent flex items-center justify-between gap-4 px-5 py-4">
       <div>
         <Heading title="Language" help={t("表示言語")}>
           <p>{t("画面とメニューバーの表示言語を切り替えます。")}</p>
@@ -233,13 +325,13 @@ export function OsNotifications() {
     }
   };
   return (
-    <section className="hud-panel px-5 py-4">
+    <section className="hud-panel hud-accent px-5 py-4">
+      <Heading title="OS Notifications" help={t("OSの通知")} status={<StatusPill on={on}>{on ? t("オン") : t("オフ")}</StatusPill>}>
+        <p>{t("アプリが背面にあるときや、ウィンドウを閉じているときに、ほかのスペースの承認待ち・完了・失敗を、macOSの通知でも知らせます。")}</p>
+      </Heading>
       <label className="flex items-center justify-between gap-4 text-sm">
-        <span>
-          {t("OSの通知")}
-          <span className="block text-xs text-muted-foreground">
-            {t("アプリが背面にあるときや、ウィンドウを閉じているときに、ほかのスペースの承認待ち・完了・失敗を、macOSの通知でも知らせます。")}
-          </span>
+        <span className="text-xs text-muted-foreground">
+          {t("アプリが背面にあるときや、ウィンドウを閉じているときに、ほかのスペースの承認待ち・完了・失敗を、macOSの通知でも知らせます。")}
         </span>
         <Switch checked={on} onCheckedChange={(v) => void change(v)} />
       </label>
@@ -295,7 +387,7 @@ export function PersonalData() {
   };
 
   return (
-    <section className="hud-panel px-5 py-4">
+    <section className="hud-panel hud-accent px-5 py-4">
       <Heading title="Personal Data" help={t("パーソナルデータ")}>
         <p>{t("あなたの基本情報をAIへ毎回渡し、呼びかけや回答を合わせてもらいます。")}</p>
         <ul>
@@ -379,7 +471,7 @@ export function BaseInstructions() {
   };
 
   return (
-    <section className="hud-panel px-5 py-4">
+    <section className="hud-panel hud-accent px-5 py-4">
       <Heading title="Base Prompt" help={t("ベース指示")}>
         <p>{t("すべての質問でAIへ最初に渡す指示です。")}</p>
         <ul>
@@ -444,7 +536,7 @@ export function Proofread({ keyStatus }: { keyStatus: Partial<KeyStatus> }) {
   const initial = usable.find((m) => m.tier === "light") ?? usable[0];
 
   return (
-    <section className="hud-panel px-5 py-4">
+    <section className="hud-panel hud-accent px-5 py-4">
       <Heading title="Proofread" help={t("文字起こしの校正")}>
         <p>{t("音声認識の結果を、直近の会話と過去の訂正履歴を手がかりにAIで校正してから送信します。")}</p>
         <ul>
@@ -585,10 +677,10 @@ export function WakeWords({ ttsReady, engine, cloudStt }: { ttsReady: boolean; e
   };
 
   return (
-    <section className="hud-panel px-5 py-4">
+    <section className="hud-panel hud-accent px-5 py-4">
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
-          <Heading title="Wake Words" help={t("常時音声待機")}>
+          <Heading title="Wake Words" help={t("常時音声待機")} status={<StatusPill on={config?.enabled ?? false}>{config?.enabled ? t("待機中") : t("オフ")}</StatusPill>}>
             <p>{t("対話画面を開いている間マイクを開いたままにし、起動ワードを含む発話があると「用件は、なんでしょうか」と応えて依頼を待ちます。「タチコマ、今日の予定は」のように続けて話すと、そのまま依頼として送ります。")}</p>
             <ul>
               <li>{t("判定はAIによる校正より前に行います。起動ワードを含まない発話はAIへ送られず、課金されません。")}</li>
@@ -756,7 +848,7 @@ export function GlobalBackup() {
   };
 
   return (
-    <section className="hud-panel px-5 py-4">
+    <section className="hud-panel hud-accent px-5 py-4">
       <Heading title="Backup" help={t("全体設定の移行")}>
         <p>{t("全体設定をJSONファイルで書き出し・読み込みできます。")}</p>
         <ul>
@@ -772,6 +864,232 @@ export function GlobalBackup() {
           {busy ? <Loader2 className="animate-spin" /> : <Upload />} {t("インポート")}
         </Button>
       </div>
+    </section>
+  );
+}
+
+/**
+ * ワークの有効化・無効化。
+ * - 未作成: ワークの説明(何か・できること・ルール)を示し、承諾したらリーダーを作成して使えるようにする(承諾までは何も作らない)。
+ * - 有効: 「ワークを無効にする」で、画面から選べなくする。リーダー・スペースのデータ(会話・ナレッジ・設定・APIキー・台帳)は残る。
+ * - 無効: 「ワークを有効にする」で、承諾し直さずに元へ戻す。
+ */
+/** 共通データ。全スペースで共通して、AIへ毎回渡す自由記述の指示(パーソナルには渡さない)。 */
+export function SharedData() {
+  const t = useT();
+  return (
+    <section className="hud-panel hud-accent px-5 py-4">
+      <Heading title="Shared Data" help={t("共通データ")}>
+        <p>{t("すべてのスペースで共通して、AIへ毎回渡す指示です(パーソナルには渡しません)。口調や守ってほしいルールなどを書きます。スペースごとの内容は、各スペースの設定の「スペースデータ」に書きます。次の送信から反映されます。")}</p>
+      </Heading>
+      <NotePanel load={getSharedData} save={saveSharedData} label={t("共通データ")} placeholder={t("例: 回答は敬語で、結論から先に述べてください。")} />
+    </section>
+  );
+}
+
+export function WorkEnable() {
+  const t = useT();
+  const router = useRouter();
+  const [exists, setExists] = useState<boolean | null>(null);
+  const [enabled, setEnabled] = useState(true);
+  const [agreed, setAgreed] = useState(false);
+  const [confirmOff, setConfirmOff] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    Promise.all([leaderExists(), workEnabled()])
+      .then(([e, on]) => {
+        setExists(e);
+        setEnabled(on);
+      })
+      .catch((e) => toast.error(errorMessage(e)));
+  }, []);
+
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    try {
+      await fn();
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const enable = () =>
+    run(async () => {
+      await createLeader();
+      await refreshWorkspace();
+      await switchTo(LEADER_ID);
+      setExists(true);
+      setEnabled(true);
+      router.push("/setup");
+      toast.success(t("ワークを有効にしました。まず、リーダーのAIの接続(APIキー)を登録してください。"));
+    });
+
+  const turnOff = () =>
+    run(async () => {
+      await setWorkEnabled(false);
+      await refreshWorkspace();
+      setEnabled(false);
+      setConfirmOff(false);
+      toast.success(t("ワークを無効にしました。データは残っています。"));
+    });
+
+  const turnOn = () =>
+    run(async () => {
+      await setWorkEnabled(true);
+      await refreshWorkspace();
+      setEnabled(true);
+      toast.success(t("ワークを有効にしました。"));
+    });
+
+  return (
+    <section id="work" className="hud-panel hud-accent scroll-mt-6 px-5 py-4">
+      <Heading title="Work" help={t("ワーク")} status={exists === null ? undefined : <StatusPill on={exists && enabled}>{!exists ? t("未作成") : enabled ? t("有効") : t("無効")}</StatusPill>}>
+        <p>{t("ワークは、承諾するとリーダーを作成して使えるようになります。承諾するまでは、何も作られません。")}</p>
+        <ul>
+          <li>{t("無効にしても、リーダーとスペースのデータは消えません。画面から選べなくなり、リーダーの配布と、スペースのバックグラウンド処理(ナレッジ整理)が止まります。")}</li>
+        </ul>
+      </Heading>
+      {exists === null ? null : exists && enabled ? (
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-muted-foreground">{t("ワークは有効です。リーダーとスペースは、左端のレールの「WORK」の枠から開きます。")}</p>
+          {confirmOff ? (
+            <div className="flex flex-col gap-2 rounded-lg border p-3 text-sm">
+              <p>{t("ワークを無効にしますか?リーダーとスペースのデータ(会話・ナレッジ・設定・APIキー・台帳)は残り、画面から選べなくなります。開いていれば、パーソナルへ戻ります。実行中の依頼があるときは、完了してから無効にしてください。")}</p>
+              <div className="flex gap-2">
+                <Button variant="destructive" disabled={busy} onClick={() => void turnOff()}>
+                  {t("無効にする")}
+                </Button>
+                <Button variant="outline" disabled={busy} onClick={() => setConfirmOff(false)}>
+                  {t("キャンセル")}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <Button variant="outline" onClick={() => setConfirmOff(true)}>
+                {t("ワークを無効にする")}
+              </Button>
+            </div>
+          )}
+        </div>
+      ) : exists ? (
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-muted-foreground">{t("ワークは無効です。リーダーとスペースのデータは残っています。有効にすると、元のとおり使えます。")}</p>
+          <div>
+            <Button disabled={busy} onClick={() => void turnOn()}>
+              {t("ワークを有効にする")}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-6">
+          {/* 見出し: ワークが何かを一文で */}
+          <div className="pt-1">
+            <h3 className="text-xl font-semibold tracking-tight">{t("仕事ごとに、専属のエージェントを持つ")}</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {t("リーダーが指示を配り、進捗をひとつにまとめます。スペースは案件ごとに独立して動きます。パーソナルは、ワークなしでも使えます。")}
+            </p>
+          </div>
+
+          {/* 図解: リーダーと、その下のスペース */}
+          <div className="flex flex-col items-center rounded-xl border bg-muted/30 px-4 py-5" aria-hidden="true">
+            <div
+              className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold"
+              style={{ borderColor: LEADER_COLOR, color: LEADER_COLOR, backgroundColor: `${LEADER_COLOR}14` }}
+            >
+              <ClipboardList className="size-4" />
+              Leader
+              <span className="hidden text-xs font-normal text-muted-foreground sm:inline">{t("指示を配る・進捗を集める")}</span>
+            </div>
+            <div className="h-4 w-px bg-border" />
+            <div className="h-px w-2/3 bg-border" />
+            <div className="grid w-full grid-cols-3 gap-2 pt-0">
+              {[
+                { name: "経理", color: "#19bde6" },
+                { name: "営業", color: "#6be619" },
+                { name: "開発", color: "#bd19e6" },
+              ].map((x) => (
+                <div key={x.name} className="flex flex-col items-center">
+                  <div className="h-3 w-px bg-border" />
+                  <div className="flex w-full items-center justify-center gap-2 rounded-lg border bg-background/60 px-2 py-2 text-sm">
+                    <span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: x.color }} />
+                    <span className="truncate">{t(x.name)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">{t("スペースは、仕事の種類や案件ごとに作る、独立したエージェントです(例)")}</p>
+          </div>
+
+          {/* 3枚のカード */}
+          <div className="grid gap-3 sm:grid-cols-3">
+            {[
+              {
+                icon: Send,
+                title: "できること",
+                items: [
+                  "リーダーと話して、配る指示の下書きと宛先の案を作れます。",
+                  "配布ごとの進捗(実行中・承認待ち・完了・失敗)を、台帳で一か所に確認できます。",
+                  "スペースごとに、会話・ナレッジ・設定・APIキーを分けて使えます。",
+                ],
+              },
+              {
+                icon: ShieldCheck,
+                title: "守られること",
+                items: [
+                  "リーダーは専用のAPIキーを持ち、スペースの会話・ナレッジ・結果の本文を読みません。",
+                  "配布は、内容と宛先を確かめて「配布」を押したときだけ。AIが勝手に配ることはありません。",
+                  "会話・ナレッジ・APIキーは、スペース同士でも、パーソナルとも共有されません。",
+                ],
+              },
+              {
+                icon: ListOrdered,
+                title: "始める前に",
+                items: [
+                  "最初にリーダーを作成します(承諾すると作成されます)。作らないと、スペースは作れません。",
+                  "リーダーのAPIキーを登録します。",
+                  "スペースを作ります。最大30件で、名称と色は重複できません。「パーソナル」「ワーク」「リーダー」は予約名です。",
+                ],
+                numbered: true,
+              },
+            ].map((c) => (
+              <div key={c.title} className="flex flex-col gap-2 rounded-xl border bg-background/40 p-4">
+                <div className="flex items-center gap-2">
+                  <c.icon className="size-4 text-primary" />
+                  <h4 className="text-sm font-semibold">{t(c.title)}</h4>
+                </div>
+                {c.numbered ? (
+                  <ol className="list-decimal space-y-1.5 pl-4 text-xs leading-relaxed text-muted-foreground">
+                    {c.items.map((x) => (
+                      <li key={x}>{t(x)}</li>
+                    ))}
+                  </ol>
+                ) : (
+                  <ul className="list-disc space-y-1.5 pl-4 text-xs leading-relaxed text-muted-foreground">
+                    {c.items.map((x) => (
+                      <li key={x}>{t(x)}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* 承諾バー */}
+          <div className="sticky bottom-0 -mx-5 -mb-4 flex flex-wrap items-center justify-between gap-3 border-t bg-background/90 px-5 py-3 backdrop-blur">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
+              {t("内容を理解しました")}
+            </label>
+            <Button disabled={!agreed || busy} className={cn(agreed && "neon-glow")} onClick={() => void enable()}>
+              {t("承諾してワークを有効にする")}
+            </Button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

@@ -32,6 +32,8 @@ pub fn get_active_workspace(ws: State<'_, Workspaces>) -> ActiveWorkspace {
 /// スペースを作る(上限30件)。選択はしない。
 #[tauri::command]
 pub fn create_space(app: AppHandle, ws: State<'_, Workspaces>, name: String, color: String) -> Result<Space, AppError> {
+    // スペースを作る前に、リーダーが必要
+    ws.ensure_leader()?;
     let space = ws.create(&name, &color)?;
     tray::refresh(&app); // メニューバー・トレイのSpacesに加える
     Ok(space)
@@ -83,6 +85,26 @@ pub fn delete_space(
         tray::refresh(&app);
     }
     Ok(DeleteReport { active: ws.active_info(), kept_knowledge })
+}
+
+/// ワークが有効か。リーダーを作成していない間も偽ではなく、有効(未保存)を返す。
+#[tauri::command]
+pub fn work_enabled(ws: State<'_, Workspaces>) -> bool {
+    ws.work_enabled()
+}
+
+/// ワークの有効/無効を切り替える。無効にしても、リーダー・スペースのデータは残る。
+/// 実行中・承認待ちの依頼があるときは無効にできない(`WorkBusy`)。開いていたら、パーソナルへ戻す。
+#[tauri::command]
+pub fn set_work_enabled(app: AppHandle, ws: State<'_, Workspaces>, enabled: bool) -> Result<(), AppError> {
+    let moved = ws.set_work_enabled(enabled)?;
+    if moved {
+        refresh_after_switch(&app, &ws);
+    } else {
+        let _ = app.emit(WORKSPACE_CHANGED_EVENT, ws.active_info());
+        tray::refresh(&app);
+    }
+    Ok(())
 }
 
 /// ワークスペースを切り替える。`personal`でパーソナルへ戻る。

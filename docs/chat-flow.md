@@ -43,7 +43,7 @@ sequenceDiagram
 
 - 自動ルーティングは無く、ユーザーが画面(`ModelSelector`)で選んだ `Route` を使う。選択は `app_settings.routing` に保存する。
 - 保存済みの選択が使えない(キーを削除した等)ときは既定へ戻す。既定は、Claude が使えれば Sonnet、なければ使えるプロバイダーのカタログ先頭。
-- 整理バッチ(`batch_route`)と音声認識の校正(`proofread_route`)は、対話とは別にモデルを指定できる。
+- 整理バッチ(`batch_route`)と音声認識の校正(`proofread_route`)は、対話とは別に、スペースごとにモデルを指定できる。
 
 ## システムプロンプトの構成
 

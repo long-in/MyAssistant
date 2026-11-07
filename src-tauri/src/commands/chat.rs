@@ -8,12 +8,12 @@ use crate::{
     commands::agent as agent_cmd,
     db::{Db, UsageRow},
     services::{
-        agent::AgentEvent,
+        agent::{self, AgentEvent},
         attention::{self, AttentionKind},
         batch, compact,
         global_settings::SettingsStore,
         graph::{self, GraphCache},
-        knowledge,
+        knowledge, leader,
         llm_router::{self, ModelInfo, Route},
         profile,
         secrets::Provider,
@@ -251,18 +251,39 @@ pub async fn send_chat(
         return Err(AppError::EmptyMessage);
     }
     // 進捗・承認待ち・結果は、ワークスペースごとの記録にも残す。切り替えても依頼は止まらず、戻ったときに続きから再開できる
-    let agent = &ctx.shared.agent;
-    agent.begin(&session_id, text, on_event);
-    let result = send_chat_inner(&app, &ctx, &contexts, &graphs, session_id, text, route).await;
-    agent.finish(match &result {
+    ctx.shared.agent.begin(&session_id, text, on_event);
+    run_recorded(&app, &ctx, &contexts, &graphs, session_id, text, route).await
+}
+
+/// 記録(`AgentState::begin`か`try_begin_detached`)を始めた依頼を実行し、結果を記録して、裏のスペースなら知らせる。
+/// 画面からの依頼(`send_chat`)と、リーダーから配布された依頼(`commands::leader`)が共有する。
+pub async fn run_recorded(
+    app: &AppHandle,
+    ctx: &WorkspaceCtx,
+    contexts: &SessionContexts,
+    graphs: &GraphCache,
+    session_id: String,
+    text: &str,
+    route: Route,
+) -> Result<ChatReply, AppError> {
+    let session = session_id.clone();
+    let result = send_chat_inner(app, ctx, contexts, graphs, session_id, text, route).await;
+    // リーダーから配布した依頼なら、終わったことを台帳へ残す(後で別の依頼に置き換わっても、結果が分かるように)
+    if let Some(leader) = app.try_state::<Workspaces>().and_then(|ws| ws.leader()) {
+        let status = if result.is_ok() { leader::STATUS_DONE } else { leader::STATUS_FAILED };
+        if let Err(e) = leader.db.ledger_set_status_by_session(&session, status) {
+            log::warn!("ledger update failed: {e}");
+        }
+    }
+    ctx.shared.agent.finish(match &result {
         Ok(reply) => Ok(serde_json::to_value(reply).unwrap_or(Value::Null)),
         Err(e) => Err(serde_json::to_value(e).unwrap_or(Value::Null)),
     });
     // 開いていないスペースで依頼が終わったら、対応(結果の確認)が必要なことを知らせる。削除されたスペースは知らせない
-    if ctx.ensure_alive().is_ok() && attention::is_background(&app, &ctx.id) {
+    if ctx.ensure_alive().is_ok() && attention::is_background(app, &ctx.id) {
         match &result {
-            Ok(_) => attention::notify(&app, &ctx.id, AttentionKind::Finished, None, None),
-            Err(e) => attention::notify(&app, &ctx.id, AttentionKind::Failed, None, serde_json::to_value(e).ok()),
+            Ok(_) => attention::notify(app, &ctx.id, AttentionKind::Finished, None, None),
+            Err(e) => attention::notify(app, &ctx.id, AttentionKind::Failed, None, serde_json::to_value(e).ok()),
         }
     }
     result
@@ -303,8 +324,11 @@ async fn send_chat_inner(
         .and_then(|root| related_context(&root, &graphs, &format!("{text}\n{previous}")));
     // 基本情報は設定の変更を次の発話から反映するため、セッションのキャッシュに入れず毎回読む
     // パーソナルはパーソナルデータ、スペースは共通データとスペースデータ(どちらもユーザーが書いた指示)を渡す。スペースにパーソナルデータは渡さない
+    // リーダーはリーダープロンプトだけを渡す(パーソナルデータ・共通データ・スペースデータは渡さない)
     let (personal, instructions) = if ctx.id == workspace::PERSONAL_ID {
         (profile::load(&*ctx.global)?.prompt_block(chrono::Local::now().date_naive()), Vec::new())
+    } else if ctx.id == workspace::LEADER_ID {
+        (None, leader::prompt_block(&leader::load_prompt(&ctx.db)?).into_iter().collect())
     } else {
         let shared = space_data::shared_block(&space_data::load_shared(app.state::<Workspaces>().root()));
         (None, shared.into_iter().chain(space_data::space_block(&space_data::load(&ctx.db)?)).collect())
@@ -333,6 +357,12 @@ async fn send_chat_inner(
     prior.pop();
     let root = batch::knowledge_root(&ctx)?;
     let system = system.as_deref().unwrap_or_default();
+    // リーダーは、ファイル操作に代えて、台帳の参照と配布の下書きのツールを使う
+    let ws = app.state::<Workspaces>();
+    let leader_host = |id: &str, name: &str, input: &Value| {
+        leader::run_tool(ctx, &ws.list(), |sid| (ws.run_status(sid), ws.run_session(sid)), id, name, input)
+    };
+    let host: Option<agent::ToolHost<'_>> = (ctx.id == workspace::LEADER_ID).then_some(&leader_host);
     let out = agent_cmd::run_with_tools(
         ctx,
         &root,
@@ -341,6 +371,7 @@ async fn send_chat_inner(
         system,
         web_access(&ctx.db)?.then_some((tuning.web_search_max, tuning.web_fetch_max)),
         shell_access(&ctx.db)?,
+        host,
         prior,
         text,
         &|event| {

@@ -68,6 +68,10 @@ export const ERROR_MESSAGES: Record<string, string> = {
   color_in_use: "その色は、ほかのスペースがすでに使っています。別の色を選んでください。",
   space_limit: "スペースは30件までです。不要なスペースを削除してください。",
   space_not_found: "スペースが見つかりません。",
+  leader_required: "スペースを作るには、先にリーダーを作成してください。",
+  leader_exists: "リーダーはすでに作成されています。",
+  work_disabled: "ワークは無効です。全体設定で有効にしてください。",
+  work_busy: "ワークの中に実行中または承認待ちの依頼があります。完了してから無効にしてください。",
   path_in_use: "その場所は、ほかのワークスペースのナレッジまたはデバッグログの保存先と重なっています。別の場所を選んでください。",
 };
 
@@ -184,6 +188,11 @@ export const sendChat = (sessionId: string, text: string, route: Route, onEvent:
 /** 承認の種類。file=ファイル作成、plan=作業計画、command=計画外・破壊的なコマンドの個別承認、allow_command=許可リストにないコマンドを許可に加えて実行。 */
 export type ApprovalKind = "file" | "plan" | "command" | "allow_command";
 
+/** 配布の下書きの宛先(スペース)。 */
+export type DraftTarget = { id: string; name: string; color: string };
+/** リーダーの配布の下書き。`targets`は、AIが推奨する宛先。 */
+export type DispatchDraft = { id: string; instruction: string; targets: DraftTarget[] };
+
 /** 音声対話中のファイル操作・作業の進捗。`approval`は実行前の承認要求で、`agentApprove`で応答する。 */
 export type AgentEvent =
   | { type: "text"; text: string }
@@ -202,6 +211,8 @@ export type AgentEvent =
       reason: string;
     }
   | { type: "command_output"; id: string; stream: "stdout" | "stderr"; text: string }
+  /** リーダーが作った配布の下書き。利用者が宛先を確かめて配布する(AIは配布できない)。 */
+  | ({ type: "dispatch_draft" } & DispatchDraft)
   /** 依頼の完了。切り替えから戻って`agentResume`で接続し直した画面にだけ届く(最初の画面は`sendChat`の戻り値で受け取る)。 */
   | { type: "finished"; reply: ChatReply | null; error: AppError | null };
 
@@ -667,6 +678,10 @@ export const importGlobalSettings = (src: string) => invoke<SettingsTransferRepo
 
 /** パーソナルワークスペースのID。 */
 export const PERSONAL_ID = "personal";
+/** リーダー(各スペースのタスク進捗を管理する特別なスペース)のID・表示名・イメージカラー。スペースの一覧には入らない。 */
+export const LEADER_ID = "leader";
+export const LEADER_NAME = "Leader";
+export const LEADER_COLOR = "#f59e0b";
 /** 作れるスペースの上限。 */
 export const MAX_SPACES = 30;
 /** スペース名の最大文字数。 */
@@ -714,3 +729,52 @@ export type CopyReport = { settings: number; keys: number; words: number };
 export const copyWorkspaceSettings = (from: string, to: string, includeKeys: boolean, includeDictionary: boolean) =>
   invoke<CopyReport>("copy_workspace_settings", { from, to, includeKeys, includeDictionary });
 export const switchWorkspace = (id: string) => invoke<ActiveWorkspace>("switch_workspace", { id });
+
+// ---- リーダー(各スペースのタスク進捗を管理する特別なスペース) ----
+
+/** 依頼のいまの状態。`interrupted`は、再起動などで依頼が失われたもの。 */
+export type TaskStatus = "running" | "awaiting_approval" | "done" | "failed" | "interrupted";
+/** 台帳の1行(1回の配布の、1つの宛先)。結果の本文は持たない。 */
+export type LeaderTask = {
+  id: string;
+  batch_id: string;
+  instruction: string;
+  space_id: string;
+  /** 配布したときの宛先の名称(スペースが削除されても残る)。 */
+  space_name: string;
+  status: string;
+  confirmed: boolean;
+  created_at: string;
+  live_status: TaskStatus;
+  space_exists: boolean;
+  space_color: string | null;
+};
+/** 各スペースのいまの依頼の状態(`idle`=動いていない)。直接の指示によるものも含む。 */
+export type SpaceRun = { id: string; name: string; color: string; status: "idle" | "running" | "awaiting_approval" | "done" | "failed" };
+export type LeaderOverview = { tasks: LeaderTask[]; spaces: SpaceRun[] };
+/** 配布できなかった理由。`active`=選択中のスペース、`busy`=依頼の最中。 */
+export type DispatchReason = "not_found" | "active" | "busy" | "no_provider" | "error";
+export type DispatchResult = { space_id: string; started: boolean; reason: DispatchReason | null };
+
+export const leaderExists = () => invoke<boolean>("leader_exists");
+/** ワークが有効か(未保存は有効)。無効のあいだも、リーダー・スペースのデータは残る。 */
+export const workEnabled = () => invoke<boolean>("work_enabled");
+/** ワークの有効/無効を切り替える。実行中・承認待ちがあるときは無効にできない。 */
+export const setWorkEnabled = (enabled: boolean) => invoke<void>("set_work_enabled", { enabled });
+export const createLeader = () => invoke<void>("create_leader");
+/** リーダープロンプト(行動原理・役割)。 */
+export const leaderGetPrompt = () => invoke<SpaceNote>("leader_get_prompt");
+export const leaderSetPrompt = (note: SpaceNote) => invoke<SpaceNote>("leader_set_prompt", { note });
+/** リーダーのAPIキーの登録有無のみ(生値は返らない)。 */
+export const leaderKeyStatus = () => invoke<KeyStatus>("leader_key_status");
+export const leaderSaveApiKey = (provider: Provider, key: string) => invoke<void>("leader_save_api_key", { provider, key });
+export const leaderDeleteApiKey = (provider: Provider) => invoke<void>("leader_delete_api_key", { provider });
+/** `from`(`personal`またはスペースID)のAnthropicのAPIキーを、リーダーへコピーする。コピーできたか(コピー元に無ければ false)。 */
+export const leaderCopyApiKey = (from: string) => invoke<boolean>("leader_copy_api_key", { from });
+/** 宛先の提案(スペースID)。過去に配布した指示の履歴だけが根拠で、根拠が無ければ空。 */
+export const leaderSuggest = (text: string) => invoke<string[]>("leader_suggest", { text });
+/** 指示を、選んだスペースへ配布する。宛先は必ず利用者が選ぶ。 */
+export const leaderDispatch = (text: string, spaceIds: string[]) =>
+  invoke<DispatchResult[]>("leader_dispatch", { text, spaceIds });
+export const leaderOverview = () => invoke<LeaderOverview>("leader_overview");
+export const leaderSetConfirmed = (id: string, confirmed: boolean) => invoke<void>("leader_set_confirmed", { id, confirmed });
