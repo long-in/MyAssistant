@@ -409,6 +409,18 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
     return result;
   };
 
+  /** 字幕の返答を、読み上げボタンから再生する。ミュート中でも、押したときは読み上げる。 */
+  const speakOnDemand = async (text: string) => {
+    unlockAudio();
+    stopSpeech();
+    try {
+      const audio = await synthesizeSpeech(text);
+      await playBase64Mp3(audio, text);
+    } catch (e) {
+      fail(e);
+    }
+  };
+
   /** 入力欄の文章を送る。送信が始まったら欄を空にし、読み上げ中なら止めてから送る。 */
   const submitDraft = () => {
     const text = draft.trim();
@@ -942,7 +954,7 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
           </div>
           {switching && <SwitchConfirm listening={switchListening} onAnswer={answerSwitch} />}
           <div className={cn("flex min-h-0 w-full flex-1 flex-col items-center justify-end", HIDE_WHEN_SMALL)}>
-            <Subtitles turns={turns} pending={busy} onCorrected={(text) => setTurns((ts) => ts.map((x, i) => (i === ts.length - 1 ? { ...x, user: text } : x)))} />
+            <Subtitles turns={turns} pending={busy} speaking={speaking} onSpeak={ttsReady ? (text) => void speakOnDemand(text) : undefined} onStop={stopSpeech} onCorrected={(text) => setTurns((ts) => ts.map((x, i) => (i === ts.length - 1 ? { ...x, user: text } : x)))} />
           </div>
         </div>
       </div>

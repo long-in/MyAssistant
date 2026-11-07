@@ -518,6 +518,8 @@ export const EN: Record<string, string> = {
   "登録した読みを、コピー先にも写します(コピー先の辞書は置き換わります)。": "Copies the registered readings to the destination (the destination's dictionary is replaced).",
   "読み上げ辞書(コピー先の辞書は置き換わる)": "Pronunciation dictionary (the destination's dictionary is replaced)",
   "、読み上げ辞書": ", the pronunciation dictionary",
+  "返答を読み上げる": "Read the reply aloud",
+  "読み上げを止める": "Stop reading aloud",
   "パーソナルデータもコピーする": "Also copy personal data",
   "名前・呼ばれ方・誕生日など。仕事用のスペースへは、通常コピーしないでください。": "Name, how to address you, birthday and so on. You normally should not copy these to a work space.",
   "コピーするもの": "Copied",
