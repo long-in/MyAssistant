@@ -12,6 +12,7 @@ use super::{
     knowledge::{self, Entry},
     llm_client::{self, ChatMessage},
     llm_router::{self, Route},
+    global_settings::SettingsStore,
     workspace::WorkspaceCtx,
 };
 use crate::{
@@ -201,7 +202,7 @@ pub const DEFAULT_INTERVAL_MINUTES: u32 = 30;
 pub const INTERVAL_RANGE: std::ops::RangeInclusive<u32> = 5..=1440;
 
 /// 保存済みの間隔(分)。未設定・範囲外なら既定値。
-pub fn interval_minutes(db: &Db) -> Result<u32, AppError> {
+pub fn interval_minutes(db: &impl SettingsStore) -> Result<u32, AppError> {
     Ok(db
         .get_setting(BATCH_INTERVAL_KEY)?
         .and_then(|v| v.parse().ok())

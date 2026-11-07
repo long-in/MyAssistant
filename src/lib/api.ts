@@ -285,23 +285,37 @@ export const DEBUG_MODE_EVENT = "debug-mode-changed";
 export const getWebAccess = () => invoke<boolean>("get_web_access");
 export const setWebAccess = (enabled: boolean) => invoke<void>("set_web_access", { enabled });
 
-/** 設定ページで変更できる数値の調整項目。保存時に範囲内へ丸められる。 */
+/** スペースごとの数値の上限。保存時に範囲内へ丸められる。 */
 export type Tuning = {
   web_search_max: number;
   web_fetch_max: number;
-  voice_idle_secs: number;
-  utterance_silence_secs: number;
-  release_tail_secs: number;
   history_exchanges: number;
 };
 export const DEFAULT_TUNING: Tuning = {
   web_search_max: 5,
   web_fetch_max: 5,
+  history_exchanges: 10,
+};
+
+/** 音声入力の待ち時間。全スペース共通(全体設定)。保存時に範囲内へ丸められる。 */
+export type VoiceTiming = {
+  voice_idle_secs: number;
+  utterance_silence_secs: number;
+  release_tail_secs: number;
+};
+export const DEFAULT_VOICE_TIMING: VoiceTiming = {
   voice_idle_secs: 3,
   utterance_silence_secs: 1.2,
   release_tail_secs: 0.5,
-  history_exchanges: 10,
 };
+export const getVoiceTiming = () => invoke<VoiceTiming>("get_voice_timing");
+export const setVoiceTiming = (voice: VoiceTiming) => invoke<VoiceTiming>("set_voice_timing", { voice });
+
+/** 全体設定のうち画面の環境の項目。未保存の項目はnull。 */
+export type GlobalPrefs = { language: "ja" | "en" | null; os_notifications: boolean | null };
+export const getGlobalPrefs = () => invoke<GlobalPrefs>("get_global_prefs");
+export const setGlobalLanguage = (language: "ja" | "en") => invoke<void>("set_global_language", { language });
+export const setGlobalOsNotifications = (enabled: boolean) => invoke<void>("set_global_os_notifications", { enabled });
 export const getTuning = () => invoke<Tuning>("get_tuning");
 /** 保存し、範囲内へ丸めた実際の値を返す。 */
 export const setTuning = (tuning: Tuning) => invoke<Tuning>("set_tuning", { tuning });
@@ -645,6 +659,9 @@ export type SettingsTransferReport = { applied: number; skipped: number };
 export const exportSettings = (dest: string) => invoke<SettingsTransferReport>("export_settings", { dest });
 /** 書き出した設定ファイルを読み込んで反映する。 */
 export const importSettings = (src: string) => invoke<SettingsTransferReport>("import_settings", { src });
+/** 全体設定だけの書き出し・読み込み。 */
+export const exportGlobalSettings = (dest: string) => invoke<SettingsTransferReport>("export_global_settings", { dest });
+export const importGlobalSettings = (src: string) => invoke<SettingsTransferReport>("import_global_settings", { src });
 
 /** トレイメニューの表示言語を切り替える。 */
 

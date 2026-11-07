@@ -9,7 +9,9 @@ use serde_json::Value;
 use super::{
     aws, batch,
     command_policy::{self, Policy},
-    debug_log, profile, pronunciation, proofread, tuning, wake,
+    debug_log,
+    global_settings::{self, GlobalStore, SettingsStore},
+    profile, pronunciation, proofread, tuning, wake,
     workspace::WorkspaceCtx,
 };
 use crate::{
@@ -40,25 +42,34 @@ enum Kind {
     Text,
     /// 検証を通る基本情報のJSON(空文字は未設定を表す)。
     Profile,
+    /// 整理バッチの間隔(分)。
+    Interval,
 }
 
 const ENTRIES: &[(&str, Kind)] = &[
     (chat::ROUTE_KEY, Kind::Json),
-    (chat::BASE_INSTRUCTIONS_KEY, Kind::Text),
     (chat::WEB_ACCESS_KEY, Kind::Flag),
     (chat::SHELL_ACCESS_KEY, Kind::Flag),
     (voice::STT_ENGINE_KEY, Kind::OneOf(&["local", "google", "aqua"])),
     (voice::STT_LANGUAGE_KEY, Kind::Text),
     (voice::TTS_ENGINE_KEY, Kind::OneOf(&["google", "voicevox"])),
     (voice::VOICEVOX_STYLE_KEY, Kind::Text),
-    (proofread::ROUTE_KEY, Kind::Json),
-    (wake::ENABLED_KEY, Kind::Flag),
-    (wake::WORDS_KEY, Kind::Json),
     (tuning::KEY, Kind::Json),
     (super::batch::BATCH_ROUTE_KEY, Kind::Json),
-    (super::batch::BATCH_INTERVAL_KEY, Kind::Text),
     (debug_log::ENABLED_KEY, Kind::Flag),
+];
+
+/// 全体設定の項目。全スペースで共通で、設定のエクスポート・コピーの対象にはしない(全体設定のバックアップだけが扱う)。
+const GLOBAL_ENTRIES: &[(&str, Kind)] = &[
+    (chat::BASE_INSTRUCTIONS_KEY, Kind::Text),
+    (global_settings::OS_NOTIFICATIONS_KEY, Kind::Flag),
+    (global_settings::LANGUAGE_KEY, Kind::OneOf(&["ja", "en"])),
+    (proofread::ROUTE_KEY, Kind::Json),
+    (tuning::VOICE_KEY, Kind::Json),
+    (wake::ENABLED_KEY, Kind::Flag),
+    (wake::WORDS_KEY, Kind::Json),
     (profile::KEY, Kind::Profile),
+    (batch::BATCH_INTERVAL_KEY, Kind::Interval),
 ];
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -83,6 +94,7 @@ fn valid(kind: Kind, value: &str) -> bool {
         Kind::OneOf(allowed) => allowed.contains(&value),
         Kind::Text => value.chars().count() <= MAX_TEXT_CHARS,
         Kind::Profile => profile::valid_json(value, chrono::Local::now().date_naive()),
+        Kind::Interval => value.parse::<u32>().is_ok_and(|m| batch::INTERVAL_RANGE.contains(&m)),
     }
 }
 
@@ -168,6 +180,33 @@ pub fn apply(db: &Db, file: &SettingsFile) -> Result<(Report, Option<Policy>), A
     Ok((v.report(), v.policy))
 }
 
+/// 全体設定をファイルの内容にまとめる。未設定の項目は含めない。
+pub fn collect_global(store: &GlobalStore, exported_at: String) -> Result<SettingsFile, AppError> {
+    let mut settings = BTreeMap::new();
+    for (key, _) in GLOBAL_ENTRIES {
+        if let Some(v) = store.get_setting(key)? {
+            settings.insert((*key).to_owned(), v);
+        }
+    }
+    Ok(SettingsFile { app: APP_ID.into(), version: FORMAT_VERSION, exported_at, settings, command_policy: None })
+}
+
+/// 全体設定のファイルを取り込む。全項目を検証してから書き込み、不正な項目があれば何も変更しない。
+/// ファイルに無い項目は変更せず、未知の項目(スペースごとの設定など)は読み飛ばす。
+pub fn apply_global(store: &GlobalStore, file: &SettingsFile) -> Result<Report, AppError> {
+    let mut accepted: Vec<(&str, &str)> = Vec::new();
+    let mut skipped = 0;
+    for (key, value) in &file.settings {
+        match GLOBAL_ENTRIES.iter().find(|(k, _)| *k == key) {
+            Some((k, kind)) if valid(*kind, value) => accepted.push((*k, value.as_str())),
+            Some(_) => return Err(AppError::InvalidSettings(format!("{key}の値が不正です"))),
+            None => skipped += 1,
+        }
+    }
+    store.set_settings(&accepted)?;
+    Ok(Report { applied: accepted.len(), skipped })
+}
+
 /// ワークスペース間の設定コピーの対象。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CopyOptions {
@@ -197,9 +236,7 @@ pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result
         return Err(AppError::InvalidSpace("same workspace".into()));
     }
     let policy = command_policy::load(&batch::knowledge_root(from)?);
-    let mut file = collect(&from.db, policy, String::new())?;
-    // パーソナルデータはパーソナル専用で、コピーしない(スペースにはスペースデータがある)
-    file.settings.remove(profile::KEY);
+    let file = collect(&from.db, policy, String::new())?;
     let v = validate(&file)?;
     // 辞書は、書き込みの前に整形・検証しておく(上限を超えるなら、何も書かずに失敗する)
     let words = if opts.include_dictionary { Some(pronunciation::normalize(pronunciation::load_user(&from.dir))?) } else { None };
@@ -301,18 +338,39 @@ mod tests {
     }
 
     #[test]
-    fn profile_roundtrips_and_bad_profile_changes_nothing() {
+    fn space_export_excludes_global_items() {
         let (_da, a) = mem();
+        for key in [profile::KEY, chat::BASE_INSTRUCTIONS_KEY, wake::WORDS_KEY, proofread::ROUTE_KEY, batch::BATCH_INTERVAL_KEY] {
+            a.set_setting(key, "x").unwrap();
+        }
+        a.set_setting(chat::SHELL_ACCESS_KEY, "1").unwrap();
+        let exported = collect(&a, Policy::defaults(), "t".into()).unwrap();
+        assert_eq!(exported.settings.keys().collect::<Vec<_>>(), vec![chat::SHELL_ACCESS_KEY]);
+        // 全体設定の項目は、スペースのファイルから取り込んでも読み飛ばす
+        let (_db, b) = mem();
+        let (report, _) = apply(&b, &file(&[(profile::KEY, "{}"), (chat::SHELL_ACCESS_KEY, "0")])).unwrap();
+        assert_eq!(report, Report { applied: 1, skipped: 1 });
+        assert_eq!(b.get_setting(profile::KEY).unwrap(), None);
+    }
+
+    #[test]
+    fn global_roundtrips_and_bad_item_changes_nothing() {
+        let d = tempfile::tempdir().unwrap();
+        let a = GlobalStore::open(d.path());
         let json = r#"{"enabled":true,"name":"山田","birthday":"1990-05-20"}"#;
         a.set_setting(profile::KEY, json).unwrap();
-        let text = serde_json::to_string(&collect(&a, Policy::defaults(), "t".into()).unwrap()).unwrap();
-        let (_db, b) = mem();
-        apply(&b, &parse(&text).unwrap()).unwrap();
+        a.set_setting(batch::BATCH_INTERVAL_KEY, "45").unwrap();
+        let text = serde_json::to_string(&collect_global(&a, "t".into()).unwrap()).unwrap();
+        let d2 = tempfile::tempdir().unwrap();
+        let b = GlobalStore::open(d2.path());
+        assert_eq!(apply_global(&b, &parse(&text).unwrap()).unwrap(), Report { applied: 2, skipped: 0 });
         assert_eq!(b.get_setting(profile::KEY).unwrap().as_deref(), Some(json));
 
-        let bad = file(&[(chat::SHELL_ACCESS_KEY, "1"), (profile::KEY, r#"{"name":"a<b"}"#)]);
-        assert!(apply(&b, &bad).is_err());
-        assert_eq!(b.get_setting(chat::SHELL_ACCESS_KEY).unwrap(), None);
+        for bad in [(profile::KEY, r#"{"name":"a<b"}"#), (batch::BATCH_INTERVAL_KEY, "1"), (global_settings::LANGUAGE_KEY, "fr")] {
+            let f = file(&[(chat::BASE_INSTRUCTIONS_KEY, "変えない"), bad]);
+            assert!(apply_global(&b, &f).is_err());
+            assert_eq!(b.get_setting(chat::BASE_INSTRUCTIONS_KEY).unwrap(), None);
+        }
     }
 
     #[test]
@@ -337,6 +395,7 @@ mod tests {
         let (_db, b) = ctx("b");
         a.db.set_setting(chat::SHELL_ACCESS_KEY, "0").unwrap();
         a.db.set_setting(profile::KEY, r#"{"enabled":true,"name":"山田"}"#).unwrap();
+        a.db.set_setting(chat::BASE_INSTRUCTIONS_KEY, "全体設定の項目").unwrap();
         let custom = tempfile::tempdir().unwrap(); // コピー元は別の場所をナレッジの保存先にしている
         a.db.set_setting("knowledge_dir", &custom.path().to_string_lossy()).unwrap();
         a.db.set_setting("summary:abc", "{}").unwrap();
@@ -348,7 +407,7 @@ mod tests {
         assert_eq!(report.keys, 0);
         assert_eq!(b.db.get_setting(chat::SHELL_ACCESS_KEY).unwrap().as_deref(), Some("0"));
         assert_eq!(b.db.get_setting(chat::WEB_ACCESS_KEY).unwrap().as_deref(), Some("0"));
-        for key in [profile::KEY, "knowledge_dir", "summary:abc"] {
+        for key in [profile::KEY, chat::BASE_INSTRUCTIONS_KEY, "knowledge_dir", "summary:abc"] {
             assert_eq!(b.db.get_setting(key).unwrap(), None, "{key}");
         }
         assert!(!b.secrets.has_tts_key().unwrap());

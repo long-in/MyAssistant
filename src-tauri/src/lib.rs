@@ -60,6 +60,11 @@ pub fn run() {
       commands::settings::set_debug_mode,
       commands::settings_transfer::export_settings,
       commands::settings_transfer::import_settings,
+      commands::settings_transfer::export_global_settings,
+      commands::settings_transfer::import_global_settings,
+      commands::global_settings::get_global_prefs,
+      commands::global_settings::set_global_language,
+      commands::global_settings::set_global_os_notifications,
       commands::chat::add_stt_correction,
       commands::chat::get_usage_this_month,
       commands::chat::list_models,
@@ -72,6 +77,8 @@ pub fn run() {
       commands::chat::set_web_access,
       commands::chat::get_shell_access,
       commands::chat::set_shell_access,
+      commands::chat::get_voice_timing,
+      commands::chat::set_voice_timing,
       commands::chat::get_base_instructions,
       commands::chat::save_base_instructions,
       commands::voice::get_stt_engine,
@@ -152,6 +159,10 @@ pub fn run() {
       services::aws::init(app.handle());
       // パーソナルは従来どおりアプリデータ直下(`timeline.db` / `secrets.json` / `knowledge`)
       let personal = services::workspace::WorkspaceCtx::open(services::workspace::PERSONAL_ID, &dir)?;
+      // 全体設定は、初回だけパーソナルの現在値を初期値として取り込む
+      if let Err(e) = personal.global.migrate_from(&personal.db) {
+        log::warn!("global settings migration failed: {e}");
+      }
       app.manage(services::workspace::Workspaces::new(&dir, personal));
       app.manage(commands::chat::SessionContexts::default());
       app.manage(services::graph::GraphCache::default());

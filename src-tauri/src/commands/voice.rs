@@ -6,6 +6,7 @@ use crate::{
     commands::chat::CORRECTIONS_MAX,
     db::Db,
     services::{
+        global_settings::SettingsStore,
         audio::Recorder,
         batch, debug_log, knowledge,
         llm_router::{self, Route},
@@ -152,7 +153,7 @@ const ANSWER_TERMS: [&str; 2] = ["はい", "いいえ"];
 /// `answering`が真(承認待ち)のときは、返事の語を先頭に加える。
 fn stt_prompt(ctx: &WorkspaceCtx, answering: bool) -> Option<String> {
     let mut terms: Vec<String> = if answering { ANSWER_TERMS.iter().map(|t| t.to_string()).collect() } else { Vec::new() };
-    let wake_words: Vec<String> = wake::load(&ctx.db).ok().filter(|c| c.enabled).map(|c| c.words).unwrap_or_default();
+    let wake_words: Vec<String> = wake::load(&*ctx.global).ok().filter(|c| c.enabled).map(|c| c.words).unwrap_or_default();
     terms.extend(wake_words);
     if let Ok(root) = batch::knowledge_root(ctx) {
         for t in knowledge::recent_correction_terms(&root, PROMPT_TERMS_MAX) {
@@ -199,10 +200,10 @@ pub fn load_proofread_route(ctx: Ctx) -> Result<Option<Route>, AppError> {
 #[tauri::command]
 pub fn save_proofread_route(ctx: Ctx, route: Option<Route>) -> Result<(), AppError> {
     let Some(route) = route else {
-        return ctx.db.set_setting(proofread::ROUTE_KEY, "");
+        return ctx.global.set_setting(proofread::ROUTE_KEY, "");
     };
     llm_router::resolve(&ctx, &route, &batch::available_providers(&ctx.secrets))?;
-    ctx.db.set_setting(
+    ctx.global.set_setting(
         proofread::ROUTE_KEY,
         &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?,
     )
@@ -331,7 +332,7 @@ pub async fn stop_recording_and_check_wake(
     session_id: Option<String>,
 ) -> Result<WakeCheck, AppError> {
     let text = transcribe_recording(&app, &recorder, &ctx, false).await?;
-    let config = wake::load(&ctx.db)?;
+    let config = wake::load(&*ctx.global)?;
     let Some(rest) = wake::detect(&text, &config.words).filter(|_| config.enabled) else {
         return Ok(WakeCheck { woke: false, text: String::new() });
     };
@@ -358,13 +359,13 @@ pub fn trim_recording(recorder: State<'_, Recorder>, keep_ms: u32) {
 
 #[tauri::command]
 pub fn get_wake_config(ctx: Ctx) -> Result<wake::WakeConfig, AppError> {
-    wake::load(&ctx.db)
+    wake::load(&*ctx.global)
 }
 
 /// 常時待機の設定を保存し、実際に保存した内容(整形後)を返す。
 #[tauri::command]
 pub fn set_wake_config(ctx: Ctx, config: wake::WakeConfig) -> Result<wake::WakeConfig, AppError> {
-    wake::save(&ctx.db, &config)
+    wake::save(&*ctx.global, &config)
 }
 
 /// 読み上げ辞書(組み込みとユーザー登録)。

@@ -6,6 +6,7 @@ use crate::{
     services::{
         batch::{self, BatchReport},
         debug_log,
+        global_settings::SettingsStore,
         knowledge::{self, KnowledgeFile, TransferReport},
         llm_router::Route,
         workspace::{Ctx, Workspaces},
@@ -125,7 +126,7 @@ pub async fn run_batch(ctx: Ctx) -> Result<Option<BatchReport>, AppError> {
 /// 整理バッチの実行間隔(分)。
 #[tauri::command]
 pub fn get_batch_interval(ctx: Ctx) -> Result<u32, AppError> {
-    batch::interval_minutes(&ctx.db)
+    batch::interval_minutes(&*ctx.global)
 }
 
 /// 次の待ち時間から反映される。範囲外は拒否する。
@@ -134,7 +135,7 @@ pub fn set_batch_interval(ctx: Ctx, minutes: u32) -> Result<(), AppError> {
     if !batch::INTERVAL_RANGE.contains(&minutes) {
         return Err(AppError::Db(format!("interval out of range: {minutes}")));
     }
-    ctx.db.set_setting(batch::BATCH_INTERVAL_KEY, &minutes.to_string())
+    ctx.global.set_setting(batch::BATCH_INTERVAL_KEY, &minutes.to_string())
 }
 
 /// 整理バッチのモデル指定。未設定・使用不可なら既定(Claudeが使えればSonnet)を返す。

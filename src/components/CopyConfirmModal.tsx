@@ -79,7 +79,7 @@ export default function CopyConfirmModal({ request, targets, onClose, onCopied }
 
         <p className="mt-4 text-xs font-medium text-muted-foreground">{t("コピーするもの")}</p>
         <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs">
-          <li>{t("設定: モデル・音声・起動ワード・調整値・ナレッジ整理・デバッグモード")}</li>
+          <li>{t("設定: モデル・音声・調整値・デバッグモード")}</li>
           <li>{t("コマンド権限")}</li>
           <li>{t("Bedrockのモデル一覧")}</li>
           {request.includeKeys && <li className="font-medium text-destructive">{t("APIキー(Anthropic・AWS・Google・Aqua)")}</li>}
@@ -89,7 +89,7 @@ export default function CopyConfirmModal({ request, targets, onClose, onCopied }
         <p className="mt-1 text-xs text-muted-foreground">
           {t("ナレッジ・会話、ナレッジとデバッグログの保存先")}
           {request.includeKeys ? "" : t("、APIキー")}
-          {t("、パーソナルデータ、スペースデータ")}
+          {t("、全体設定(ベースプロンプト・パーソナルデータ・起動ワードなど。全スペース共通)、スペースデータ")}
           {request.includeDictionary ? "" : t("、読み上げ辞書")}
           {t("。")}
         </p>

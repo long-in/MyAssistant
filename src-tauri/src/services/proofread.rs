@@ -1,5 +1,6 @@
 //! 音声認識結果を会話の文脈から校正するLLMステップ。
 use super::{
+    global_settings::SettingsStore,
     llm_client::{self, ChatMessage},
     llm_router::{self, Route},
     secrets::Provider,
@@ -26,7 +27,7 @@ const SYSTEM: &str = "\
 /// 保存済みの校正モデル。未設定、またはキー削除などで使えなければ`None`(校正しない)。
 pub fn effective_route(ctx: &WorkspaceCtx, available: &[Provider]) -> Result<Option<Route>, AppError> {
     Ok(ctx
-        .db
+        .global
         .get_setting(ROUTE_KEY)?
         .and_then(|v| serde_json::from_str::<Route>(&v).ok())
         .filter(|r| llm_router::resolve(ctx, r, available).is_ok()))

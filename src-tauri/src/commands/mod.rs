@@ -3,6 +3,7 @@ pub mod aws;
 pub mod chat;
 pub mod command_policy;
 pub mod debug;
+pub mod global_settings;
 pub mod knowledge;
 pub mod profile;
 pub mod settings;

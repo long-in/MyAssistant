@@ -9,13 +9,13 @@ use crate::{
 /// 保存済みのパーソナルデータ。未保存なら初期値。
 #[tauri::command]
 pub fn get_profile(ctx: Ctx) -> Result<UserProfile, AppError> {
-    profile::load(&ctx.db)
+    profile::load(&*ctx.global)
 }
 
 /// 検証して保存し、整えた後の値を返す。
 #[tauri::command]
 pub fn save_profile(ctx: Ctx, profile: UserProfile) -> Result<UserProfile, AppError> {
-    profile::save(&ctx.db, &profile, chrono::Local::now().date_naive())
+    profile::save(&*ctx.global, &profile, chrono::Local::now().date_naive())
 }
 
 /// 保存したパーソナルデータをすべて消す。

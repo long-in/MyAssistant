@@ -9,6 +9,7 @@ pub mod command_policy;
 pub mod legacy_data;
 pub mod compact;
 pub mod debug_log;
+pub mod global_settings;
 pub mod graph;
 pub mod scheduler;
 pub mod secrets;

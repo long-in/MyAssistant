@@ -11,6 +11,7 @@ use crate::{
         agent::AgentEvent,
         attention::{self, AttentionKind},
         batch, compact,
+        global_settings::SettingsStore,
         graph::{self, GraphCache},
         knowledge,
         llm_router::{self, ModelInfo, Route},
@@ -56,7 +57,7 @@ const DEFAULT_BASE_INSTRUCTIONS: &str = "\
 - 数式・記号・英略語は読み上げて自然な言い方にする。話し言葉で、一文を短く。";
 
 /// 画面から登録されたベース指示。未登録(空白のみ含む)なら既定値。
-fn base_instructions(db: &Db) -> Result<String, AppError> {
+fn base_instructions(db: &impl SettingsStore) -> Result<String, AppError> {
     Ok(match db.get_setting(BASE_INSTRUCTIONS_KEY)? {
         Some(v) if !v.trim().is_empty() => v,
         _ => DEFAULT_BASE_INSTRUCTIONS.to_string(),
@@ -104,15 +105,27 @@ pub fn set_tuning(ctx: Ctx, tuning: tuning::Tuning) -> Result<tuning::Tuning, Ap
     tuning::save(&ctx.db, tuning)
 }
 
+/// 音声入力の待ち時間(全体設定)。
+#[tauri::command]
+pub fn get_voice_timing(ctx: Ctx) -> Result<tuning::VoiceTiming, AppError> {
+    tuning::load_voice(&*ctx.global)
+}
+
+/// 音声入力の待ち時間を保存し、範囲内へ丸めた実際の値を返す。
+#[tauri::command]
+pub fn set_voice_timing(ctx: Ctx, voice: tuning::VoiceTiming) -> Result<tuning::VoiceTiming, AppError> {
+    tuning::save_voice(&*ctx.global, voice)
+}
+
 #[tauri::command]
 pub fn get_base_instructions(ctx: Ctx) -> Result<String, AppError> {
-    base_instructions(&ctx.db)
+    base_instructions(&*ctx.global)
 }
 
 /// ベース指示を保存する。空文字は既定値へ戻す扱い。
 #[tauri::command]
 pub fn save_base_instructions(ctx: Ctx, text: String) -> Result<(), AppError> {
-    ctx.db.set_setting(BASE_INSTRUCTIONS_KEY, text.trim())
+    ctx.global.set_setting(BASE_INSTRUCTIONS_KEY, text.trim())
 }
 
 /// セッションごとの訂正履歴の節。最初の発話時に1回だけナレッジから作り、以降は使い回す。
@@ -279,7 +292,7 @@ async fn send_chat_inner(
         .or_insert_with(|| restore_corrections(&ctx))
         .clone();
     let tuning = tuning::load(&ctx.db)?;
-    let base = base_instructions(&ctx.db)?;
+    let base = base_instructions(&*ctx.global)?;
     ctx.db.insert_log(&session_id, "user", text, None, None)?;
     // 往復数が上限を超えていれば古い分を要約し、LLMへは「要約 + 直近の会話」だけを渡す
     let window = compact::prepare(&ctx, &session_id, tuning.history_exchanges, target.provider, &target.model).await?;
@@ -291,7 +304,7 @@ async fn send_chat_inner(
     // 基本情報は設定の変更を次の発話から反映するため、セッションのキャッシュに入れず毎回読む
     // パーソナルはパーソナルデータ、スペースは共通データとスペースデータ(どちらもユーザーが書いた指示)を渡す。スペースにパーソナルデータは渡さない
     let (personal, instructions) = if ctx.id == workspace::PERSONAL_ID {
-        (profile::load(&ctx.db)?.prompt_block(chrono::Local::now().date_naive()), Vec::new())
+        (profile::load(&*ctx.global)?.prompt_block(chrono::Local::now().date_naive()), Vec::new())
     } else {
         let shared = space_data::shared_block(&space_data::load_shared(app.state::<Workspaces>().root()));
         (None, shared.into_iter().chain(space_data::space_block(&space_data::load(&ctx.db)?)).collect())

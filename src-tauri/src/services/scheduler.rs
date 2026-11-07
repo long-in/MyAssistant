@@ -35,7 +35,7 @@ fn minutes(m: u32) -> Duration {
 }
 
 fn interval_of(ctx: &WorkspaceCtx) -> Duration {
-    minutes(batch::interval_minutes(&ctx.db).unwrap_or(DEFAULT_INTERVAL_MINUTES))
+    minutes(batch::interval_minutes(&*ctx.global).unwrap_or(DEFAULT_INTERVAL_MINUTES))
 }
 
 /// 見直しの1回分。実行すべきワークスペースのIDを返し、その分を実行中にする。

@@ -1,9 +1,9 @@
 "use client";
-
-import { LANGS, setLang, tr, useLang, useT, type Lang } from "@/lib/i18n";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useT } from "@/lib/i18n";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Check, ChevronDown, Download, KeyRound, Loader2, Mic, Pencil, Play, Plus, Square, Trash2, Upload, X } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, Download, KeyRound, Loader2, Pencil, Play, Plus, Square, Trash2, Upload, X } from "lucide-react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -11,110 +11,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import ModelSelector from "@/components/ModelSelector";
-import HelpDrawer from "@/components/HelpDrawer";
 import AwsPanel from "@/components/AwsPanel";
 import DeleteSpaceModal from "@/components/DeleteSpaceModal";
 import NotePanel from "@/components/NotePanel";
 import CopySettingsCard from "@/components/CopySettingsCard";
 import CopyConfirmModal from "@/components/CopyConfirmModal";
 import { copyTargets, type CopyRequest } from "@/lib/copyTargets";
-import { PERSONAL_ID, getSpaceData, saveSpaceData, type DeleteReport } from "@/lib/api";
-import { ensureOsPermission, osNotificationsEnabled, setOsNotificationsEnabled } from "@/lib/osNotify";
+import { DEFAULT_TUNING, getTuning, setTuning, PERSONAL_ID, getSpaceData, saveSpaceData, type DeleteReport } from "@/lib/api";
 import { bumpSettingsVersion, refreshWorkspace, useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
-import {
-  PROVIDERS,
-  PROVIDER_LABELS,
-  type KeyStatus,
-  type Provider,
-  deleteApiKey,
-  aquaKeyRegistered,
-  deleteAquaKey,
-  deleteTtsKey,
-  exportSettings,
-  importSettings,
-  getBaseInstructions,
-  getProfile,
-  saveProfile,
-  clearProfile,
-  type UserProfile,
-  DEFAULT_TUNING,
-  getKeyStatus,
-  getTuning,
-  setTuning,
-  type Tuning,
-  DEBUG_MODE_EVENT,
-  type VoicePhrase,
-  generateVoicePhrases,
-  getCommandPolicy,
-  getDefaultCommandPolicy,
-  getDebugLogDir,
-  getDebugMode,
-  setCommandPolicy,
-  type CommandPolicy,
-  getShellAccess,
-  getTtsDictionary,
-  getWakeConfig,
-  setTtsDictionary,
-  exportTtsDictionary,
-  importTtsDictionary,
-  type DictionaryEntry,
-  type TtsDictionary,
-  getWebAccess,
-  getSttEngine,
-  getTtsEngine,
-  getModelSources,
-  getVoicevoxStyle,
-  setVoicevoxVersions,
-  setWhisperRevision,
-  type ModelSources,
-  type VoicevoxVersions,
-  installVoicevox,
-  getBatchInterval,
-  setBatchInterval,
-  getSttLanguage,
-  downloadSttModel,
-  sttModelUpgradable,
-  setSttLanguage,
-  type SttLanguage,
-  listModels,
-  loadProofreadRoute,
-  saveProofreadRoute,
-  type ModelInfo,
-  type Route,
-  type WakeConfig,
-  reportError,
-  saveApiKey,
-  saveBaseInstructions,
-  saveAquaKey,
-  saveTtsKey,
-  setSttEngine,
-  setTtsEngine,
-  setVoicevoxStyle,
-  type TtsEngine,
-  type VoicevoxSpeaker,
-  voicevoxInstalled,
-  voicevoxSpeakers,
-  ttsReady as fetchTtsReady,
-  type SttEngine,
-  setWakeConfig,
-  startRecording,
-  cancelRecording,
-  transcribeWakeSample,
-  setDebugLogDir,
-  setDebugMode,
-  setShellAccess,
-  setWebAccess,
-  playBase64Mp3,
-  stopSpeech,
-  ttsKeyRegistered,
-  voicePhraseAudio,
-  voicePhrasesStatus,
-  waitForSpeechEnd,
-} from "@/lib/api";
+import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, aquaKeyRegistered, deleteAquaKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, setCommandPolicy, type CommandPolicy, getShellAccess, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, saveAquaKey, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setShellAccess, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
+import { Heading, TuningPanel, type TuningField } from "@/components/GlobalPanels";
 
 type KeyRowProps = {
   title: string;
@@ -185,100 +93,7 @@ function KeyRow({ title, description, registered, busy, onSave, onDelete }: KeyR
   );
 }
 
-/** セクション見出し。名前の横の「?」から詳しい説明を開く。 */
-function Heading({ title, help, children }: { title: string; help: string; children: React.ReactNode }) {
-  return (
-    <div className="mb-1 flex items-center gap-2">
-      <h2 className="hud-label">{title}</h2>
-      <HelpDrawer title={help}>{children}</HelpDrawer>
-    </div>
-  );
-}
-
-type TuningKey = keyof Tuning;
-type TuningField = { key: TuningKey; label: string; hint: string; unit: string; min: number; max: number; step: number };
-
-/** 数値の調整項目の入力欄。入力欄を離れたときに自動で保存する。保存時は他のセクションが保存した項目を上書きしないよう、最新を読み直して自分の項目だけ差し替える。 */
-function TuningPanel({ title, help, helpBody, fields }: { title: string; help: string; helpBody: React.ReactNode; fields: TuningField[] }) {
-  const t = useT();
-  const [saved, setSaved] = useState<Tuning | null>(null);
-  const [draft, setDraft] = useState<Partial<Record<TuningKey, string>>>({});
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    getTuning()
-      .then(setSaved)
-      .catch((e) => toast.error(reportError(e)));
-  }, []);
-
-  const valueOf = (f: TuningField) => draft[f.key] ?? String(saved?.[f.key] ?? DEFAULT_TUNING[f.key]);
-  const dirty = fields.some((f) => draft[f.key] !== undefined && Number(draft[f.key]) !== saved?.[f.key]);
-
-  const save = async (reset: boolean) => {
-    setBusy(true);
-    try {
-      const latest = await getTuning();
-      const next = { ...latest };
-      for (const f of fields) {
-        const n = reset ? DEFAULT_TUNING[f.key] : Number(valueOf(f));
-        if (Number.isFinite(n)) next[f.key] = n;
-      }
-      const stored = await setTuning(next);
-      setSaved(stored);
-      setDraft({});
-      toast.success(reset ? t("既定値に戻しました。") : t("保存しました。"));
-    } catch (e) {
-      toast.error(reportError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <section className="hud-panel px-5 py-4">
-      <Heading title={title} help={help}>
-        {helpBody}
-      </Heading>
-      <div className="divide-y divide-border">
-        {fields.map((f) => (
-          <div key={f.key} className="flex items-center gap-3 py-3">
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium">{t(f.label)}</div>
-              <div className="text-xs text-muted-foreground">{t(f.hint)}</div>
-            </div>
-            <Input
-              type="number"
-              inputMode="decimal"
-              className="w-24 text-right"
-              min={f.min}
-              max={f.max}
-              step={f.step}
-              disabled={!saved}
-              value={valueOf(f)}
-              onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
-              onBlur={() => dirty && !busy && save(false)}
-              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-              aria-label={t(f.label)}
-            />
-            <span className="w-8 text-xs text-muted-foreground">{t(f.unit)}</span>
-          </div>
-        ))}
-      </div>
-      <div className="mt-2 flex justify-end gap-2">
-        <Button type="button" variant="ghost" size="sm" disabled={busy || !saved} onClick={() => save(true)}>
-          {t("既定に戻す")}
-        </Button>
-      </div>
-    </section>
-  );
-}
-
-const VOICE_FIELDS: TuningField[] = [
-  { key: "voice_idle_secs", label: "無音で入力を終える時間", hint: "声が入らないとき、音声入力を終えるまでの時間。", unit: "秒", min: 1, max: 30, step: 0.5 },
-  { key: "utterance_silence_secs", label: "話し終わりの無音", hint: "会話の続きの待ち受けで、この無音が続くと話し終えたとみなす。", unit: "秒", min: 0.5, max: 5, step: 0.1 },
-  { key: "release_tail_secs", label: "スペースを離したあとの保持", hint: "キーを離してから録音を止めるまで。語尾が切れるなら長くする。", unit: "秒", min: 0, max: 3, step: 0.5 },
-];
-
-const AGENT_FIELDS: TuningField[] = [
+const AGENT_FIELDS: TuningField<Tuning>[] = [
   { key: "web_search_max", label: "Web検索の回数", hint: "1回の依頼で検索できる上限。多いほど料金が増える。", unit: "回", min: 1, max: 20, step: 1 },
   { key: "web_fetch_max", label: "ページ取得の回数", hint: "1回の依頼でページを読める上限。", unit: "回", min: 1, max: 20, step: 1 },
   { key: "history_exchanges", label: "そのまま渡す会話の往復数", hint: "超えた古い会話はAIで要約して渡す(要約にも少量のトークンを使う)。", unit: "往復", min: 2, max: 30, step: 1 },
@@ -512,123 +327,6 @@ function CommandPolicyEditor() {
   );
 }
 
-const BATCH_INTERVALS = [5, 15, 30, 60, 180, 360, 720, 1440];
-const intervalLabel = (m: number) => (m < 60 ? tr("{m}分", { m }) : tr("{m}時間", { m: m / 60 }));
-
-/** ログ整理(ナレッジ化)を自動実行する間隔。 */
-function BatchInterval() {
-  const t = useT();
-  const [minutes, setMinutes] = useState<number | null>(null);
-  useEffect(() => {
-    getBatchInterval()
-      .then(setMinutes)
-      .catch((e) => toast.error(reportError(e)));
-  }, []);
-
-  const change = async (next: number) => {
-    const prev = minutes;
-    setMinutes(next);
-    try {
-      await setBatchInterval(next);
-    } catch (e) {
-      setMinutes(prev);
-      toast.error(reportError(e));
-    }
-  };
-
-  const options = minutes !== null && !BATCH_INTERVALS.includes(minutes) ? [...BATCH_INTERVALS, minutes].sort((a, b) => a - b) : BATCH_INTERVALS;
-
-  return (
-    <section className="hud-panel flex items-center justify-between gap-4 px-5 py-4">
-      <div>
-        <Heading title="Knowledge Interval" help={t("ログ整理の間隔")}>
-          <p>{t("会話ログをトピック別のナレッジへ整理する間隔です。")}</p>
-          <ul>
-            <li>{t("整理が終わった会話のキャプチャは削除されます。")}</li>
-            <li>{t("アプリの終了時と、ナレッジ画面の「今すぐ整理」でも整理します。")}</li>
-            <li>{t("変更は次の待ち時間から反映されます。")}</li>
-          </ul>
-        </Heading>
-        <p className="text-xs text-muted-foreground">{t("この間隔でログをナレッジへ整理します。")}</p>
-      </div>
-      <select
-        aria-label={t("ログ整理の間隔")}
-        className="h-9 rounded-md border bg-background px-2 text-sm"
-        value={minutes ?? ""}
-        disabled={minutes === null}
-        onChange={(e) => change(Number(e.target.value))}
-      >
-        {options.map((m) => (
-          <option key={m} value={m}>
-            {intervalLabel(m)}
-          </option>
-        ))}
-      </select>
-    </section>
-  );
-}
-
-/** 表示言語。選択はこの端末に保存され、トレイメニューにも反映される。 */
-function LanguageSetting() {
-  const t = useT();
-  const lang = useLang();
-  return (
-    <section className="hud-panel flex items-center justify-between gap-4 px-5 py-4">
-      <div>
-        <Heading title="Language" help={t("表示言語")}>
-          <p>{t("画面とメニューバーの表示言語を切り替えます。")}</p>
-          <ul>
-            <li>{t("AIの応答や音声認識の言語は変わりません。")}</li>
-          </ul>
-        </Heading>
-        <p className="text-xs text-muted-foreground">{t("画面とメニューバーの表示言語")}</p>
-      </div>
-      <Select items={LANGS} value={lang} onValueChange={(v) => v && setLang(v as Lang)}>
-        <SelectTrigger className="w-36" aria-label={t("表示言語")}>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {LANGS.map((l) => (
-            <SelectItem key={l.value} value={l.value}>{l.label}</SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </section>
-  );
-}
-
-/** デバッグモードのオン/オフ。ログにはAPIへ送る会話内容や文字起こしがそのまま残る。 */
-/** アプリが見えていない間に、ほかのスペースで対応が必要になったとき、macOSの通知も出すか。この端末の設定。 */
-function OsNotifications() {
-  const t = useT();
-  const [on, setOn] = useState(true);
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setOn(osNotificationsEnabled()); // 静的エクスポートのため、保存値はマウント後に読む
-  }, []);
-  const change = async (next: boolean) => {
-    if (next && !(await ensureOsPermission())) {
-      toast.error(t("通知が許可されていません。macOSのシステム設定の「通知」で、このアプリを許可してください。"));
-      return;
-    }
-    setOsNotificationsEnabled(next);
-    setOn(next);
-  };
-  return (
-    <section className="hud-panel px-5 py-4">
-      <label className="flex items-center justify-between gap-4 text-sm">
-        <span>
-          {t("OSの通知")}
-          <span className="block text-xs text-muted-foreground">
-            {t("アプリが背面にあるときや、ウィンドウを閉じているときに、ほかのスペースの承認待ち・完了・失敗を、macOSの通知でも知らせます(この端末の設定)。")}
-          </span>
-        </span>
-        <Switch checked={on} onCheckedChange={(v) => void change(v)} />
-      </label>
-    </section>
-  );
-}
-
 /** 選択中のスペースへ、パーソナルやほかのスペースの設定をコピーする。パーソナルには出さない。上書きの前に、確認のモーダルで必ず再確認する。 */
 function CopyIntoSpace() {
   const t = useT();
@@ -690,6 +388,7 @@ function DeleteSpace() {
   );
 }
 
+/** デバッグモードのオン/オフ。ログにはAPIへ送る会話内容や文字起こしがそのまま残る。 */
 function DebugMode() {
   const t = useT();
   const [enabled, setEnabled] = useState<boolean | null>(null);
@@ -756,107 +455,6 @@ function DebugMode() {
   );
 }
 
-const PROFILE_FIELDS: {
-  key: Exclude<keyof UserProfile, "enabled">;
-  label: string;
-  placeholder: string;
-  type?: string;
-}[] = [
-  { key: "name", label: "名前", placeholder: "山田 太郎" },
-  { key: "nickname", label: "呼ばれ方", placeholder: "たろう" },
-  { key: "birthday", label: "生年月日", placeholder: "1990-05-20", type: "date" },
-  { key: "location", label: "居住地", placeholder: "東京都" },
-  { key: "timezone", label: "タイムゾーン", placeholder: "Asia/Tokyo" },
-  { key: "language", label: "使用言語", placeholder: "ja" },
-];
-
-/** AIへ毎回渡す本人の基本情報。手動入力のみで、会話から自動では記録しない。 */
-function PersonalData() {
-  const t = useT();
-  const [saved, setSaved] = useState<UserProfile | null>(null);
-  const [value, setValue] = useState<UserProfile | null>(null);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    getProfile()
-      .then((p) => {
-        setSaved(p);
-        setValue(p);
-      })
-      .catch((e) => toast.error(reportError(e)));
-  }, []);
-
-  if (!value || !saved) return null;
-  const dirty = JSON.stringify(value) !== JSON.stringify(saved);
-
-  /** 実行する。入力中の欄を上書きしないよう、sync が true のときだけ画面の値も更新する。 */
-  const run = async (action: () => Promise<UserProfile>, ok: string, sync = true) => {
-    setBusy(true);
-    try {
-      const p = await action();
-      setSaved(p);
-      if (sync) setValue(p);
-      toast.success(ok);
-    } catch (e) {
-      toast.error(reportError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <section className="hud-panel px-5 py-4">
-      <Heading title="Personal Data" help={t("パーソナルデータ")}>
-        <p>{t("あなたの基本情報をAIへ毎回渡し、呼びかけや回答を合わせてもらいます。")}</p>
-        <ul>
-          <li>{t("入力した項目だけが、選んでいるAIのプロバイダ(AnthropicまたはAmazon Bedrock)へ送られます。")}</li>
-          <li>{t("生年月日は送らず、年齢だけを渡します。")}</li>
-          <li>{t("会話から自動では記録しません。次の送信から反映されます。")}</li>
-          <li>{t("設定のエクスポートに含まれます。ファイルの扱いに注意してください。")}</li>
-        </ul>
-      </Heading>
-      <div className="mb-3 flex items-center justify-between gap-4">
-        <p className="text-xs text-muted-foreground">{t("入力した内容はAIのプロバイダへ送信されます。")}</p>
-        <Switch
-          checked={value.enabled}
-          disabled={busy}
-          onCheckedChange={(enabled) => {
-            const next = { ...value, enabled };
-            setValue(next);
-            run(() => saveProfile(next), t("保存しました。"), false);
-          }}
-          aria-label={t("パーソナルデータをAIへ渡す")}
-        />
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {PROFILE_FIELDS.map((f) => (
-          <label key={f.key} className="grid gap-1 text-xs text-muted-foreground">
-            {t(f.label)}
-            <Input
-              type={f.type}
-              value={value[f.key] ?? ""}
-              placeholder={t(f.placeholder)}
-              onChange={(e) => setValue({ ...value, [f.key]: e.target.value || null })}
-              onBlur={() => dirty && !busy && run(() => saveProfile(value), t("保存しました。"), false)}
-              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-            />
-          </label>
-        ))}
-      </div>
-      <div className="mt-3 flex justify-end gap-2">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={busy}
-          onClick={() => run(async () => (await clearProfile(), getProfile()), t("削除しました。"))}
-        >
-          {t("すべて削除")}
-        </Button>
-      </div>
-    </section>
-  );
-}
-
 /** スペースデータ。パーソナルデータの代わりに、スペースだけで使う自由記述の指示。コピーの対象外。 */
 function SpaceData() {
   const t = useT();
@@ -871,137 +469,6 @@ function SpaceData() {
         </ul>
       </Heading>
       <NotePanel load={getSpaceData} save={saveSpaceData} label={t("スペースデータ")} placeholder={t("例: このスペースは営業支援用です。提案書の下書きでは、箇条書きを使ってください。")} />
-    </section>
-  );
-}
-
-/** LLMへ毎回先頭で渡すベース指示の編集欄。入力欄を離れると自動で保存し、空にすると既定値に戻る。 */
-function BaseInstructions() {
-  const t = useT();
-  const [saved, setSaved] = useState("");
-  const [value, setValue] = useState("");
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    getBaseInstructions()
-      .then((t) => {
-        setSaved(t);
-        setValue(t);
-      })
-      .catch((e) => toast.error(reportError(e)));
-  }, []);
-
-  const save = async (text: string, ok: string) => {
-    setBusy(true);
-    try {
-      await saveBaseInstructions(text);
-      const t = await getBaseInstructions();
-      setSaved(t);
-      setValue(t);
-      toast.success(ok);
-    } catch (e) {
-      toast.error(reportError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <section className="hud-panel px-5 py-4">
-      <Heading title="Base Prompt" help={t("ベース指示")}>
-        <p>{t("すべての質問でAIへ最初に渡す指示です。")}</p>
-        <ul>
-          <li>{t("応答はそのまま音声になるため、記号を使わない指定などを入れておくと便利です。")}</li>
-          <li>{t("次の送信から反映されます。")}</li>
-          <li>{t("空にすると既定の指示に戻ります。")}</li>
-        </ul>
-      </Heading>
-      <p className="mb-3 text-xs text-muted-foreground">{t("AIへ毎回渡す指示です。")}</p>
-      <Textarea
-        rows={8}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={() => value !== saved && !busy && save(value, t("保存しました。"))}
-        aria-label={t("ベース指示")}
-      />
-      <div className="mt-3 flex justify-end gap-2">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={busy}
-          onClick={async () => {
-            await save("", t("既定の指示に戻しました。"));
-          }}
-        >
-          {t("既定に戻す")}
-        </Button>
-      </div>
-    </section>
-  );
-}
-
-/** 文字起こし後の校正に使うモデルの登録。オフの間は校正せず、そのまま送信する。 */
-function Proofread({ keyStatus }: { keyStatus: Partial<KeyStatus> }) {
-  const t = useT();
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [route, setRoute] = useState<Route | null>(null);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    Promise.all([listModels(), loadProofreadRoute()])
-      .then(([m, r]) => {
-        setModels(m);
-        setRoute(r);
-      })
-      .catch((e) => toast.error(reportError(e)));
-  }, [keyStatus]);
-
-  const usable = models.filter((m) => keyStatus[m.provider]);
-  const save = async (next: Route | null) => {
-    setBusy(true);
-    try {
-      await saveProofreadRoute(next);
-      setRoute(next);
-    } catch (e) {
-      toast.error(reportError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  // 校正は短い文を毎回処理するため、有効化時は軽量モデルを初期値にする
-  const initial = usable.find((m) => m.tier === "light") ?? usable[0];
-
-  return (
-    <section className="hud-panel px-5 py-4">
-      <Heading title="Proofread" help={t("文字起こしの校正")}>
-        <p>{t("音声認識の結果を、直近の会話と過去の訂正履歴を手がかりにAIで校正してから送信します。")}</p>
-        <ul>
-          <li>{t("発話のたびに選んだモデルが呼ばれ、トークン課金の対象になります。")}</li>
-          <li>{t("校正は軽量モデルが向いています。")}</li>
-          <li>{t("失敗時は校正前の文章をそのまま使います。")}</li>
-        </ul>
-      </Heading>
-      <div className="flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium">{t("文字起こしを文脈から校正する")}</div>
-          <div className="text-xs text-muted-foreground">
-            {t("認識結果をAIで校正してから送信します(発話ごとに課金)。")}
-          </div>
-        </div>
-        <Switch
-          aria-label={t("文字起こしの校正")}
-          checked={!!route}
-          disabled={busy || (!route && !initial)}
-          onCheckedChange={(on) => save(on && initial ? { provider: initial.provider, model: initial.id } : null)}
-        />
-      </div>
-      {route && (
-        <div className="mt-3">
-          <ModelSelector route={route} models={models} keyStatus={keyStatus} onChange={save} />
-        </div>
-      )}
-      {!route && !initial && (
-        <p className="mt-2 text-xs text-muted-foreground">{t("先にAIのAPIキーを接続してください。")}</p>
-      )}
     </section>
   );
 }
@@ -1281,237 +748,6 @@ function PronunciationDictionary() {
         </details>
       )}
     </div>
-  );
-}
-
-/** 候補の同一判定用。ひらがな・カタカナ・全角半角・句読点の違いを揃える(待機中の検出と同じ基準)。 */
-const foldWake = (text: string) =>
-  text
-    .normalize("NFKC")
-    .replace(/[\u30A1-\u30F6]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60))
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]/gu, "");
-
-/** 認識結果から候補の表記を作る(前後の句読点・空白を除く)。 */
-const wakeCandidate = (text: string) => text.trim().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
-
-type WakeSample = { word: string; count: number };
-
-function WakeWords({ ttsReady, engine, cloudStt }: { ttsReady: boolean; engine: TtsEngine; cloudStt: string | null }) {
-  const t = useT();
-  const [config, setConfig] = useState<WakeConfig | null>(null);
-  const [word, setWord] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [rec, setRec] = useState<"idle" | "recording" | "transcribing">("idle");
-  const [samples, setSamples] = useState<WakeSample[]>([]);
-  const [takes, setTakes] = useState(0);
-  useEffect(() => {
-    getWakeConfig()
-      .then(setConfig)
-      .catch((e) => toast.error(reportError(e)));
-  }, []);
-  const recording = rec === "recording";
-  const recordingRef = useRef(false);
-  useEffect(() => {
-    recordingRef.current = recording;
-  }, [recording]);
-  // 録音したまま画面を離れたら破棄する
-  useEffect(() => () => void (recordingRef.current && cancelRecording()), []);
-
-  const toggleRecording = async () => {
-    if (rec === "recording") {
-      setRec("transcribing");
-      try {
-        const text = wakeCandidate(await transcribeWakeSample());
-        const key = foldWake(text);
-        setTakes((n) => n + 1);
-        if (key) {
-          setSamples((prev) => {
-            const hit = prev.find((x) => foldWake(x.word) === key);
-            return hit ? prev.map((x) => (x === hit ? { ...x, count: x.count + 1 } : x)) : [...prev, { word: text, count: 1 }];
-          });
-        }
-      } catch (e) {
-        const code = (e as { code?: string })?.code;
-        toast.error(code === "too_short" || code === "no_audio" ? t("声が聞き取れませんでした。もう一度録音してください。") : reportError(e));
-      } finally {
-        setRec("idle");
-      }
-      return;
-    }
-    try {
-      await startRecording();
-      setRec("recording");
-    } catch (e) {
-      toast.error(reportError(e));
-    }
-  };
-
-  const save = async (next: WakeConfig) => {
-    setBusy(true);
-    try {
-      const saved = await setWakeConfig(next);
-      setConfig(saved);
-      return saved;
-    } catch (e) {
-      toast.error(reportError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const add = async () => {
-    const w = word.trim();
-    if (!w || !config) return;
-    const saved = await save({ ...config, words: [...config.words, w] });
-    if (!saved) return;
-    if (saved.words.length > config.words.length) setWord("");
-    else toast.error(t("追加できませんでした。2〜20文字で、すでにある語(ひらがな・カタカナの違いを除く)とは別の語にしてください。登録は10個までです。"));
-  };
-
-  const addSample = async (w: string) => {
-    if (!config) return;
-    const saved = await save({ ...config, words: [...config.words, w] });
-    if (!saved) return;
-    if (saved.words.length > config.words.length) setSamples((prev) => prev.filter((x) => x.word !== w));
-    else toast.error(t("追加できませんでした。2〜20文字で、すでにある語(ひらがな・カタカナの違いを除く)とは別の語にしてください。登録は10個までです。"));
-  };
-
-  /** 候補をまとめて追加する。検証を通って保存された語だけ候補から外し、残りは理由を伝える。 */
-  const addAllSamples = async () => {
-    if (!config) return;
-    const words = [...samples].sort((a, b) => b.count - a.count).map((x) => x.word);
-    const saved = await save({ ...config, words: [...config.words, ...words] });
-    if (!saved) return;
-    const kept = new Set(saved.words.map(foldWake));
-    setSamples((prev) => prev.filter((x) => !kept.has(foldWake(x.word))));
-    const added = saved.words.length - config.words.length;
-    if (added < words.length) toast.error(t("{added}語を追加しました。残りは2〜20文字の範囲外、すでにある語との重複、または登録数の上限(10個)のため追加できませんでした。", { added }));
-  };
-
-  return (
-    <section className="hud-panel px-5 py-4">
-      <div className="flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <Heading title="Wake Words" help={t("常時音声待機")}>
-            <p>{t("対話画面を開いている間マイクを開いたままにし、起動ワードを含む発話があると「用件は、なんでしょうか」と応えて依頼を待ちます。「タチコマ、今日の予定は」のように続けて話すと、そのまま依頼として送ります。")}</p>
-            <ul>
-              <li>{t("判定はAIによる校正より前に行います。起動ワードを含まない発話はAIへ送られず、課金されません。")}</li>
-              <li>
-                {t("待機中は発話のたびに音声認識が動きます。")}
-                {cloudStt ? t("{cloudStt}を使っているため、その分が課金対象になります。ローカルのWhisperなら無料です。", { cloudStt }) : t("ローカルのWhisperなら無料です。")}
-              </li>
-              <li>
-                {t("応答の音声は、Voice Linkの「定型音声を作成」で先に作成して保存したものを再生します(待機中にTTSへは送りません)。")}
-                {ttsReady ? "" : engine === "voicevox" ? t("VOICEVOXが未取得のため、音声は作成できません。") : t("Google Cloudのキーが未登録のため、音声は作成できません。")}
-              </li>
-              <li>{t("応答や読み上げの再生中は、その音を拾わないよう待機を止めます。")}</li>
-              <li>{t("ひらがな・カタカナ・全角半角・句読点の違いは区別しません。1語は2〜20文字、登録は10個までです。")}</li>
-            </ul>
-          </Heading>
-          <p className="text-xs text-muted-foreground">{t("呼びかけで起動し、「用件は、なんでしょうか」と応えます。")}</p>
-        </div>
-        <Switch
-          aria-label={t("常時音声待機")}
-          checked={config?.enabled ?? false}
-          disabled={!config || busy || !config.words.length}
-          onCheckedChange={(on) => config && save({ ...config, enabled: on })}
-        />
-      </div>
-      <form
-        className="mt-3 flex gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void add();
-        }}
-      >
-        <Input
-          placeholder={t("起動ワード(例: タチコマ)")}
-          aria-label={t("起動ワード")}
-          maxLength={20}
-          value={word}
-          onChange={(e) => setWord(e.target.value)}
-        />
-        <Button type="submit" variant="outline" disabled={!config || busy || !word.trim()}>
-          <Plus /> {t("追加")}
-        </Button>
-      </form>
-      <div className="mt-3 rounded-sm border border-dashed px-3 py-2.5">
-        <div className="flex items-center gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={!config || busy || rec === "transcribing"}
-            onClick={() => void toggleRecording()}
-          >
-            {rec === "transcribing" ? <Loader2 className="animate-spin" /> : recording ? <Square /> : <Mic />}
-            {recording ? t("録音を止めて認識") : rec === "transcribing" ? t("認識中…") : t("声で録音")}
-          </Button>
-          <p className="min-w-0 flex-1 text-xs text-muted-foreground">
-            {takes
-              ? t("{n}回録音しました。認識が揃った候補ほど、待機中も同じ形で聞き取られやすい語です。", { n: takes })
-              : t("起動ワードを声に出して、同じ言葉で数回録音してください。音声認識の結果が候補になります。")}
-          </p>
-          {samples.length > 1 && (
-            <Button type="button" variant="outline" size="sm" disabled={busy || recording || rec === "transcribing"} onClick={() => void addAllSamples()}>
-              {t("すべて追加")}
-            </Button>
-          )}
-          {!!takes && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              disabled={recording || rec === "transcribing"}
-              onClick={() => {
-                setSamples([]);
-                setTakes(0);
-              }}
-            >
-              {t("クリア")}
-            </Button>
-          )}
-        </div>
-        {!!samples.length && (
-          <ul className="mt-2 flex flex-wrap gap-2">
-            {[...samples]
-              .sort((a, b) => b.count - a.count)
-              .map((x) => (
-                <li key={x.word} className="flex items-center gap-1 rounded-sm border bg-muted/40 py-0.5 pr-1 pl-2.5 text-sm">
-                  {x.word}
-                  <span className="text-xs text-muted-foreground">×{x.count}</span>
-                  <Button type="button" variant="ghost" size="icon-xs" aria-label={t("{w}を起動ワードに追加", { w: x.word })} disabled={busy} onClick={() => void addSample(x.word)}>
-                    <Plus />
-                  </Button>
-                  <Button type="button" variant="ghost" size="icon-xs" aria-label={t("{w}を候補から外す", { w: x.word })} onClick={() => setSamples((prev) => prev.filter((y) => y !== x))}>
-                    <X />
-                  </Button>
-                </li>
-              ))}
-          </ul>
-        )}
-      </div>
-      {!!config?.words.length && (
-        <ul className="mt-3 flex flex-wrap gap-2">
-          {config.words.map((w) => (
-            <li key={w} className="flex items-center gap-1 rounded-sm border bg-muted/40 py-0.5 pr-1 pl-2.5 text-sm">
-              {w}
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label={t("{w}を削除", { w })}
-                disabled={busy}
-                onClick={() => save({ ...config, words: config.words.filter((x) => x !== w) })}
-              >
-                <X />
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
   );
 }
 
@@ -1826,6 +1062,11 @@ export default function Setup() {
         <div>
           <p className="hud-label mb-1">{"// System config"}</p>
           <h1 className="text-2xl font-semibold tracking-tight">{t("設定")}</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {t("ベースプロンプト、パーソナルデータ、ナレッジ整理の間隔、起動ワード、音声入力の待ち時間、文字起こしの校正、表示言語、OSの通知は、全スペース共通の")}{" "}
+            <Link href="/global" className="underline underline-offset-2">{t("全体設定")}</Link>
+            {t("で管理します。")}
+          </p>
         </div>
 
         <Tabs defaultValue="ai" className="gap-6">
@@ -1998,31 +1239,10 @@ export default function Setup() {
               </select>
             </div>
           </section>
-
-          <WakeWords ttsReady={speechReady} engine={ttsEngine} cloudStt={sttEngine === "google" ? "Google Speech-to-Text" : sttEngine === "aqua" ? "Aqua Voice" : null} />
-
-          <TuningPanel
-            title="Voice Timing"
-            help={t("音声入力の待ち時間")}
-            helpBody={
-              <>
-                <p>{t("録音を終えるタイミングを調整します。")}</p>
-                <ul>
-                  <li>{t("声が入らない時間が設定を超えると、音声入力を自動で終えます(手動の録音・返答への続き・起動ワードの後の用件のすべて)。")}</li>
-                  <li>{t("次に対話画面を開いたときから反映されます。")}</li>
-                </ul>
-              </>
-            }
-            fields={VOICE_FIELDS}
-          />
-
-          <Proofread keyStatus={status} />
           </TabsContent>
 
           <TabsContent value="behavior" className="flex flex-col gap-6">
-          {active.id === PERSONAL_ID ? <PersonalData /> : <SpaceData />}
-          <BaseInstructions />
-          <BatchInterval />
+          {active.id !== PERSONAL_ID && <SpaceData />}
           <TuningPanel
             title="Limits"
             help={t("検索回数などの上限")}
@@ -2036,6 +1256,9 @@ export default function Setup() {
               </>
             }
             fields={AGENT_FIELDS}
+            load={getTuning}
+            store={setTuning}
+            defaults={DEFAULT_TUNING}
           />
           </TabsContent>
 
@@ -2046,10 +1269,8 @@ export default function Setup() {
           </TabsContent>
 
           <TabsContent value="data" className="flex flex-col gap-6">
-          <LanguageSetting />
           <SettingsTransfer />
           <CopyIntoSpace />
-          <OsNotifications />
           <DebugMode />
           <DeleteSpace />
           </TabsContent>

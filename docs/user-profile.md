@@ -5,7 +5,7 @@
 ## 方針
 
 - **手動で入力した内容だけ**を保持する。会話から自動で抽出・学習しない。
-- 保存先はローカルの `app_settings`(キー `user_profile`)。外部へは、有効なときのシステムプロンプトにだけ載せる。
+- 保存先は全体設定(キー `user_profile`。[global-settings.md](global-settings.md))。編集は Global Settings の Personal Data で、渡す先は従来どおりパーソナルのみ。外部へは、有効なときのシステムプロンプトにだけ載せる。
 - 全項目が任意。空は未設定。`enabled` を切れば、入力済みでも LLM へは何も渡さない。
 
 ## 項目

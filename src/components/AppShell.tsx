@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Bug, BookOpen, FolderKanban, Keyboard, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings, User } from "lucide-react";
+import { Bug, BookOpen, FolderKanban, Globe, Keyboard, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings, User } from "lucide-react";
 import Chat from "@/components/Chat";
 import AttentionToasts from "@/components/AttentionToasts";
 import MfaModal from "@/components/MfaModal";
@@ -12,6 +12,7 @@ import SpacePalette from "@/components/SpacePalette";
 import SpaceRail from "@/components/SpaceRail";
 import { DEBUG_MODE_EVENT, PERSONAL_ID, getDebugMode, getKeyStatus } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
+import { syncGlobalPrefs } from "@/lib/globalSync";
 import { matchShortcut, type ShortcutId } from "@/lib/shortcuts";
 import { cn } from "@/lib/utils";
 import { startWorkspaceSync, useWorkspace } from "@/lib/workspace";
@@ -25,6 +26,7 @@ const MAIN_NAV = [
 
 /** 補助的な項目(メニューの下側にまとめる)。 */
 const SPACES_NAV = { href: "/workspace", label: "Manage spaces", icon: FolderKanban } as const;
+const GLOBAL_NAV = { href: "/global", label: "Global Settings", icon: Globe } as const;
 const HELP_NAV = { href: "/shortcuts", label: "Shortcuts", icon: Keyboard } as const;
 const DEBUG_NAV = { href: "/debug", label: "Debug", icon: Bug } as const;
 
@@ -55,6 +57,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     startWorkspaceSync();
+    // 表示言語とOS通知は全体設定。起動時に取り込む
+    syncGlobalPrefs().catch(() => {});
   }, []);
 
   // ワークスペースを切り替えたら、対話はキーで作り直し(会話・音声入力・待機を止める)、APIキーの有無を切替先で確かめ直す
@@ -185,7 +189,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </div>
         {MAIN_NAV.map((n) => navLink(n))}
         <div className="my-2 h-px w-full bg-border" />
-        {[...(!personal ? [SPACES_NAV] : []), HELP_NAV, ...(debug ? [DEBUG_NAV] : [])].map((n) => navLink(n, true))}
+        {[...(!personal ? [SPACES_NAV] : []), GLOBAL_NAV, HELP_NAV, ...(debug ? [DEBUG_NAV] : [])].map((n) => navLink(n, true))}
         <div ref={setModelSlot} className={cn("mt-auto hidden px-1 pt-4", !collapsed && "md:block")} />
         <button
           type="button"

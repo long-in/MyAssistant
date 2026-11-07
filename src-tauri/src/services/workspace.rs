@@ -19,7 +19,9 @@ use tauri::{
     ipc::{CommandArg, CommandItem, InvokeError},
 };
 
-use super::{agent_run::AgentState, aws::AwsState, batch, batch::BatchGuard, debug_log, debug_log::DebugLog, secrets::Secrets};
+use super::{
+    agent_run::AgentState, aws::AwsState, batch, batch::BatchGuard, debug_log, debug_log::DebugLog, global_settings::GlobalStore, secrets::Secrets,
+};
 use crate::{db::Db, utils::error::AppError};
 
 /// パーソナルワークスペースのID。保存先は従来どおりアプリデータ直下。
@@ -50,6 +52,8 @@ pub struct WorkspaceCtx {
     pub db: Db,
     pub secrets: Secrets,
     pub debug: DebugLog,
+    /// 全スペース共通の全体設定。どのワークスペースも同じファイルを読み、スペースからは上書きできない。
+    pub global: Arc<GlobalStore>,
     /// 同じワークスペースを別々に開いた複数の`WorkspaceCtx`の間で共有する状態。
     pub shared: Arc<Shared>,
 }
@@ -70,12 +74,13 @@ pub struct Shared {
 
 impl WorkspaceCtx {
     /// `dir`を開く(無ければ作る)。
+    /// 全体設定は`dir`を保存先の基準にする(パーソナルと、単体で開くテスト用)。
     pub fn open(id: &str, dir: &Path) -> Result<Self, AppError> {
-        Self::open_shared(id, dir, Arc::new(Shared::default()))
+        Self::open_shared(id, dir, Arc::new(Shared::default()), Arc::new(GlobalStore::open(dir)))
     }
 
-    /// 共有状態を指定して開く。同じワークスペースを開き直すときに、前の状態を引き継ぐ。
-    pub fn open_shared(id: &str, dir: &Path, shared: Arc<Shared>) -> Result<Self, AppError> {
+    /// 共有状態と全体設定を指定して開く。同じワークスペースを開き直すときに、前の状態を引き継ぐ。
+    pub fn open_shared(id: &str, dir: &Path, shared: Arc<Shared>, global: Arc<GlobalStore>) -> Result<Self, AppError> {
         std::fs::create_dir_all(dir).map_err(|e| AppError::Io(e.to_string()))?;
         Ok(Self {
             id: id.to_owned(),
@@ -83,6 +88,7 @@ impl WorkspaceCtx {
             db: Db::open(&dir.join("timeline.db"))?,
             secrets: Secrets::open(dir)?,
             debug: DebugLog::default(),
+            global,
             shared,
         })
     }
@@ -152,6 +158,8 @@ fn ensure_unique(spaces: &[Space], name: &str, color: &str, except: Option<&str>
 pub struct Workspaces {
     /// アプリデータディレクトリ(パーソナルの保存先でもある)。
     root: PathBuf,
+    /// 全体設定。パーソナルが開いたものを、すべてのスペースで共有する。
+    global: Arc<GlobalStore>,
     /// 一覧・読み込み・選択・保存先の変更を1つずつ行うための外側のロック。
     /// 削除と切り替え・読み込みが交差して、存在しないワークスペースを選んだり、削除済みを開き直したりしないようにする。
     op: Mutex<()>,
@@ -175,6 +183,7 @@ impl Workspaces {
         let id = personal.id.clone();
         Self {
             root: root.to_owned(),
+            global: personal.global.clone(),
             op: Mutex::new(()),
             shared: Mutex::new(HashMap::from([(id.clone(), personal.shared.clone())])),
             loaded: RwLock::new(HashMap::from([(id.clone(), Arc::new(personal))])),
@@ -239,7 +248,7 @@ impl Workspaces {
         if !self.spaces().iter().any(|p| p.id == id) {
             return Err(AppError::SpaceNotFound);
         }
-        let ctx = Arc::new(WorkspaceCtx::open_shared(id, &self.space_dir(id), self.shared_for(id))?);
+        let ctx = Arc::new(WorkspaceCtx::open_shared(id, &self.space_dir(id), self.shared_for(id), self.global.clone())?);
         if let Err(e) = debug_log::refresh(&ctx) {
             log::warn!("debug log init failed for space {id}: {e}");
         }
@@ -270,7 +279,7 @@ impl Workspaces {
         if !self.spaces().iter().any(|p| p.id == id) {
             return Err(AppError::SpaceNotFound);
         }
-        let ctx = Arc::new(WorkspaceCtx::open_shared(id, &self.space_dir(id), self.shared_for(id))?);
+        let ctx = Arc::new(WorkspaceCtx::open_shared(id, &self.space_dir(id), self.shared_for(id), self.global.clone())?);
         // デバッグログの出力先は、開いたときに決める(裏で動く処理も自分のワークスペースのログへ書く)
         if let Err(e) = debug_log::refresh(&ctx) {
             log::warn!("debug log init failed for space {id}: {e}");
@@ -350,7 +359,7 @@ impl Workspaces {
         }
         let mut spaces = self.spaces();
         // 先にフォルダとDBを作れることを確かめてから一覧へ載せる
-        let ctx = Arc::new(WorkspaceCtx::open_shared(&space.id, &self.space_dir(&space.id), self.shared_for(&space.id))?);
+        let ctx = Arc::new(WorkspaceCtx::open_shared(&space.id, &self.space_dir(&space.id), self.shared_for(&space.id), self.global.clone())?);
         let mut next = spaces.clone();
         next.push(space.clone());
         save_registry(&self.root, &next)?;

@@ -80,14 +80,11 @@ Next.js 16(App Router、`output: "export"`)の静的サイト。Tauri の WebVie
 | --- | --- |
 | AI Link / Voice Link | API キー(Anthropic / Amazon Bedrock / Google Cloud / Aqua Voice)、音声認識エンジン・言語、Whisper モデルのダウンロード、定型音声の作成 |
 | Web Search / Command Tasks / Command Policy | ツールの有効化、コマンドの許可・ask・拒否 |
-| Knowledge Interval | 整理の間隔 |
 | Debug Mode | デバッグログ |
-| Personal Data | パーソナルデータ([user-profile.md](user-profile.md))。スペースでは「Space Data」([workspace.md](workspace.md)) |
-| Base Prompt | ベース指示 |
-| Proofread | 校正モデル |
-| Wake Words | 常時待機と起動ワード |
-| Voice Timing / Limits | 調整項目 |
+| Space Data | スペースデータ([workspace.md](workspace.md))。パーソナルデータは Global Settings([global-settings.md](global-settings.md)) |
+| Limits | 検索回数などの上限 |
 | Backup | 設定のエクスポート・インポート |
+| Global Settings(`/global`) | 全スペース共通の項目: Base Prompt / Personal Data / Knowledge Interval / Wake Words / Voice Timing / Proofread / Language / OS Notifications / Backup([global-settings.md](global-settings.md)) |
 
 キーの登録時は、疎通確認に成功したときだけ保存する。
 

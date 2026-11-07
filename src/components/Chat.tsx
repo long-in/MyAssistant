@@ -32,8 +32,8 @@ import {
   type Route,
   type RunSnapshot,
   type UsageRow,
-  DEFAULT_TUNING,
-  type Tuning,
+  DEFAULT_VOICE_TIMING,
+  type VoiceTiming,
   type WakeConfig,
   agentApprove,
   agentDetach,
@@ -43,7 +43,7 @@ import {
   downloadSttModel,
   getSttEngine,
   getKeyStatus,
-  getTuning,
+  getVoiceTiming,
   getWakeConfig,
   getUsageThisMonth,
   isSpeaking,
@@ -68,7 +68,7 @@ import {
   waitForSpeechEnd,
 } from "@/lib/api";
 
-// 録音の待ち時間(スペースを離したあとの猶予・声が入らず終える時間・話し終わりの無音)は、設定ページで変えられる(`tuning`)。
+// 録音の待ち時間(スペースを離したあとの猶予・声が入らず終える時間・話し終わりの無音)は、全体設定で変えられる(`voice_timing`)。
 
 /** 話し始めを待つ時間(ms)。超えたら録り直す。 */
 const ANSWER_WAIT_MS = 12000;
@@ -192,7 +192,7 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
   const standbyRun = useRef<(alive: () => boolean) => Promise<void>>(async () => {});
   const holdRef = useRef<(down: boolean) => void>(() => {});
   const micLock = useRef(false);
-  const tuning = useRef<Tuning>(DEFAULT_TUNING);
+  const tuning = useRef<VoiceTiming>(DEFAULT_VOICE_TIMING);
   const mounted = useRef(true);
   /** 手動の録音ごとの通し番号。無音の見張りが、古い録音に反応しないようにする。 */
   const manualRun = useRef(0);
@@ -225,7 +225,7 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
   // 対話画面へ戻るたびに、設定画面などでの変更(キー・モデル・待機設定)を読み直す
   useEffect(() => {
     if (!active) return;
-    Promise.all([listModels(), loadRouting(), getKeyStatus(), fetchTtsReady(), getWakeConfig(), getTuning()])
+    Promise.all([listModels(), loadRouting(), getKeyStatus(), fetchTtsReady(), getWakeConfig(), getVoiceTiming()])
       .then(([m, r, k, t, w, u]) => {
         tuning.current = u;
         setModels(m);
