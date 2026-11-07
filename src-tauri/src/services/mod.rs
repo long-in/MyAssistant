@@ -14,6 +14,7 @@ pub mod scheduler;
 pub mod secrets;
 pub mod settings_transfer;
 pub mod shell;
+pub mod space_data;
 pub mod knowledge;
 pub mod llm_client;
 pub mod llm_router;

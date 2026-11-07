@@ -5,15 +5,13 @@ import { Switch } from "@/components/ui/switch";
 
 type Props = {
   includeKeys: boolean;
-  includeProfile: boolean;
   includeDictionary: boolean;
   onKeys: (v: boolean) => void;
-  onProfile: (v: boolean) => void;
   onDictionary: (v: boolean) => void;
 };
 
-/** 設定のコピーで、既定ではコピーしないもの(APIキー・パーソナルデータ・読み上げ辞書)を、選んだときだけ含めるスイッチ。 */
-export default function CopyOptions({ includeKeys, includeProfile, includeDictionary, onKeys, onProfile, onDictionary }: Props) {
+/** 設定のコピーで、既定ではコピーしないもの(APIキー・読み上げ辞書)を、選んだときだけ含めるスイッチ。 */
+export default function CopyOptions({ includeKeys, includeDictionary, onKeys, onDictionary }: Props) {
   const t = useT();
   return (
     <>
@@ -25,15 +23,6 @@ export default function CopyOptions({ includeKeys, includeProfile, includeDictio
           </span>
         </span>
         <Switch checked={includeKeys} onCheckedChange={onKeys} />
-      </label>
-      <label className="flex items-center justify-between gap-4 text-sm">
-        <span>
-          {t("パーソナルデータもコピーする")}
-          <span className="block text-xs text-muted-foreground">
-            {t("名前・呼ばれ方・誕生日など。仕事用のスペースへは、通常コピーしないでください。")}
-          </span>
-        </span>
-        <Switch checked={includeProfile} onCheckedChange={onProfile} />
       </label>
       <label className="flex items-center justify-between gap-4 text-sm">
         <span>

@@ -173,8 +173,6 @@ pub fn apply(db: &Db, file: &SettingsFile) -> Result<(Report, Option<Policy>), A
 pub struct CopyOptions {
     /// APIキー・AWS設定もコピーする(コピー先の同名のキーは上書き)。
     pub include_keys: bool,
-    /// パーソナルデータ(名前・誕生日など)もコピーする。
-    pub include_profile: bool,
     /// 読み上げ辞書(ユーザー登録の語)もコピーする(コピー先の辞書は置き換わる)。
     pub include_dictionary: bool,
 }
@@ -200,9 +198,8 @@ pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result
     }
     let policy = command_policy::load(&batch::knowledge_root(from)?);
     let mut file = collect(&from.db, policy, String::new())?;
-    if !opts.include_profile {
-        file.settings.remove(profile::KEY);
-    }
+    // パーソナルデータはパーソナル専用で、コピーしない(スペースにはスペースデータがある)
+    file.settings.remove(profile::KEY);
     let v = validate(&file)?;
     // 辞書は、書き込みの前に整形・検証しておく(上限を超えるなら、何も書かずに失敗する)
     let words = if opts.include_dictionary { Some(pronunciation::normalize(pronunciation::load_user(&from.dir))?) } else { None };
@@ -362,16 +359,17 @@ mod tests {
     }
 
     #[test]
-    fn copy_options_include_profile_and_keys() {
+    fn copy_options_include_keys_but_never_the_profile() {
         let (_da, a) = ctx("a");
         let (_db, b) = ctx("b");
-        let json = r#"{"enabled":true,"name":"山田"}"#;
-        a.db.set_setting(profile::KEY, json).unwrap();
+        a.db.set_setting(profile::KEY, r#"{"enabled":true,"name":"山田"}"#).unwrap();
+        a.db.set_setting(crate::services::space_data::KEY, r#"{"enabled":true,"text":"x"}"#).unwrap();
         a.secrets.set_tts_key("tts-a").unwrap();
         a.secrets.set_key(crate::services::secrets::Provider::Anthropic, "ka").unwrap();
-        let report = copy(&a, &b, CopyOptions { include_keys: true, include_profile: true, ..Default::default() }).unwrap();
+        let report = copy(&a, &b, CopyOptions { include_keys: true, ..Default::default() }).unwrap();
         assert_eq!(report.keys, 2);
-        assert_eq!(b.db.get_setting(profile::KEY).unwrap().as_deref(), Some(json));
+        assert_eq!(b.db.get_setting(profile::KEY).unwrap(), None, "パーソナルデータは、キーを写すときでも写さない");
+        assert_eq!(b.db.get_setting(crate::services::space_data::KEY).unwrap(), None, "スペースデータも写さない");
         assert_eq!(b.secrets.get_tts_key().unwrap().as_deref(), Some("tts-a"));
     }
 
@@ -408,7 +406,7 @@ mod tests {
         b.db.set_setting(chat::SHELL_ACCESS_KEY, "1").unwrap();
         a.db.set_setting(chat::WEB_ACCESS_KEY, "yes").unwrap(); // 不正な値
         a.secrets.set_tts_key("tts-a").unwrap();
-        assert!(copy(&a, &b, CopyOptions { include_keys: true, include_profile: true, ..Default::default() }).is_err());
+        assert!(copy(&a, &b, CopyOptions { include_keys: true, ..Default::default() }).is_err());
         assert_eq!(b.db.get_setting(chat::WEB_ACCESS_KEY).unwrap(), None);
         assert!(!b.secrets.has_tts_key().unwrap(), "キーも写さない");
     }
@@ -421,7 +419,7 @@ mod tests {
         a.secrets.set_tts_key("tts-a").unwrap();
         // コピー先のキー保管庫を書けなくする(保存先に同名のフォルダがある)
         std::fs::create_dir(b.dir.join("secrets.json")).unwrap();
-        assert!(copy(&a, &b, CopyOptions { include_keys: true, include_profile: false, ..Default::default() }).is_err());
+        assert!(copy(&a, &b, CopyOptions { include_keys: true, ..Default::default() }).is_err());
         assert_eq!(b.db.get_setting(chat::SHELL_ACCESS_KEY).unwrap(), None, "設定は書かれない");
         assert!(!b.secrets.has_tts_key().unwrap(), "メモリ上のキーも変わらない");
     }
@@ -438,7 +436,7 @@ mod tests {
         b.secrets.set_aqua_key("aqua-b").unwrap();
         // 設定の書き込みを失敗させる(設定テーブルを壊す)
         b.db.break_settings_for_test();
-        assert!(copy(&a, &b, CopyOptions { include_keys: true, include_profile: false, ..Default::default() }).is_err());
+        assert!(copy(&a, &b, CopyOptions { include_keys: true, ..Default::default() }).is_err());
         assert!(!b.secrets.has_tts_key().unwrap(), "コピーしたキーは戻る");
         assert!(b.secrets.has_aqua_key().unwrap(), "元からあったキーは残る");
         let policy = command_policy::load(&batch::knowledge_root(&b).unwrap());

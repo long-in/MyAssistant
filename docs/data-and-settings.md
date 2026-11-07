@@ -79,6 +79,7 @@ erDiagram
 | `batch_interval_minutes` | 5〜1,440 | 30 | Knowledge Interval |
 | `debug_mode` | `0` / `1` | 無効 | Debug Mode |
 | `user_profile` | パーソナルデータ(JSON) | 有効・全項目未設定 | Personal Data |
+| `space_data` | スペースデータ(JSON `{enabled, text}`。スペースのみ。コピー・エクスポートの対象外) | 有効・空 | Space Data |
 | `knowledge_dir` | 絶対パス(空なら既定) | 既定 | ナレッジ画面 |
 | `summary:<session_id>` | 会話の要約(JSON) | — | — |
 
@@ -110,7 +111,7 @@ erDiagram
 ### 対象
 
 - `app_settings` のうち上表の**設定項目**(`routing` から `user_profile` まで。パーソナルデータを含む)と、**コマンド権限**(`command-policy.json`)。
-- **含まない**: API キー、端末ごとに異なるナレッジの保存先(`knowledge_dir`)、会話ごとの要約、会話の履歴。
+- **含まない**: API キー、スペースデータ(`space_data`)、端末ごとに異なるナレッジの保存先(`knowledge_dir`)、会話ごとの要約、会話の履歴。
 - 書き出し・取り込みの対象は、選択中のワークスペースの設定。ワークスペース間で設定を写すには、`/workspace` の設定のコピーを使う([workspace.md](workspace.md))。
 
 ### ファイル

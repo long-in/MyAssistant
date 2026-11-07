@@ -81,6 +81,9 @@ pub enum AppError {
     InvalidDictionary(String),
     #[error("invalid personal data: {0}")]
     InvalidProfile(String),
+    /// スペースデータ・共通データの不備(上限超過、使えない文字)。
+    #[error("invalid space data: {0}")]
+    InvalidSpaceData(String),
     /// 貼り付けたAWS設定の不備(プロファイルが無い、キーが無い、MFAコードの形式不正など)。
     #[error("{0}")]
     AwsConfig(String),
@@ -155,6 +158,7 @@ impl AppError {
             Self::InvalidSettings(_) => "invalid_settings",
             Self::InvalidDictionary(_) => "invalid_dictionary",
             Self::InvalidProfile(_) => "invalid_profile",
+            Self::InvalidSpaceData(_) => "invalid_space_data",
             Self::AwsConfig(_) => "aws_config_error",
             Self::MfaRequired => "mfa_required",
             Self::InvalidSpace(_) => "invalid_space",

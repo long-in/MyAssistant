@@ -61,6 +61,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   invalid_dictionary: "読み上げ辞書のJSONを取り込めませんでした。[{\"word\": \"語\", \"reading\": \"読み\"}] の形式で、ファイルは1MB以下にしてください。",
   invalid_settings: "設定ファイルの形式が正しくありません。このアプリが書き出したファイルを選んでください。",
   // スペース(ワークスペースの管理)の画面に出る文言。表記は言語設定に従う
+  invalid_space_data: "指示は2,000文字以内で、< > と制御文字を含めずに入力してください。",
   invalid_space: "スペースの名称(1〜40文字)またはイメージカラーが正しくありません。",
   reserved_name: "その名称は予約されています。別のスペース名にしてください。",
   name_in_use: "その名称は、ほかのスペースがすでに使っています。別の名称にしてください。",
@@ -326,6 +327,15 @@ export const getProfile = () => invoke<UserProfile>("get_profile");
 /** 検証して保存し、整えた後の値を返す。 */
 export const saveProfile = (profile: UserProfile) => invoke<UserProfile>("save_profile", { profile });
 export const clearProfile = () => invoke<void>("clear_profile");
+
+/** スペースデータ・共通データ。ユーザーが書いた自由記述の指示で、有効な間だけAIへ毎回渡す。 */
+export type SpaceNote = { enabled: boolean; text: string };
+export const SPACE_NOTE_MAX_CHARS = 2000;
+export const getSpaceData = () => invoke<SpaceNote>("get_space_data");
+/** 検証して保存し、整えた後の値を返す。スペースの画面でだけ使う。 */
+export const saveSpaceData = (note: SpaceNote) => invoke<SpaceNote>("save_space_data", { note });
+export const getSharedData = () => invoke<SpaceNote>("get_shared_data");
+export const saveSharedData = (note: SpaceNote) => invoke<SpaceNote>("save_shared_data", { note });
 
 export type SttEngine = "local" | "google" | "aqua";
 export const getSttEngine = () => invoke<SttEngine>("get_stt_engine");
@@ -684,6 +694,6 @@ export const deleteSpace = (id: string, deleteKnowledge: boolean) =>
 /** コピーした設定の項目数と、コピーしたキーの件数(キーの値は返らない)。 */
 export type CopyReport = { settings: number; keys: number; words: number };
 /** `from`の設定を`to`へコピーする(`personal`またはスペースID)。コピー先の既存の設定は上書きされる。 */
-export const copyWorkspaceSettings = (from: string, to: string, includeKeys: boolean, includeProfile: boolean, includeDictionary: boolean) =>
-  invoke<CopyReport>("copy_workspace_settings", { from, to, includeKeys, includeProfile, includeDictionary });
+export const copyWorkspaceSettings = (from: string, to: string, includeKeys: boolean, includeDictionary: boolean) =>
+  invoke<CopyReport>("copy_workspace_settings", { from, to, includeKeys, includeDictionary });
 export const switchWorkspace = (id: string) => invoke<ActiveWorkspace>("switch_workspace", { id });

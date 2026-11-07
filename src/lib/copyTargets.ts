@@ -10,8 +10,6 @@ export type CopyRequest = {
   to: string;
   /** APIキー・AWS設定もコピーする。 */
   includeKeys: boolean;
-  /** パーソナルデータもコピーする。 */
-  includeProfile: boolean;
   /** 読み上げ辞書もコピーする(コピー先の辞書は置き換わる)。 */
   includeDictionary: boolean;
 };

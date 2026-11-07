@@ -7,5 +7,6 @@ pub mod knowledge;
 pub mod profile;
 pub mod settings;
 pub mod settings_transfer;
+pub mod space_data;
 pub mod voice;
 pub mod workspace;

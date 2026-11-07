@@ -17,10 +17,11 @@ import ModelSelector from "@/components/ModelSelector";
 import HelpDrawer from "@/components/HelpDrawer";
 import AwsPanel from "@/components/AwsPanel";
 import DeleteSpaceModal from "@/components/DeleteSpaceModal";
+import NotePanel from "@/components/NotePanel";
 import CopySettingsCard from "@/components/CopySettingsCard";
 import CopyConfirmModal from "@/components/CopyConfirmModal";
 import { copyTargets, type CopyRequest } from "@/lib/copyTargets";
-import { PERSONAL_ID, type DeleteReport } from "@/lib/api";
+import { PERSONAL_ID, getSpaceData, saveSpaceData, type DeleteReport } from "@/lib/api";
 import { ensureOsPermission, osNotificationsEnabled, setOsNotificationsEnabled } from "@/lib/osNotify";
 import { bumpSettingsVersion, refreshWorkspace, useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
@@ -852,6 +853,24 @@ function PersonalData() {
           {t("すべて削除")}
         </Button>
       </div>
+    </section>
+  );
+}
+
+/** スペースデータ。パーソナルデータの代わりに、スペースだけで使う自由記述の指示。コピーの対象外。 */
+function SpaceData() {
+  const t = useT();
+  return (
+    <section className="hud-panel px-5 py-4">
+      <Heading title="Space Data" help={t("スペースデータ")}>
+        <p>{t("このスペースだけで、AIへ毎回渡す指示です。スペースの目的や前提、口調などを書きます。")}</p>
+        <ul>
+          <li>{t("全スペース共通の指示は、スペース管理の「共通データ」に書きます。共通データのあとに、このデータを渡します。")}</li>
+          <li>{t("入力した内容は、選んでいるAIのプロバイダへ送られます。")}</li>
+          <li>{t("設定のコピーでは写されません。次の送信から反映されます。")}</li>
+        </ul>
+      </Heading>
+      <NotePanel load={getSpaceData} save={saveSpaceData} label={t("スペースデータ")} placeholder={t("例: このスペースは営業支援用です。提案書の下書きでは、箇条書きを使ってください。")} />
     </section>
   );
 }
@@ -1749,6 +1768,7 @@ function ModelSourcesPanel({ onChanged }: { onChanged: () => void }) {
 
 export default function Setup() {
   const t = useT();
+  const { active } = useWorkspace();
   const router = useRouter();
   const [status, setStatus] = useState<Partial<KeyStatus>>({});
   const [ttsReady, setTtsReady] = useState(false); // Google Cloudのキー(読み上げ・Google音声認識で共通)
@@ -2000,7 +2020,7 @@ export default function Setup() {
           </TabsContent>
 
           <TabsContent value="behavior" className="flex flex-col gap-6">
-          <PersonalData />
+          {active.id === PERSONAL_ID ? <PersonalData /> : <SpaceData />}
           <BaseInstructions />
           <BatchInterval />
           <TuningPanel

@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::Path, sync::Mutex};
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use tauri::{AppHandle, Emitter, State, ipc::Channel};
+use tauri::{AppHandle, Emitter, Manager, State, ipc::Channel};
 
 use crate::{
     commands::agent as agent_cmd,
@@ -16,8 +16,8 @@ use crate::{
         llm_router::{self, ModelInfo, Route},
         profile,
         secrets::Provider,
-        tuning,
-        workspace::{Ctx, WorkspaceCtx, active},
+        space_data, tuning,
+        workspace::{self, Ctx, WorkspaceCtx, Workspaces, active},
     },
     utils::error::AppError,
 };
@@ -289,7 +289,14 @@ async fn send_chat_inner(
         .ok()
         .and_then(|root| related_context(&root, &graphs, &format!("{text}\n{previous}")));
     // 基本情報は設定の変更を次の発話から反映するため、セッションのキャッシュに入れず毎回読む
-    let personal = profile::load(&ctx.db)?.prompt_block(chrono::Local::now().date_naive());
+    // パーソナルはパーソナルデータ、スペースは共通データとスペースデータ(どちらもユーザーが書いた指示)を渡す。スペースにパーソナルデータは渡さない
+    let (personal, instructions) = if ctx.id == workspace::PERSONAL_ID {
+        (profile::load(&ctx.db)?.prompt_block(chrono::Local::now().date_naive()), Vec::new())
+    } else {
+        let shared = space_data::shared_block(&space_data::load_shared(app.state::<Workspaces>().root()));
+        (None, shared.into_iter().chain(space_data::space_block(&space_data::load(&ctx.db)?)).collect())
+    };
+    let base = if instructions.is_empty() { base } else { format!("{base}\n\n{}", instructions.join("\n\n")) };
     let reference: Vec<String> = personal
         .into_iter()
         .chain(corrections)

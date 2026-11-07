@@ -95,7 +95,7 @@ pub fn switch_workspace(app: AppHandle, ws: State<'_, Workspaces>, id: String) -
 }
 
 /// `from`の設定を`to`へコピーする(`personal`またはスペースID)。`from`は変更しない。
-/// `include_keys`でAPIキー・AWS設定、`include_profile`でパーソナルデータ、`include_dictionary`で読み上げ辞書も写す。コピー先の既存の設定は上書きされる。
+/// `include_keys`でAPIキー・AWS設定、`include_dictionary`で読み上げ辞書も写す。コピー先の既存の設定は上書きされる。
 #[tauri::command]
 pub fn copy_workspace_settings(
     app: AppHandle,
@@ -103,11 +103,10 @@ pub fn copy_workspace_settings(
     from: String,
     to: String,
     include_keys: bool,
-    include_profile: bool,
     include_dictionary: bool,
 ) -> Result<CopyReport, AppError> {
     let (src, dst) = (ws.resolve(&from)?, ws.resolve(&to)?);
-    let result = settings_transfer::copy(&src, &dst, CopyOptions { include_keys, include_profile, include_dictionary });
+    let result = settings_transfer::copy(&src, &dst, CopyOptions { include_keys, include_dictionary });
     // 選択中のワークスペースへコピーしたときは、結果にかかわらず、デバッグログの出力先などを現在の設定に合わせる
     if ws.active().id == dst.id {
         refresh_after_switch(&app, &ws);

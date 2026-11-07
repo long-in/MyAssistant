@@ -49,8 +49,10 @@ sequenceDiagram
 
 ```text
 <ベース指示>                       ← 常に先頭
+<shared_data>                      共通データ(スペースのみ。有効かつ入力があるとき。ユーザーの指示)
+<space_data>                       スペースデータ(スペースのみ。同上)
 <参考データの節(順に)>
-  <user_profile>                   パーソナルデータ(有効かつ入力があるとき)
+  <user_profile>                   パーソナルデータ(パーソナルのみ。有効かつ入力があるとき)
   <stt_corrections>                聞き取りの訂正履歴
   <related_knowledge> など         発話に関連するナレッジ
   <conversation_summary>           古い会話の要約

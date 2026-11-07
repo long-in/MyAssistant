@@ -61,6 +61,7 @@ Next.js 16(App Router、`output: "export"`)の静的サイト。Tauri の WebVie
 | `Space`(押している間) | 押している間録音し、離してから約 0.5 秒(`release_tail_secs`)後に録音を止めて文字起こし・送信する。その間に押し直すと録音を続ける。入力欄にフォーカスがあるときは通常のスペース入力 | 対話画面 |
 | `Mod`+`Shift`+`M` | 録音の開始 / 停止 | 対話画面 |
 | `Mod`+`1` / `2` / `3` | 対話 / ナレッジ / 設定を開く | どの画面でも |
+| `Mod`+`K` | スペースの検索パレットを開く(名称で絞り込み、↑↓で選び、Enterでそのスペースのチャットへ切り替え、Escで閉じる) | どの画面でも |
 | `Mod`+`/` | ショートカット一覧を開く | どの画面でも |
 
 - 判定は `lib/shortcuts.ts` の `matchShortcut`。IME の変換中(`isComposing`)や、入力欄・セレクトボックスへのフォーカス中は `Space` を奪わない。
@@ -81,7 +82,7 @@ Next.js 16(App Router、`output: "export"`)の静的サイト。Tauri の WebVie
 | Web Search / Command Tasks / Command Policy | ツールの有効化、コマンドの許可・ask・拒否 |
 | Knowledge Interval | 整理の間隔 |
 | Debug Mode | デバッグログ |
-| Personal Data | パーソナルデータ([user-profile.md](user-profile.md)) |
+| Personal Data | パーソナルデータ([user-profile.md](user-profile.md))。スペースでは「Space Data」([workspace.md](workspace.md)) |
 | Base Prompt | ベース指示 |
 | Proofread | 校正モデル |
 | Wake Words | 常時待機と起動ワード |

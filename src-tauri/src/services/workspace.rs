@@ -163,6 +163,11 @@ pub struct Workspaces {
 }
 
 impl Workspaces {
+    /// アプリデータディレクトリ。全スペース共通のファイルの置き場所。
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     /// パーソナルを選択した状態で始め、保存済みのスペース一覧を読む。
     /// 一覧が壊れていたら`.corrupt`へ退避して空から始める(スペースのフォルダは残す)。
     pub fn new(root: &Path, personal: WorkspaceCtx) -> Self {

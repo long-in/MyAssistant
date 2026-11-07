@@ -8,6 +8,7 @@ import { Bug, BookOpen, FolderKanban, Keyboard, MessageSquare, PanelLeftClose, P
 import Chat from "@/components/Chat";
 import AttentionToasts from "@/components/AttentionToasts";
 import MfaModal from "@/components/MfaModal";
+import SpacePalette from "@/components/SpacePalette";
 import SpaceRail from "@/components/SpaceRail";
 import { DEBUG_MODE_EVENT, PERSONAL_ID, getDebugMode, getKeyStatus } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
@@ -44,6 +45,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [chatReady, setChatReady] = useState(false);
   const [modelSlot, setModelSlot] = useState<HTMLElement | null>(null);
   const [collapsed, setCollapsed] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const onChat = pathname === "/";
   const { active, settingsVersion } = useWorkspace();
   const accent = active.space?.color;
@@ -118,6 +120,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const id = matchShortcut(e);
+      if (id === "palette") {
+        e.preventDefault();
+        if (!e.repeat) setPaletteOpen((o) => !o);
+        return;
+      }
       const dest = id && NAV_SHORTCUTS[id];
       if (dest) {
         e.preventDefault();
@@ -202,6 +209,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         )}
         {!onChat && <div key={`${workspaceId}:${settingsVersion}`} className="h-full">{children}</div>}
       </main>
+      {paletteOpen && <SpacePalette onClose={() => setPaletteOpen(false)} />}
       <MfaModal />
       <AttentionToasts />
     </div>

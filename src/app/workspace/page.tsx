@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import CopyConfirmModal from "@/components/CopyConfirmModal";
 import CopySettingsCard from "@/components/CopySettingsCard";
 import DeleteSpaceModal from "@/components/DeleteSpaceModal";
+import NotePanel from "@/components/NotePanel";
 import {
   MAX_SPACES,
   PERSONAL_ID,
@@ -20,6 +21,8 @@ import {
   type CopyReport,
   type DeleteReport,
   type Space,
+  getSharedData,
+  saveSharedData,
 } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { type CopyRequest, copyTargets } from "@/lib/copyTargets";
@@ -173,6 +176,18 @@ export default function WorkspacePage() {
                 <span className="text-xs text-destructive">{t("スペースは30件までです。不要なスペースを削除してください。")}</span>
               )}
             </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>{t("共通データ")}</CardTitle>
+            <CardDescription>
+              {t("すべてのスペースで共通して、AIへ毎回渡す指示です(パーソナルには渡しません)。口調や守ってほしいルールなどを書きます。スペースごとの内容は、各スペースの設定の「スペースデータ」に書きます。次の送信から反映されます。")}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <NotePanel load={getSharedData} save={saveSharedData} label={t("共通データ")} placeholder={t("例: 回答は敬語で、結論から先に述べてください。")} />
           </CardContent>
         </Card>
 

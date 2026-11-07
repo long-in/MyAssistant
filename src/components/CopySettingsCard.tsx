@@ -29,7 +29,6 @@ export default function CopySettingsCard({ targets, suggestedTo, fixedTo, onRequ
   const [pickedFrom, setPickedFrom] = useState<string | null>(null);
   const [pickedTo, setPickedTo] = useState<string | null>(null);
   const [includeKeys, setIncludeKeys] = useState(false);
-  const [includeProfile, setIncludeProfile] = useState(false);
   const [includeDictionary, setIncludeDictionary] = useState(false);
 
   // 選択は、いまの一覧に存在するものだけを有効にする(スペースの削除などで、古いIDが残らないように)
@@ -53,7 +52,7 @@ export default function CopySettingsCard({ targets, suggestedTo, fixedTo, onRequ
       <CardHeader>
         <CardTitle>{t("設定のコピー")}</CardTitle>
         <CardDescription>
-          {t("パーソナルまたはほかのスペースの設定を、そのまま写します。モデル・音声・起動ワード・コマンド権限などが対象で、ナレッジ・会話は写しません。APIキー・パーソナルデータ・読み上げ辞書は、選んだときだけ写します。コピー先の同じ設定は上書きされるため、コピーの前に確認します。")}
+          {t("パーソナルまたはほかのスペースの設定を、そのまま写します。モデル・音声・起動ワード・コマンド権限などが対象で、ナレッジ・会話は写しません。APIキー・読み上げ辞書は、選んだときだけ写します。パーソナルデータとスペースデータは写しません。コピー先の同じ設定は上書きされるため、コピーの前に確認します。")}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -78,9 +77,9 @@ export default function CopySettingsCard({ targets, suggestedTo, fixedTo, onRequ
             </Select>
           )}
         </div>
-        <CopyOptions includeKeys={includeKeys} includeProfile={includeProfile} includeDictionary={includeDictionary} onKeys={setIncludeKeys} onProfile={setIncludeProfile} onDictionary={setIncludeDictionary} />
+        <CopyOptions includeKeys={includeKeys} includeDictionary={includeDictionary} onKeys={setIncludeKeys} onDictionary={setIncludeDictionary} />
         <div className="flex items-center gap-3">
-          <Button disabled={!ready} onClick={() => ready && onRequest({ from: fromId, to, includeKeys, includeProfile, includeDictionary })}>
+          <Button disabled={!ready} onClick={() => ready && onRequest({ from: fromId, to, includeKeys, includeDictionary })}>
             <Copy />
             {t("コピー…")}
           </Button>
