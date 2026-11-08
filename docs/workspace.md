@@ -13,7 +13,7 @@
 | エージェント | `<アプリデータ>/workspaces/<UUID>/` に同じ構成 |
 | エージェント一覧 | `<アプリデータ>/workspaces/registry.json`(id・名称・色・作成日時) |
 
-分離するもの: 設定・プロファイル・会話・使用量(`timeline.db`)、APIキー・AWS設定(`secrets.json`)、ナレッジ、コマンドポリシー、デバッグログ、聞き取り訂正、読み上げ辞書。
+分離するもの: 設定・プロファイル・会話・使用量(`timeline.db`)、APIキー・AWS設定(`secrets.json`)、サンドボックスの環境変数(`sandbox.env`)・Dockerfile(`sandbox/`)・Dockerのコンテナとボリューム([sandbox.md](sandbox.md))、ナレッジ、コマンドポリシー、デバッグログ、聞き取り訂正、読み上げ辞書。
 
 共有するもの(端末の資源): Whisper・VOICEVOX・VAD のモデルとエンジン、録音、定型音声(`voice/`)。
 

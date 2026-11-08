@@ -54,7 +54,7 @@ flowchart TD
 | --- | --- | --- |
 | `deny_words` | `rm` `rmdir` `unlink` `shred` `sudo` `su` `doas` | **コマンドのどの位置にあっても**拒否(`xargs rm`、`git rm`、`sh -c 'rm …'` 経由も) |
 | `deny` | `shutdown` `reboot` `halt` `poweroff` `launchctl` `systemsetup` `diskutil` `csrutil` `nvram` `pmset` `scutil` `networksetup` `dscl` `spctl` `tmutil` `mount` `defaults write` など `find -delete` | 引数の途中でも一致 |
-| `protected` | `secrets.json` `timeline.db` | 引数に含むコマンドを拒否(API キー・DB の漏えい防止) |
+| `protected` | `secrets.json` `timeline.db` `sandbox.env` | 引数に含むコマンドを拒否(API キー・DB・サンドボックスの環境変数の漏えい防止) |
 | `system_paths` | `/System` `/usr` `/bin` `/sbin` `/etc` `/Library` `/private/etc` `/dev` | ここへの書き込み・リダイレクトを拒否 |
 | `system_exceptions` | `/usr/local` | `system_paths` のうち書き込みを許す |
 
@@ -71,6 +71,7 @@ flowchart TD
 - 外を指すもの(`/tmp/x`、`../x`、`~/x`、`$HOME/x` など変数で組み立てたパス)は、`Deny`(理由: 読み取り系以外はナレッジの中でしか実行できない)。ただし、パス引数・リダイレクト先を持たない単純なコマンドが作業ディレクトリだけ外にある場合は、許可リストへ加える承認(`Unlisted`)を求める。`Ask` の規則に当たったものは対象外で、`Deny` になる。
 - `..` とシンボリックリンクは解決して判定する(存在する最も深い祖先を正規化して残りを付け直す)。
 - `ls /etc` や `cat ~/x` のような**読み取りはナレッジの外でも実行できる**。
+- サンドボックスを有効にしたエージェントでは、判定と承認はこれまでどおりホストのパスで行い、実行は Docker コンテナの中になる。作業ディレクトリはナレッジ配下に限られ、コンテナにはナレッジ(`/workspace`)しか見えない([sandbox.md](sandbox.md))。
 - コマンドを区切り単位ごとに見るので、`ls /etc && mkdir a` は後者だけが検査される。
 
 ## ポリシーファイル
@@ -84,7 +85,7 @@ flowchart TD
   "ask": ["npm publish"],
   "deny": ["curl"],
   "deny_words": ["rm", "sudo"],
-  "protected": ["secrets.json", "timeline.db"],
+  "protected": ["secrets.json", "timeline.db", "sandbox.env"],
   "system_paths": ["/System", "/usr"],
   "system_exceptions": ["/usr/local"],
   "confirm_overwrite": true,
@@ -106,7 +107,7 @@ flowchart TD
 
 - 隠しフォルダなので、LLM のファイルツール(一覧・読み取り・作成)からは触れない。
 - ファイルが壊れていれば許可リストは空として扱う(拒否などは初期値のまま)。
-- `version` が無い・古いファイルは、後から追加した初期値(拒否・ask・読み取り系の許可)を足して書き戻す。ユーザーの項目は残す。
+- `version` が無い・古いファイルは、後から追加した初期値(拒否・ask・読み取り系の許可・`protected`)を足して書き戻す。ユーザーの項目は残す。版 4 で `protected` に `sandbox.env` を加えた。
 - 設定画面の「初期値を読み込む」で初期値に戻せる(保存するまで反映されない)。
 
 ### 許可リストへの追加

@@ -92,6 +92,11 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
     - `rm`・`sudo`・OS に影響するコマンドは常に拒否します。
     - 読み取り系以外のコマンドは、ナレッジのディレクトリ内でしか実行できません。
   - 許可・拒否・都度承認のコマンドは、設定画面の Command Policy で編集できます(実体はナレッジ内の `.my-assistant/command-policy.json`)。
+- **サンドボックス** ([sandbox.md](docs/sandbox.md))
+  - ワークのエージェントごとに、コマンドを専用の Docker コンテナで実行できます(設定画面の「権限」タブ。既定は無効)。
+  - コンテナから見えるのはそのエージェントのナレッジだけで、ほかのエージェントや `~/.aws` には届きません。
+  - エージェントごとの環境変数(`sandbox.env`)と AWS の一時キーを、実行時にだけコンテナへ渡します。Dockerfile もエージェントごとに編集できます。
+  - Docker が使えないときは、ホストでは実行せずエラーにします。
 
 ### スキル
 
@@ -145,6 +150,7 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
 - Node.js と npm
 - Rust (stable、1.90 以上)
 - Xcode Command Line Tools(whisper.cpp のビルドに C++ コンパイラと CMake が必要)
+- Docker(任意。エージェントのサンドボックスを使うときだけ。Docker Desktop や OrbStack など)
 
 ## 開発
 
@@ -205,7 +211,7 @@ npm run tauri build
 | --- | --- |
 | `timeline.db` | SQLite。会話ログ・要約・使用量・アプリ設定(起動時に自動でマイグレーションし、その前に `timeline.db.bak-v<版>` を残す) |
 | `secrets.json` | API キー。**平文 JSON**(権限 0600)。OS のキーチェーンは使っていません |
-| `workspaces/` | ワークのエージェント。`registry.json`(一覧)と、エージェントごとの `<UUID>/`(`timeline.db`・`secrets.json`・`knowledge/` などをパーソナルと同じ構成で持つ) |
+| `workspaces/` | ワークのエージェント。`registry.json`(一覧)と、エージェントごとの `<UUID>/`(`timeline.db`・`secrets.json`・`knowledge/` などをパーソナルと同じ構成で持つ。サンドボックスを使うと `sandbox.env`(**平文**、権限 0600)と `sandbox/Dockerfile` も置く) |
 | `models/` | Whisper モデル |
 | `voicevox/` | VOICEVOX CORE・辞書・音声モデル(任意) |
 | `voice/` | 定型音声 |
@@ -229,7 +235,7 @@ src-tauri/              Tauri バックエンド (Rust)
   src/db/               SQLite
   src/utils/            エラー型、パスのサンドボックス
   src/tray.rs           メニューバー常駐
-  resources/            同梱モデル (Silero VAD)
+  resources/            同梱モデル (Silero VAD)、サンドボックスの標準 Dockerfile
 public/sounds/          効果音
 docs/                   機能ごとの詳細設計
 ```
@@ -238,7 +244,8 @@ docs/                   機能ごとの詳細設計
 
 - API キーの生値は `src-tauri/src/services/secrets.rs` の外へ出しません。フロントエンドには登録有無だけ返します。
 - ナレッジのパスはすべて `src-tauri/src/utils/path.rs` のサンドボックスを通します。
-- `secrets.json`、`timeline.db`、`.env*` はコミットしないでください。
+- `secrets.json`、`timeline.db`、`.env*`(`sandbox.env` を含む)はコミットしないでください。
+- ワークのエージェントはコマンドを専用の Docker コンテナで実行でき、ほかのエージェントや端末の認証情報から分離できます([docs/sandbox.md](docs/sandbox.md))。
 
 詳細は [docs/security.md](docs/security.md) を参照してください。
 
