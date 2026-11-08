@@ -114,6 +114,7 @@ erDiagram
 | `batch_route` | `Route`(JSON) | 既定 | ナレッジ画面 |
 | `proofread_route` | `Route`(JSON)。空は校正オフ | オフ | Proofread(設定の音声タブ) |
 | `memory_route` | `Route`(JSON) | 軽量モデル | ナレッジ画面([memory.md](memory.md)) |
+| `skills_route` | `Route`(JSON) | 軽量モデル | スキル画面([skills.md](skills.md))。設定のエクスポートの対象外 |
 | `memory_upto` | 記憶へ反映した会話の目印(rowid。コピー・エクスポートの対象外) | 直近 20 件の前 | なし(自動) |
 | `debug_mode` | `0` / `1` | 無効 | Debug Mode |
 | `agent_data` | エージェントデータ(JSON `{enabled, text}`。エージェントのみ。コピー・エクスポートの対象外) | 有効・空 | Agent Data |

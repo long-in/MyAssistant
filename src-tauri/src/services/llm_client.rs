@@ -179,7 +179,22 @@ pub async fn complete(
     system: Option<&str>,
     messages: &[ChatMessage],
 ) -> Result<Completion, AppError> {
-    complete_inner(ctx, provider, model, system, messages)
+    complete_inner(ctx, provider, model, system, false, messages)
+        .await
+        .map_err(|e| e.with_source(provider.as_str()))
+}
+
+/// `complete`と同じだが、システムプロンプト全体をプロンプトキャッシュの対象にする。
+/// 毎回ほぼ同じ長い前置き(スキルの一覧など)を送り、末尾のメッセージだけが変わる呼び出し向け。
+/// キャッシュの最小トークン数に満たないときは、キャッシュされないだけで結果は変わらない。
+pub async fn complete_cached(
+    ctx: &WorkspaceCtx,
+    provider: Provider,
+    model: &str,
+    system: &str,
+    messages: &[ChatMessage],
+) -> Result<Completion, AppError> {
+    complete_inner(ctx, provider, model, Some(system), true, messages)
         .await
         .map_err(|e| e.with_source(provider.as_str()))
 }
@@ -189,11 +204,16 @@ async fn complete_inner(
     provider: Provider,
     model: &str,
     system: Option<&str>,
+    cache_system: bool,
     messages: &[ChatMessage],
 ) -> Result<Completion, AppError> {
     let mut request = json!({ "max_tokens": MAX_TOKENS, "messages": messages });
     if let Some(s) = system {
-        request["system"] = json!(s);
+        request["system"] = if cache_system {
+            json!([{ "type": "text", "text": s, "cache_control": { "type": "ephemeral" } }])
+        } else {
+            json!(s)
+        };
     }
     let response = match provider {
         Provider::Bedrock => invoke_bedrock(ctx, model, &request, Duration::from_secs(60)).await?,
