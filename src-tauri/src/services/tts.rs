@@ -75,7 +75,15 @@ fn extract_audio(body: &Value) -> Result<String, AppError> {
 }
 
 pub async fn synthesize(ctx: &WorkspaceCtx, text: &str) -> Result<String, AppError> {
-    synthesize_inner(ctx, text).await.map_err(|e| e.with_source("google_tts"))
+    // 放置やスリープ復帰の直後は接続が切れていることがあるため、通信エラーに限り1度だけやり直す
+    let result = match synthesize_inner(ctx, text).await {
+        Err(AppError::Network) => {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            synthesize_inner(ctx, text).await
+        }
+        other => other,
+    };
+    result.map_err(|e| e.with_source("google_tts"))
 }
 
 async fn synthesize_inner(ctx: &WorkspaceCtx, text: &str) -> Result<String, AppError> {
