@@ -244,7 +244,7 @@ docs/                   機能ごとの詳細設計
 
 - API キーの生値は `src-tauri/src/services/secrets.rs` の外へ出しません。フロントエンドには登録有無だけ返します。
 - ナレッジのパスはすべて `src-tauri/src/utils/path.rs` のサンドボックスを通します。
-- `secrets.json`、`timeline.db`、`.env*`(`sandbox.env` を含む)はコミットしないでください。
+- `secrets.json`、`timeline.db`、`sandbox.env`、`.env*` はコミットしないでください(実体はアプリデータディレクトリにあります)。
 - ワークのエージェントはコマンドを専用の Docker コンテナで実行でき、ほかのエージェントや端末の認証情報から分離できます([docs/sandbox.md](docs/sandbox.md))。
 
 詳細は [docs/security.md](docs/security.md) を参照してください。
