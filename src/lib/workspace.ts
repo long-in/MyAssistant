@@ -8,29 +8,29 @@ import {
   getActiveWorkspace,
   leaderExists,
   workEnabled,
-  listSpaceColors,
-  listSpaces,
+  listAgentColors,
+  listAgents,
   switchWorkspace,
   type ActiveWorkspace,
-  type Space,
+  type Agent,
 } from "@/lib/api";
 
 /** ワークスペースの現在値。起動直後は読み込み前(`ready`が偽)で、パーソナルとして扱う。 */
 export type WorkspaceState = {
   ready: boolean;
   active: ActiveWorkspace;
-  spaces: Space[];
+  agents: Agent[];
   palette: string[];
   /** リーダーが作成済みか。 */
   hasLeader: boolean;
-  /** ワークを使えるか(リーダーが作成済みで、無効にしていない)。無効のあいだは、`spaces`も空にして、画面から選べないようにする。 */
+  /** ワークを使えるか(リーダーが作成済みで、無効にしていない)。無効のあいだは、`agents`も空にして、画面から選べないようにする。 */
   workOn: boolean;
   /** 選択中のワークスペースの設定を外から書き換えたときに増える(設定を読み直すための印)。 */
   settingsVersion: number;
 };
 
-const PERSONAL: ActiveWorkspace = { id: PERSONAL_ID, space: null };
-const INITIAL: WorkspaceState = { ready: false, active: PERSONAL, spaces: [], palette: [], hasLeader: false, workOn: false, settingsVersion: 0 };
+const PERSONAL: ActiveWorkspace = { id: PERSONAL_ID, agent: null };
+const INITIAL: WorkspaceState = { ready: false, active: PERSONAL, agents: [], palette: [], hasLeader: false, workOn: false, settingsVersion: 0 };
 
 let state = INITIAL;
 const listeners = new Set<() => void>();
@@ -42,9 +42,9 @@ function set(next: Partial<WorkspaceState>) {
 
 /** バックエンドから現在値を読み直す。 */
 export async function refreshWorkspace() {
-  const [active, allSpaces, palette, hasLeader, enabled] = await Promise.all([getActiveWorkspace(), listSpaces(), listSpaceColors(), leaderExists(), workEnabled()]);
+  const [active, allAgents, palette, hasLeader, enabled] = await Promise.all([getActiveWorkspace(), listAgents(), listAgentColors(), leaderExists(), workEnabled()]);
   const workOn = hasLeader && enabled;
-  set({ ready: true, active, spaces: workOn ? allSpaces : [], palette, hasLeader, workOn });
+  set({ ready: true, active, agents: workOn ? allAgents : [], palette, hasLeader, workOn });
 }
 
 /** 選択中のワークスペースの設定が、コピーなどで書き換わったことを知らせる。 */

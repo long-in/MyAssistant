@@ -41,6 +41,8 @@ aws-smithy-types = "1.4.3"
 aws-types = "1.3.11"
 aws-sdk-bedrock = "1.130.0"
 tauri-plugin-notification = "2"
+zip = { version = "2", default-features = false, features = ["aes-crypto", "deflate"] }
+sha2 = "0.10"
 
 [dev-dependencies]
 hound = "3.5.1"

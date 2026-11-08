@@ -15,11 +15,11 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "chat", keys: ["Mod", "1"], label: "対話を開く", description: "対話画面へ移動します。", scope: "どの画面でも" },
   { id: "knowledge", keys: ["Mod", "2"], label: "ナレッジを開く", description: "ナレッジ画面へ移動します。", scope: "どの画面でも" },
   { id: "settings", keys: ["Mod", "3"], label: "設定を開く", description: "APIキーなどの設定画面へ移動します。", scope: "どの画面でも" },
-  { id: "palette", keys: ["Mod", "K"], label: "スペースを検索して切り替え", description: "スペース名で検索し、Enterでそのスペースのチャットへ切り替えます(↑↓で選択、Escで閉じる)。", scope: "どの画面でも" },
+  { id: "palette", keys: ["Mod", "K"], label: "エージェントを検索して切り替え", description: "エージェント名で検索し、Enterでそのエージェントのチャットへ切り替えます(↑↓で選択、Escで閉じる)。", scope: "どの画面でも" },
   { id: "help", keys: ["Mod", "/"], label: "ショートカット一覧を開く", description: "このページを開きます。", scope: "どの画面でも" },
 ];
 
-/** 修飾キーなしのスペースで、文字入力の邪魔にならない場合のみtrue。 */
+/** 修飾キーなしのスペースキーで、文字入力の邪魔にならない場合のみtrue。 */
 export function isPlainSpace(e: KeyboardEvent): boolean {
   if (e.code !== "Space" || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.isComposing) return false;
   const t = e.target;

@@ -47,7 +47,7 @@ pub fn import_settings(ctx: Ctx, src: String) -> Result<Report, AppError> {
     Ok(report)
 }
 
-/// 全体設定を`dest`のJSONファイルへ書き出す。スペースごとの設定やAPIキーは含まない。
+/// 全体設定を`dest`のJSONファイルへ書き出す。エージェントごとの設定やAPIキーは含まない。
 #[tauri::command]
 pub fn export_global_settings(ctx: Ctx, dest: String) -> Result<Report, AppError> {
     let dest = json_path(&dest)?;

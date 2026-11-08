@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn settings_upsert() {
-        let db = Db::open_in_memory(Role::Space);
+        let db = Db::open_in_memory(Role::Agent);
         assert_eq!(db.get_setting("k").unwrap(), None);
         db.set_setting("k", "1").unwrap();
         db.set_setting("k", "2").unwrap();
@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn global_keys_are_rejected_and_nothing_is_written() {
-        let db = Db::open_in_memory(Role::Space);
+        let db = Db::open_in_memory(Role::Agent);
         let err = db.set_settings(&[("routing", "{}"), (crate::commands::chat::BASE_INSTRUCTIONS_KEY, "x")]);
         assert!(err.is_err());
         assert_eq!(db.get_setting("routing").unwrap(), None);
@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn delete_settings_removes_only_given_keys() {
-        let db = Db::open_in_memory(Role::Space);
+        let db = Db::open_in_memory(Role::Agent);
         db.set_settings(&[("a", "1"), ("b", "2")]).unwrap();
         assert_eq!(db.delete_settings(["a", "missing"]).unwrap(), 1);
         assert_eq!(db.get_setting("a").unwrap(), None);

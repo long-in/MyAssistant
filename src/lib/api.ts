@@ -60,15 +60,18 @@ export const ERROR_MESSAGES: Record<string, string> = {
   mfa_required: "MFAコードが入力されませんでした。もう一度お試しください。",
   invalid_dictionary: "読み上げ辞書のJSONを取り込めませんでした。[{\"word\": \"語\", \"reading\": \"読み\"}] の形式で、ファイルは1MB以下にしてください。",
   invalid_settings: "設定ファイルの形式が正しくありません。このアプリが書き出したファイルを選んでください。",
-  // スペース(ワークスペースの管理)の画面に出る文言。表記は言語設定に従う
-  invalid_space_data: "指示は2,000文字以内で、< > と制御文字を含めずに入力してください。",
-  invalid_space: "スペースの名称(1〜40文字)またはイメージカラーが正しくありません。",
-  reserved_name: "その名称は予約されています。別のスペース名にしてください。",
-  name_in_use: "その名称は、ほかのスペースがすでに使っています。別の名称にしてください。",
-  color_in_use: "その色は、ほかのスペースがすでに使っています。別の色を選んでください。",
-  space_limit: "スペースは30件までです。不要なスペースを削除してください。",
-  space_not_found: "スペースが見つかりません。",
-  leader_required: "スペースを作るには、先にリーダーを作成してください。",
+  backup_password_required: "このバックアップは暗号化されています。パスワードを入力してください。",
+  backup_password_wrong: "パスワードが違います。",
+  invalid_backup: "バックアップファイルを使えません。このアプリが書き出した、壊れていない新しすぎないzipを選んでください。",
+  // エージェント(ワークスペースの管理)の画面に出る文言。表記は言語設定に従う
+  invalid_agent_data: "指示は2,000文字以内で、< > と制御文字を含めずに入力してください。",
+  invalid_agent: "エージェントの名称(1〜40文字)またはイメージカラーが正しくありません。",
+  reserved_name: "その名称は予約されています。別のエージェント名にしてください。",
+  name_in_use: "その名称は、ほかのエージェントがすでに使っています。別の名称にしてください。",
+  color_in_use: "その色は、ほかのエージェントがすでに使っています。別の色を選んでください。",
+  agent_limit: "エージェントは30件までです。不要なエージェントを削除してください。",
+  agent_not_found: "エージェントが見つかりません。",
+  leader_required: "エージェントを作るには、先にリーダーを作成してください。",
   leader_exists: "リーダーはすでに作成されています。",
   work_disabled: "ワークは無効です。全体設定で有効にしてください。",
   work_busy: "ワークの中に実行中または承認待ちの依頼があります。完了してから無効にしてください。",
@@ -126,9 +129,9 @@ export type AwsMfaPrompt = {
   profile: string;
   mfa_serial: string;
   error: string | null;
-  /** コードを求めているワークスペース(`personal`またはスペースID)。コードはこのIDで返す。 */
+  /** コードを求めているワークスペース(`personal`またはエージェントID)。コードはこのIDで返す。 */
   workspace_id: string;
-  /** スペースの名称とイメージカラー。パーソナルは`null`。 */
+  /** エージェントの名称とイメージカラー。パーソナルは`null`。 */
   workspace_name: string | null;
   workspace_color: string | null;
 };
@@ -179,8 +182,8 @@ export const listModels = () => invoke<ModelInfo[]>("list_models");
 export const loadRouting = () => invoke<Route | null>("load_routing");
 export const saveRouting = (route: Route) => invoke<void>("save_routing", { route });
 /** Claudeを選んでいるときはナレッジのファイル操作も行い、その進捗を`onEvent`へ流す。 */
-export const sendChat = (sessionId: string, text: string, route: Route, onEvent: (e: AgentEvent) => void) => {
-  const channel = new Channel<AgentEvent>();
+export const sendChat = (sessionId: string, text: string, route: Route, onEvent: (e: TaskEvent) => void) => {
+  const channel = new Channel<TaskEvent>();
   channel.onmessage = onEvent;
   return invoke<ChatReply>("send_chat", { sessionId, text, route, onEvent: channel });
 };
@@ -188,13 +191,13 @@ export const sendChat = (sessionId: string, text: string, route: Route, onEvent:
 /** 承認の種類。file=ファイル作成、plan=作業計画、command=計画外・破壊的なコマンドの個別承認、allow_command=許可リストにないコマンドを許可に加えて実行。 */
 export type ApprovalKind = "file" | "plan" | "command" | "allow_command";
 
-/** 配布の下書きの宛先(スペース)。 */
+/** 配布の下書きの宛先(エージェント)。 */
 export type DraftTarget = { id: string; name: string; color: string };
 /** リーダーの配布の下書き。`targets`は、AIが推奨する宛先。 */
 export type DispatchDraft = { id: string; instruction: string; targets: DraftTarget[] };
 
-/** 音声対話中のファイル操作・作業の進捗。`approval`は実行前の承認要求で、`agentApprove`で応答する。 */
-export type AgentEvent =
+/** 音声対話中のファイル操作・作業の進捗。`approval`は実行前の承認要求で、`taskApprove`で応答する。 */
+export type TaskEvent =
   | { type: "text"; text: string }
   | { type: "tool_call"; id: string; name: string; input: Record<string, unknown> }
   | { type: "tool_result"; id: string; ok: boolean; preview: string }
@@ -213,7 +216,7 @@ export type AgentEvent =
   | { type: "command_output"; id: string; stream: "stdout" | "stderr"; text: string }
   /** リーダーが作った配布の下書き。利用者が宛先を確かめて配布する(AIは配布できない)。 */
   | ({ type: "dispatch_draft" } & DispatchDraft)
-  /** 依頼の完了。切り替えから戻って`agentResume`で接続し直した画面にだけ届く(最初の画面は`sendChat`の戻り値で受け取る)。 */
+  /** 依頼の完了。切り替えから戻って`taskResume`で接続し直した画面にだけ届く(最初の画面は`sendChat`の戻り値で受け取る)。 */
   | { type: "finished"; reply: ChatReply | null; error: AppError | null };
 
 /** 切り替えから戻ったときに受け取る、そのワークスペースの依頼の状況。 */
@@ -223,9 +226,9 @@ export type RunSnapshot = {
   session_id: string;
   user_text: string;
   /** これまでの進捗(新しい側の最大500件)。 */
-  events: AgentEvent[];
+  events: TaskEvent[];
   /** 回答待ちの承認。 */
-  pending: Omit<Extract<AgentEvent, { type: "approval" }>, "type"> | null;
+  pending: Omit<Extract<TaskEvent, { type: "approval" }>, "type"> | null;
   /** 画面が見ていない間に終わった依頼の結果(一度だけ渡される)。 */
   finished: { reply: ChatReply | null; error: AppError | null } | null;
 };
@@ -234,18 +237,18 @@ export type RunSnapshot = {
  * ワークスペースへ戻ったとき、実行中だった依頼の状況を受け取り、以降の進捗(と結果)を受ける接続を張り直す。
  * 切り替えても依頼は止まらず、承認が要るときは回答を待っている。
  */
-export const agentResume = (workspaceId: string, onEvent: (e: AgentEvent) => void) => {
-  const channel = new Channel<AgentEvent>();
+export const taskResume = (workspaceId: string, onEvent: (e: TaskEvent) => void) => {
+  const channel = new Channel<TaskEvent>();
   channel.onmessage = onEvent;
-  return invoke<RunSnapshot>("agent_resume", { workspaceId, onEvent: channel });
+  return invoke<RunSnapshot>("task_resume", { workspaceId, onEvent: channel });
 };
 /** 画面がワークスペースを離れたことを知らせる。依頼は止まらず、進捗はバックエンドに記録される。 */
-export const agentDetach = (workspaceId: string) => invoke<void>("agent_detach", { workspaceId });
+export const taskDetach = (workspaceId: string) => invoke<void>("task_detach", { workspaceId });
 
-export const agentApprove = (id: string, approved: boolean) =>
-  invoke<void>("agent_approve", { id, approved });
+export const taskApprove = (id: string, approved: boolean) =>
+  invoke<void>("task_approve", { id, approved });
 /** 実行中の依頼を中断する。動いているコマンドは強制終了され、承認待ちは拒否になる。 */
-export const agentCancel = () => invoke<void>("agent_cancel");
+export const taskCancel = () => invoke<void>("task_cancel");
 
 /** シェルコマンドによる作業の可否(Claude選択時のみ有効)。未設定なら有効。 */
 export const getShellAccess = () => invoke<boolean>("get_shell_access");
@@ -296,7 +299,7 @@ export const DEBUG_MODE_EVENT = "debug-mode-changed";
 export const getWebAccess = () => invoke<boolean>("get_web_access");
 export const setWebAccess = (enabled: boolean) => invoke<void>("set_web_access", { enabled });
 
-/** スペースごとの数値の上限。保存時に範囲内へ丸められる。 */
+/** エージェントごとの数値の上限。保存時に範囲内へ丸められる。 */
 export type Tuning = {
   web_search_max: number;
   web_fetch_max: number;
@@ -308,7 +311,7 @@ export const DEFAULT_TUNING: Tuning = {
   history_exchanges: 10,
 };
 
-/** 音声入力の待ち時間。全スペース共通(全体設定)。保存時に範囲内へ丸められる。 */
+/** 音声入力の待ち時間。全エージェント共通(全体設定)。保存時に範囲内へ丸められる。 */
 export type VoiceTiming = {
   voice_idle_secs: number;
   utterance_silence_secs: number;
@@ -353,14 +356,14 @@ export const getProfile = () => invoke<UserProfile>("get_profile");
 export const saveProfile = (profile: UserProfile) => invoke<UserProfile>("save_profile", { profile });
 export const clearProfile = () => invoke<void>("clear_profile");
 
-/** スペースデータ・共通データ。ユーザーが書いた自由記述の指示で、有効な間だけAIへ毎回渡す。 */
-export type SpaceNote = { enabled: boolean; text: string };
-export const SPACE_NOTE_MAX_CHARS = 2000;
-export const getSpaceData = () => invoke<SpaceNote>("get_space_data");
-/** 検証して保存し、整えた後の値を返す。スペースの画面でだけ使う。 */
-export const saveSpaceData = (note: SpaceNote) => invoke<SpaceNote>("save_space_data", { note });
-export const getSharedData = () => invoke<SpaceNote>("get_shared_data");
-export const saveSharedData = (note: SpaceNote) => invoke<SpaceNote>("save_shared_data", { note });
+/** エージェントデータ・共通データ。ユーザーが書いた自由記述の指示で、有効な間だけAIへ毎回渡す。 */
+export type AgentNote = { enabled: boolean; text: string };
+export const AGENT_NOTE_MAX_CHARS = 2000;
+export const getAgentData = () => invoke<AgentNote>("get_agent_data");
+/** 検証して保存し、整えた後の値を返す。エージェントの画面でだけ使う。 */
+export const saveAgentData = (note: AgentNote) => invoke<AgentNote>("save_agent_data", { note });
+export const getSharedData = () => invoke<AgentNote>("get_shared_data");
+export const saveSharedData = (note: AgentNote) => invoke<AgentNote>("save_shared_data", { note });
 
 export type SttEngine = "local" | "google" | "aqua";
 export const getSttEngine = () => invoke<SttEngine>("get_stt_engine");
@@ -634,10 +637,11 @@ export type BatchReport = {
   processed_logs: number;
   files_written: number;
   failed_segments: number;
+  captures_removed: number;
 };
 
-/** 1スペース分のナレッジ(全スペース一覧用)。`error`があれば一覧を取れなかった。`color`はパーソナルでは null。 */
-export type SpaceKnowledge = {
+/** 1エージェント分のナレッジ(全エージェント一覧用)。`error`があれば一覧を取れなかった。`color`はパーソナルでは null。 */
+export type AgentKnowledge = {
   id: string;
   name: string;
   color: string | null;
@@ -646,22 +650,22 @@ export type SpaceKnowledge = {
   dirs: string[];
   error: string | null;
 };
-/** パーソナル・リーダー・全スペースのナレッジ(切り替えずに操作できる)。 */
-export const listAllKnowledge = () => invoke<SpaceKnowledge[]>("list_all_knowledge");
-export const readKnowledgeIn = (spaceId: string, path: string) => invoke<string>("read_knowledge_in", { spaceId, path });
-export const writeKnowledgeIn = (spaceId: string, path: string, content: string) =>
-  invoke<void>("write_knowledge_in", { spaceId, path, content });
-export const createKnowledgeFileIn = (spaceId: string, path: string) =>
-  invoke<string>("create_knowledge_file_in", { spaceId, path });
-export const createKnowledgeDirIn = (spaceId: string, path: string) =>
-  invoke<void>("create_knowledge_dir_in", { spaceId, path });
-export const renameKnowledgeIn = (spaceId: string, from: string, to: string) =>
-  invoke<void>("rename_knowledge_in", { spaceId, from, to });
-export const deleteKnowledgeIn = (spaceId: string, path: string) =>
-  invoke<void>("delete_knowledge_in", { spaceId, path });
+/** パーソナル・リーダー・全エージェントのナレッジ(切り替えずに操作できる)。 */
+export const listAllKnowledge = () => invoke<AgentKnowledge[]>("list_all_knowledge");
+export const readKnowledgeIn = (agentId: string, path: string) => invoke<string>("read_knowledge_in", { agentId, path });
+export const writeKnowledgeIn = (agentId: string, path: string, content: string) =>
+  invoke<void>("write_knowledge_in", { agentId, path, content });
+export const createKnowledgeFileIn = (agentId: string, path: string) =>
+  invoke<string>("create_knowledge_file_in", { agentId, path });
+export const createKnowledgeDirIn = (agentId: string, path: string) =>
+  invoke<void>("create_knowledge_dir_in", { agentId, path });
+export const renameKnowledgeIn = (agentId: string, from: string, to: string) =>
+  invoke<void>("rename_knowledge_in", { agentId, from, to });
+export const deleteKnowledgeIn = (agentId: string, path: string) =>
+  invoke<void>("delete_knowledge_in", { agentId, path });
 /** Finderで開く。`path`ありならそれを選択した状態で、なしならナレッジフォルダを開く。 */
-export const revealKnowledgeInFinder = (spaceId: string, path?: string) =>
-  invoke<void>("reveal_knowledge_in_finder", { spaceId, path: path ?? null });
+export const revealKnowledgeInFinder = (agentId: string, path?: string) =>
+  invoke<void>("reveal_knowledge_in_finder", { agentId, path: path ?? null });
 
 /** ナレッジ(Markdown)の保存先フォルダ。Obsidianのvaultとして開ける。 */
 export const knowledgeDir = () => invoke<string>("knowledge_dir");
@@ -692,6 +696,21 @@ export const getBatchInterval = () => invoke<number>("get_batch_interval");
 export const setBatchInterval = (minutes: number) => invoke<void>("set_batch_interval", { minutes });
 export const runBatch = () => invoke<BatchReport | null>("run_batch");
 
+/** 覚えておくこと1件。`inferred`は会話から推測して覚えたもの(確定・削除できる)。 */
+export type MemoryPin = { text: string; date: string; inferred: boolean };
+/** エージェントの記憶(覚えておくこと・担当の理解)。 */
+export type MemoryView = { pins: MemoryPin[]; understanding: string };
+/** 会話の合間の更新で新しく覚えたこと(`memory-updated`イベント)。 */
+export type MemoryUpdated = { workspace_id: string; added: string[] };
+/** 記憶のファイル(ナレッジ内の相対パス)。編集は通常のノートと同じ画面で行う。 */
+export const MEMORY_PINNED_PATH = "Memory/pinned.md";
+export const MEMORY_UNDERSTANDING_PATH = "Memory/understanding.md";
+export const memoryView = () => invoke<MemoryView>("memory_view");
+export const memoryConfirm = (text: string) => invoke<boolean>("memory_confirm", { text });
+export const memoryForget = (text: string) => invoke<boolean>("memory_forget", { text });
+export const loadMemoryRoute = () => invoke<Route | null>("load_memory_route");
+export const saveMemoryRoute = (route: Route) => invoke<void>("save_memory_route", { route });
+
 export type SettingsTransferReport = { applied: number; skipped: number };
 /** 設定をJSONファイルへ書き出す。APIキーは含まれない。 */
 export const exportSettings = (dest: string) => invoke<SettingsTransferReport>("export_settings", { dest });
@@ -701,32 +720,43 @@ export const importSettings = (src: string) => invoke<SettingsTransferReport>("i
 export const exportGlobalSettings = (dest: string) => invoke<SettingsTransferReport>("export_global_settings", { dest });
 export const importGlobalSettings = (src: string) => invoke<SettingsTransferReport>("import_global_settings", { src });
 
+export type BackupSummary = { workspaces: number; files: number; bytes: number };
+export type RestorePreview = { created_at: string; workspaces: number; files: number };
+/** アプリ全体(全エージェントのDB・ナレッジ・APIキー)をzipへ書き出す。パスワードがあればAES-256で暗号化する。 */
+export const backupCreate = (dest: string, password: string | null) => invoke<BackupSummary>("backup_create", { dest, password });
+/** バックアップのzipを検証して展開する。現在のデータは変えない。暗号化されていればパスワードが要る。 */
+export const restorePrepare = (src: string, password: string | null) => invoke<RestorePreview>("restore_prepare", { src, password });
+/** 展開済みのバックアップで、アプリを再起動して差し替える。 */
+export const restoreApply = () => invoke<void>("restore_apply");
+/** 展開済みのバックアップを捨てる。 */
+export const restoreDiscard = () => invoke<void>("restore_discard");
+
 /** トレイメニューの表示言語を切り替える。 */
 
 /** パーソナルワークスペースのID。 */
 export const PERSONAL_ID = "personal";
-/** リーダー(各スペースのタスク進捗を管理する特別なスペース)のID・表示名・イメージカラー。スペースの一覧には入らない。 */
+/** リーダー(各エージェントのタスク進捗を管理する特別なエージェント)のID・表示名・イメージカラー。エージェントの一覧には入らない。 */
 export const LEADER_ID = "leader";
 export const LEADER_NAME = "Leader";
 export const LEADER_COLOR = "#f59e0b";
-/** 作れるスペースの上限。 */
-export const MAX_SPACES = 30;
-/** スペース名の最大文字数。 */
-export const SPACE_NAME_MAX = 40;
+/** 作れるエージェントの上限。 */
+export const MAX_AGENTS = 30;
+/** エージェント名の最大文字数。 */
+export const AGENT_NAME_MAX = 40;
 
-/** ワークの1スペース(独立したエージェント)。`color`は`#rrggbb`。 */
-export type Space = { id: string; name: string; color: string; created_at: string };
-/** 現在のワークスペース。`space`はパーソナルのとき`null`。 */
-export type ActiveWorkspace = { id: string; space: Space | null };
+/** ワークの1エージェント(ワーキングエージェント)。`color`は`#rrggbb`。 */
+export type Agent = { id: string; name: string; color: string; created_at: string };
+/** 現在のワークスペース。`agent`はパーソナルのとき`null`。 */
+export type ActiveWorkspace = { id: string; agent: Agent | null };
 
 export const WORKSPACE_CHANGED_EVENT = "workspace-changed";
 
-/** 開いていないスペースで、対応が必要になったときの通知。 */
-export const AGENT_ATTENTION_EVENT = "agent-attention";
-export type AgentAttention = {
-  /** 対象のワークスペース(`personal`またはスペースID)。 */
+/** 開いていないエージェントで、対応が必要になったときの通知。 */
+export const TASK_ATTENTION_EVENT = "task-attention";
+export type TaskAttention = {
+  /** 対象のワークスペース(`personal`またはエージェントID)。 */
   workspace_id: string;
-  /** スペースの名称とイメージカラー。パーソナルは`null`。 */
+  /** エージェントの名称とイメージカラー。パーソナルは`null`。 */
   workspace_name: string | null;
   workspace_color: string | null;
   /** approval=承認が必要、finished=依頼が完了、failed=依頼が失敗。 */
@@ -738,26 +768,26 @@ export type AgentAttention = {
   error: AppError | null;
 };
 
-/** スペースに選べるイメージカラー(30色)。 */
-export const listSpaceColors = () => invoke<string[]>("list_space_colors");
-export const listSpaces = () => invoke<Space[]>("list_spaces");
+/** エージェントに選べるイメージカラー(30色)。 */
+export const listAgentColors = () => invoke<string[]>("list_agent_colors");
+export const listAgents = () => invoke<Agent[]>("list_agents");
 export const getActiveWorkspace = () => invoke<ActiveWorkspace>("get_active_workspace");
-export const createSpace = (name: string, color: string) => invoke<Space>("create_space", { name, color });
-export const updateSpace = (id: string, name: string, color: string) =>
-  invoke<Space>("update_space", { id, name, color });
+export const createAgent = (name: string, color: string) => invoke<Agent>("create_agent", { name, color });
+export const updateAgent = (id: string, name: string, color: string) =>
+  invoke<Agent>("update_agent", { id, name, color });
 /** 削除の結果。`keptKnowledge`は、残したナレッジの場所(残さなかった、または無かったときは null)。 */
 export type DeleteReport = { active: ActiveWorkspace; keptKnowledge: string | null };
-/** スペースを削除する。`deleteKnowledge`が false なら、既定の場所のナレッジは消さずに残す。 */
-export const deleteSpace = (id: string, deleteKnowledge: boolean) =>
-  invoke<DeleteReport>("delete_space", { id, deleteKnowledge });
+/** エージェントを削除する。`deleteKnowledge`が false なら、既定の場所のナレッジは消さずに残す。 */
+export const deleteAgent = (id: string, deleteKnowledge: boolean) =>
+  invoke<DeleteReport>("delete_agent", { id, deleteKnowledge });
 /** コピーした設定の項目数と、コピーしたキーの件数(キーの値は返らない)。 */
 export type CopyReport = { settings: number; keys: number; words: number };
-/** `from`の設定を`to`へコピーする(`personal`またはスペースID)。コピー先の既存の設定は上書きされる。 */
+/** `from`の設定を`to`へコピーする(`personal`またはエージェントID)。コピー先の既存の設定は上書きされる。 */
 export const copyWorkspaceSettings = (from: string, to: string, includeKeys: boolean, includeDictionary: boolean) =>
   invoke<CopyReport>("copy_workspace_settings", { from, to, includeKeys, includeDictionary });
 export const switchWorkspace = (id: string) => invoke<ActiveWorkspace>("switch_workspace", { id });
 
-// ---- リーダー(各スペースのタスク進捗を管理する特別なスペース) ----
+// ---- リーダー(各エージェントのタスク進捗を管理する特別なエージェント) ----
 
 /** 依頼のいまの状態。`interrupted`は、再起動などで依頼が失われたもの。 */
 export type TaskStatus = "running" | "awaiting_approval" | "done" | "failed" | "interrupted";
@@ -766,47 +796,47 @@ export type LeaderTask = {
   id: string;
   batch_id: string;
   instruction: string;
-  space_id: string;
-  /** 配布したときの宛先の名称(スペースが削除されても残る)。 */
-  space_name: string;
+  agent_id: string;
+  /** 配布したときの宛先の名称(エージェントが削除されても残る)。 */
+  agent_name: string;
   status: string;
   confirmed: boolean;
   created_at: string;
   live_status: TaskStatus;
-  space_exists: boolean;
-  space_color: string | null;
+  agent_exists: boolean;
+  agent_color: string | null;
 };
-/** 各スペースのいまの依頼の状態(`idle`=動いていない)。直接の指示によるものも含む。 */
-export type SpaceRun = { id: string; name: string; color: string; status: "idle" | "running" | "awaiting_approval" | "done" | "failed" };
-/** `limit`=同時に指示できるスペース数の上限、`active`=リーダーが配布していま動いている(実行中・承認待ち)スペースの数。 */
-export type LeaderOverview = { tasks: LeaderTask[]; spaces: SpaceRun[]; limit: number; active: number };
-/** スペース数の上限(バックエンドの`MAX_SPACES`と同じ)。同時に指示できる数の上限の最大値。 */
+/** 各エージェントのいまの依頼の状態(`idle`=動いていない)。直接の指示によるものも含む。 */
+export type AgentRun = { id: string; name: string; color: string; status: "idle" | "running" | "awaiting_approval" | "done" | "failed" };
+/** `limit`=同時に指示できるエージェント数の上限、`active`=リーダーが配布していま動いている(実行中・承認待ち)エージェントの数。 */
+export type LeaderOverview = { tasks: LeaderTask[]; agents: AgentRun[]; limit: number; active: number };
+/** エージェント数の上限(バックエンドの`MAX_AGENTS`と同じ)。同時に指示できる数の上限の最大値。 */
 export const LEADER_LIMIT_MAX = 30;
-/** 配布できなかった理由。`active`=選択中のスペース、`limit`=同時に指示できる数の上限、`busy`=依頼の最中。 */
+/** 配布できなかった理由。`active`=選択中のエージェント、`limit`=同時に指示できる数の上限、`busy`=依頼の最中。 */
 export type DispatchReason = "not_found" | "active" | "limit" | "busy" | "no_provider" | "error";
-export type DispatchResult = { space_id: string; started: boolean; reason: DispatchReason | null };
+export type DispatchResult = { agent_id: string; started: boolean; reason: DispatchReason | null };
 
 export const leaderExists = () => invoke<boolean>("leader_exists");
-/** ワークが有効か(未保存は有効)。無効のあいだも、リーダー・スペースのデータは残る。 */
+/** ワークが有効か(未保存は有効)。無効のあいだも、リーダー・エージェントのデータは残る。 */
 export const workEnabled = () => invoke<boolean>("work_enabled");
 /** ワークの有効/無効を切り替える。実行中・承認待ちがあるときは無効にできない。 */
 export const setWorkEnabled = (enabled: boolean) => invoke<void>("set_work_enabled", { enabled });
 export const createLeader = () => invoke<void>("create_leader");
 /** リーダープロンプト(行動原理・役割)。 */
-export const leaderGetPrompt = () => invoke<SpaceNote>("leader_get_prompt");
-export const leaderSetPrompt = (note: SpaceNote) => invoke<SpaceNote>("leader_set_prompt", { note });
+export const leaderGetPrompt = () => invoke<AgentNote>("leader_get_prompt");
+export const leaderSetPrompt = (note: AgentNote) => invoke<AgentNote>("leader_set_prompt", { note });
 /** リーダーのAPIキーの登録有無のみ(生値は返らない)。 */
 export const leaderGetLimit = () => invoke<number>("leader_get_limit");
 export const leaderSetLimit = (limit: number) => invoke<number>("leader_set_limit", { limit });
 export const leaderKeyStatus = () => invoke<KeyStatus>("leader_key_status");
 export const leaderSaveApiKey = (provider: Provider, key: string) => invoke<void>("leader_save_api_key", { provider, key });
 export const leaderDeleteApiKey = (provider: Provider) => invoke<void>("leader_delete_api_key", { provider });
-/** `from`(`personal`またはスペースID)のAnthropicのAPIキーを、リーダーへコピーする。コピーできたか(コピー元に無ければ false)。 */
+/** `from`(`personal`またはエージェントID)のAnthropicのAPIキーを、リーダーへコピーする。コピーできたか(コピー元に無ければ false)。 */
 export const leaderCopyApiKey = (from: string) => invoke<boolean>("leader_copy_api_key", { from });
-/** 宛先の提案(スペースID)。過去に配布した指示の履歴だけが根拠で、根拠が無ければ空。 */
+/** 宛先の提案(エージェントID)。過去に配布した指示の履歴だけが根拠で、根拠が無ければ空。 */
 export const leaderSuggest = (text: string) => invoke<string[]>("leader_suggest", { text });
-/** 指示を、選んだスペースへ配布する。宛先は必ず利用者が選ぶ。 */
-export const leaderDispatch = (text: string, spaceIds: string[]) =>
-  invoke<DispatchResult[]>("leader_dispatch", { text, spaceIds });
+/** 指示を、選んだエージェントへ配布する。宛先は必ず利用者が選ぶ。 */
+export const leaderDispatch = (text: string, agentIds: string[]) =>
+  invoke<DispatchResult[]>("leader_dispatch", { text, agentIds });
 export const leaderOverview = () => invoke<LeaderOverview>("leader_overview");
 export const leaderSetConfirmed = (id: string, confirmed: boolean) => invoke<void>("leader_set_confirmed", { id, confirmed });

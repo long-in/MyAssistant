@@ -42,7 +42,7 @@ mod tests {
 
     #[test]
     fn summary_upsert() {
-        let db = Db::open_in_memory(Role::Space);
+        let db = Db::open_in_memory(Role::Agent);
         assert_eq!(db.summary("s").unwrap(), None);
         db.save_summary("s", &Summary { upto_id: "a".into(), text: "1".into() }).unwrap();
         db.save_summary("s", &Summary { upto_id: "b".into(), text: "2".into() }).unwrap();

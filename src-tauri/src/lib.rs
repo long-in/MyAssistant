@@ -22,10 +22,14 @@ pub fn run() {
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_notification::init())
     .invoke_handler(tauri::generate_handler![
-      commands::agent::agent_approve,
-      commands::agent::agent_cancel,
-      commands::agent::agent_resume,
-      commands::agent::agent_detach,
+      commands::task::task_approve,
+      commands::task::task_cancel,
+      commands::task::task_resume,
+      commands::task::task_detach,
+      commands::backup::backup_create,
+      commands::backup::restore_prepare,
+      commands::backup::restore_apply,
+      commands::backup::restore_discard,
       commands::aws::get_aws_status,
       commands::aws::preview_aws_config,
       commands::aws::save_aws_config,
@@ -50,10 +54,10 @@ pub fn run() {
       commands::profile::get_profile,
       commands::profile::save_profile,
       commands::profile::clear_profile,
-      commands::space_data::get_space_data,
-      commands::space_data::save_space_data,
-      commands::space_data::get_shared_data,
-      commands::space_data::save_shared_data,
+      commands::agent_data::get_agent_data,
+      commands::agent_data::save_agent_data,
+      commands::agent_data::get_shared_data,
+      commands::agent_data::save_shared_data,
       commands::knowledge::get_batch_interval,
       commands::knowledge::set_batch_interval,
       commands::settings::get_debug_mode,
@@ -150,12 +154,17 @@ pub fn run() {
       commands::knowledge_all::reveal_knowledge_in_finder,
       commands::knowledge::load_batch_route,
       commands::knowledge::save_batch_route,
-      commands::workspace::list_spaces,
-      commands::workspace::list_space_colors,
+      commands::knowledge::memory_view,
+      commands::knowledge::memory_confirm,
+      commands::knowledge::memory_forget,
+      commands::knowledge::load_memory_route,
+      commands::knowledge::save_memory_route,
+      commands::workspace::list_agents,
+      commands::workspace::list_agent_colors,
       commands::workspace::get_active_workspace,
-      commands::workspace::create_space,
-      commands::workspace::update_space,
-      commands::workspace::delete_space,
+      commands::workspace::create_agent,
+      commands::workspace::update_agent,
+      commands::workspace::delete_agent,
       commands::workspace::switch_workspace,
       commands::workspace::copy_workspace_settings,
       commands::workspace::work_enabled,
@@ -180,6 +189,12 @@ pub fn run() {
       let dir = app.path().app_data_dir()?;
       services::legacy_data::migrate(&dir);
       std::fs::create_dir_all(&dir)?;
+      // 予約されたリストアは、DBを開く前に差し替える(失敗しても元に戻して通常どおり起動する)
+      match services::backup::apply_pending(&dir) {
+        Ok(true) => log::info!("backup restored"),
+        Ok(false) => {}
+        Err(e) => log::warn!("backup restore failed: {e}"),
+      }
       services::aws::init(app.handle());
       // パーソナルは従来どおりアプリデータ直下(`timeline.db` / `secrets.json` / `knowledge`)
       let personal = services::workspace::WorkspaceCtx::open(services::workspace::PERSONAL_ID, &dir)?;
@@ -199,7 +214,7 @@ pub fn run() {
       }
 
       tray::setup(app.handle())?;
-      // メニューバーは状態の登録前に作られるため、スペース一覧を含めて作り直す
+      // メニューバーは状態の登録前に作られるため、エージェント一覧を含めて作り直す
       tray::refresh(app.handle());
 
       // 整理バッチは、ワークスペースごとの間隔で独立して動かす
@@ -233,6 +248,10 @@ pub fn run() {
       tauri::async_runtime::spawn(async move {
         let run = async {
           for ctx in handle.state::<services::workspace::Workspaces>().all() {
+            // 会話の合間に反映しきれなかった分を、記憶へ反映してから整理する
+            if let Err(e) = services::memory::update_guarded(&ctx).await {
+              log::warn!("exit memory update failed ({}): {e}", ctx.id);
+            }
             if let Err(e) = services::batch::run_guarded(&ctx).await {
               log::warn!("exit batch failed ({}): {e}", ctx.id);
             }

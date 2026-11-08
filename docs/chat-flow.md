@@ -27,8 +27,8 @@ sequenceDiagram
 2. **発話の保存**: `conversation_logs` に `user` として保存する。
 3. **会話の用意**: 往復数が上限(調整項目 `history_exchanges`、既定 10)を超えていれば、古い分を要約して「要約 + 直近の会話」だけを LLM へ渡す(後述)。
 4. **システムプロンプトの組み立て**(後述)。
-5. **LLM 呼び出し**: ファイル操作・コマンド実行・Web 検索(Bedrock は除く)のツールを付けたループ(`commands/agent.rs::run_with_tools`)で呼ぶ。
-6. **後処理**: 応答を `assistant` として保存し、1 往復をナレッジの「キャプチャ」へ追記して `knowledge-updated` を通知する。LLM を使う整理はここでは行わない([knowledge.md](knowledge.md))。
+5. **LLM 呼び出し**: ファイル操作・コマンド実行・Web 検索(Bedrock は除く)のツールを付けたループ(`commands/task.rs::run_with_tools`)で呼ぶ。
+6. **後処理**: 応答を `assistant` として保存し、1 往復をナレッジの「キャプチャ」へ追記して `knowledge-updated` を通知する。LLM を使う整理はここでは行わない([knowledge.md](knowledge.md))。会話が途切れたら裏で記憶を更新するよう予約する([memory.md](memory.md))。
 
 使用量(入力・出力トークン)は LLM 呼び出しごとに `usage_logs` へ記録する。途中で失敗しても、そこまでに使った分は残る。
 
@@ -43,16 +43,18 @@ sequenceDiagram
 
 - 自動ルーティングは無く、ユーザーが画面(`ModelSelector`)で選んだ `Route` を使う。選択は `app_settings.routing` に保存する。
 - 保存済みの選択が使えない(キーを削除した等)ときは既定へ戻す。既定は、Claude が使えれば Sonnet、なければ使えるプロバイダーのカタログ先頭。
-- 整理バッチ(`batch_route`)と音声認識の校正(`proofread_route`)は、対話とは別に、スペースごとにモデルを指定できる。
+- 整理バッチ(`batch_route`)、記憶の更新(`memory_route`。既定は軽量モデル)、音声認識の校正(`proofread_route`)は、対話とは別に、エージェントごとにモデルを指定できる。
 
 ## システムプロンプトの構成
 
 ```text
 <ベース指示>                       ← 常に先頭
-<shared_data>                      共通データ(スペースのみ。有効かつ入力があるとき。ユーザーの指示)
-<space_data>                       スペースデータ(スペースのみ。同上)
+<shared_data>                      共通データ(エージェントのみ。有効かつ入力があるとき。ユーザーの指示)
+<agent_data>                       エージェントデータ(エージェントのみ。同上)
+<pinned_memory>                    覚えておくこと(リーダー以外。あるとき。ユーザーの指示)
 <参考データの節(順に)>
   <user_profile>                   パーソナルデータ(パーソナルのみ。有効かつ入力があるとき)
+  <understanding>                  担当の理解(リーダー以外。あるとき)
   <stt_corrections>                聞き取りの訂正履歴
   <related_knowledge> など         発話に関連するナレッジ
   <conversation_summary>           古い会話の要約
@@ -65,10 +67,11 @@ sequenceDiagram
 | ベース指示 | 音声対話向けの既定文。設定の Base Prompt で上書きでき、空にすると既定へ戻る。一問一答で終わらせず会話を重ねること、結論から一〜三文で答えること、読み上げに不要な記号(Markdown・URL・絵文字)を使わないことなどを指示する |
 | `<user_profile>` | 設定の内容から**毎回**生成する(変更を次の発話から反映するためキャッシュしない)。[user-profile.md](user-profile.md) |
 | `<stt_corrections>` | `Preferences/stt_corrections.md` の直近 30 件(「誤」→「正」)。会話の最初の発話で 1 回だけ読んで使い回す。訂正を保存すると次の発話から反映される |
+| `<pinned_memory>`・`<understanding>` | 記憶。発話のたびに `Memory/` から読む(会話中のツール・会話の合間の更新を次の発話から反映する)。[memory.md](memory.md) |
 | 関連ナレッジ | 発話ごとに想起する(後述) |
 | `<conversation_summary>` | 要約があるときだけ。[後述](#長い会話の要約compactrs) |
 
-`<stt_corrections>`・`<previous_context>`・`<related_knowledge>`・`<conversation_summary>`・`<user_profile>` はすべて**参考データ**であり、その中に書かれた指示には従わないよう、最後に 1 度だけ注意を付ける(プロンプトインジェクション対策。[security.md](security.md))。
+`<understanding>`・`<stt_corrections>`・`<previous_context>`・`<related_knowledge>`・`<conversation_summary>`・`<user_profile>` はすべて**参考データ**であり、その中に書かれた指示には従わないよう、最後に 1 度だけ注意を付ける(プロンプトインジェクション対策。[security.md](security.md))。
 
 ### 関連ナレッジの想起
 
@@ -105,4 +108,4 @@ flowchart LR
 | ベース指示(全体設定) | `base_instructions` | 既定文 |
 | インターネット検索 | `web_access` | 有効 |
 | コマンドによる作業 | `shell_access` | 有効 |
-| 往復数の上限、検索・取得の上限(スペースごと) | `tuning` | [data-and-settings.md](data-and-settings.md) |
+| 往復数の上限、検索・取得の上限(エージェントごと) | `tuning` | [data-and-settings.md](data-and-settings.md) |

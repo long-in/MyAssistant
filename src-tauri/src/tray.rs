@@ -20,7 +20,7 @@ const NAV_ITEMS: [(&str, &str, &str); 4] = [
   ("nav-shortcuts", "Shortcuts", "/shortcuts"),
 ];
 
-/// ワークスペース項目のメニュー ID の接頭辞。続きは `personal` またはスペースの ID。
+/// ワークスペース項目のメニュー ID の接頭辞。続きは `personal` またはエージェントの ID。
 const WORKSPACE_PREFIX: &str = "ws:";
 
 /// フロントエンドへ画面遷移を依頼するイベント名。ペイロードは遷移先パス。
@@ -69,11 +69,11 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 /// トレイメニューを作る。表記は英語に固定する。
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
   let menu = Menu::new(app)?;
-  // いまのワークスペース(表示のみ)と、直接切り替えるためのSpaces。ワークスペース関連の表記は英語に固定する
+  // いまのワークスペース(表示のみ)と、直接切り替えるためのAgents。ワークスペース関連の表記は英語に固定する
   let (active, _) = workspace_state(app);
-  let name = active.space.as_ref().map_or("Personal", |p| p.name.as_str());
+  let name = active.agent.as_ref().map_or("Personal", |p| p.name.as_str());
   menu.append(&MenuItem::with_id(app, "ws-current", format!("Workspace: {name}"), false, None::<&str>)?)?;
-  menu.append(&spaces_submenu(app)?)?;
+  menu.append(&agents_submenu(app)?)?;
   menu.append(&PredefinedMenuItem::separator(app)?)?;
   menu.append(&MenuItem::with_id(app, MENU_SHOW, "Open MyAssistant", true, None::<&str>)?)?;
   menu.append(&PredefinedMenuItem::separator(app)?)?;
@@ -85,25 +85,25 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
   Ok(menu)
 }
 
-/// 選択中のワークスペースと、スペース一覧。状態の登録前(起動の途中)はパーソナルだけ。
-fn workspace_state(app: &AppHandle) -> (ActiveWorkspace, Vec<crate::services::workspace::Space>) {
+/// 選択中のワークスペースと、エージェント一覧。状態の登録前(起動の途中)はパーソナルだけ。
+fn workspace_state(app: &AppHandle) -> (ActiveWorkspace, Vec<crate::services::workspace::Agent>) {
   match app.try_state::<Workspaces>() {
-    // ワークが無効のあいだは、スペースを並べない
+    // ワークが無効のあいだは、エージェントを並べない
     Some(ws) if ws.work_enabled() => (ws.active_info(), ws.list()),
     Some(ws) => (ws.active_info(), Vec::new()),
-    None => (ActiveWorkspace { id: PERSONAL_ID.to_owned(), space: None }, Vec::new()),
+    None => (ActiveWorkspace { id: PERSONAL_ID.to_owned(), agent: None }, Vec::new()),
   }
 }
 
-/// 「Spaces」サブメニュー。パーソナルと各スペースを並べ、選択中にチェックを付ける。クリックで、そのワークスペースへ切り替える。
-fn spaces_submenu(app: &AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
-  let (active, spaces) = workspace_state(app);
+/// 「Agents」サブメニュー。パーソナルと各エージェントを並べ、選択中にチェックを付ける。クリックで、そのワークスペースへ切り替える。
+fn agents_submenu(app: &AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
+  let (active, agents) = workspace_state(app);
   let personal = CheckMenuItem::with_id(app, format!("{WORKSPACE_PREFIX}{PERSONAL_ID}"), "Personal", true, active.id == PERSONAL_ID, None::<&str>)?;
-  let items = spaces
+  let items = agents
     .iter()
     .map(|p| CheckMenuItem::with_id(app, format!("{WORKSPACE_PREFIX}{}", p.id), &p.name, true, active.id == p.id, None::<&str>))
     .collect::<tauri::Result<Vec<_>>>()?;
-  // リーダー(スペースの一覧には入らない別枠)。作成済みのときだけ
+  // リーダー(エージェントの一覧には入らない別枠)。作成済みのときだけ
   let leader = if app.try_state::<Workspaces>().is_some_and(|w| w.leader().is_some() && w.work_enabled()) {
     Some(CheckMenuItem::with_id(app, format!("{WORKSPACE_PREFIX}{LEADER_ID}"), "Leader", true, active.id == LEADER_ID, None::<&str>)?)
   } else {
@@ -118,10 +118,10 @@ fn spaces_submenu(app: &AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
     all.push(&separator);
     all.extend(items.iter().map(|i| i as &dyn IsMenuItem<tauri::Wry>));
   }
-  Submenu::with_items(app, "Spaces", true, &all)
+  Submenu::with_items(app, "Agents", true, &all)
 }
 
-/// アプリのメニューバーと、トレイのメニューを作り直す。ワークスペースの切り替えや、スペースの追加・名称変更・削除のあとに呼ぶ。
+/// アプリのメニューバーと、トレイのメニューを作り直す。ワークスペースの切り替えや、エージェントの追加・名称変更・削除のあとに呼ぶ。
 pub fn refresh(app: &AppHandle) {
   match (build_menu(app), app.tray_by_id("main")) {
     (Ok(menu), Some(tray)) => {
@@ -138,14 +138,14 @@ pub fn refresh(app: &AppHandle) {
   }
 }
 
-/// アプリのメニューバーの項目が選ばれたとき。「Spaces」の項目なら、そのワークスペースへ切り替える。
+/// アプリのメニューバーの項目が選ばれたとき。「Agents」の項目なら、そのワークスペースへ切り替える。
 pub fn on_app_menu_event(app: &AppHandle, id: &str) {
   if let Some(workspace_id) = id.strip_prefix(WORKSPACE_PREFIX) {
     crate::commands::workspace::switch_from_menu(app, workspace_id);
   }
 }
 
-/// macOS のメニューバー。OS の言語に関わらず英語表記に固定する。「Spaces」から、パーソナルや各スペースへ直接切り替えられる。
+/// macOS のメニューバー。OS の言語に関わらず英語表記に固定する。「Agents」から、パーソナルや各エージェントへ直接切り替えられる。
 pub fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
   use tauri::menu::{PredefinedMenuItem as P, Submenu};
   let app_sub = Submenu::with_items(
@@ -184,8 +184,8 @@ pub fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     true,
     &[&P::minimize(app, Some("Minimize"))?, &P::maximize(app, Some("Zoom"))?, &P::separator(app)?, &P::close_window(app, Some("Close Window"))?],
   )?;
-  let spaces = spaces_submenu(app)?;
-  Menu::with_items(app, &[&app_sub, &edit, &view, &spaces, &window])
+  let agents = agents_submenu(app)?;
+  Menu::with_items(app, &[&app_sub, &edit, &view, &agents, &window])
 }
 
 /// メインウィンドウを前面に出す。Dock アイコンも復帰させる。

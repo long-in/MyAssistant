@@ -25,12 +25,12 @@ const FORMAT_VERSION: u32 = 1;
 pub const MAX_FILE_BYTES: u64 = 1_000_000;
 const MAX_TEXT_CHARS: usize = 20_000;
 
-/// 書き出し・コピーの対象(スペースごとの設定)。一覧は`settings_registry`で決める。
+/// 書き出し・コピーの対象(エージェントごとの設定)。一覧は`settings_registry`で決める。
 fn entries() -> impl Iterator<Item = (&'static str, Kind)> {
-    settings_registry::transferable(Scope::Space)
+    settings_registry::transferable(Scope::Agent)
 }
 
-/// 全体設定の項目。全スペースで共通で、設定のエクスポート・コピーの対象にはしない(全体設定のバックアップだけが扱う)。
+/// 全体設定の項目。全エージェントで共通で、設定のエクスポート・コピーの対象にはしない(全体設定のバックアップだけが扱う)。
 fn global_entries() -> impl Iterator<Item = (&'static str, Kind)> {
     settings_registry::transferable(Scope::Global)
 }
@@ -155,7 +155,7 @@ pub fn collect_global(store: &GlobalStore, exported_at: String) -> Result<Settin
 }
 
 /// 全体設定のファイルを取り込む。全項目を検証してから書き込み、不正な項目があれば何も変更しない。
-/// ファイルに無い項目は変更せず、未知の項目(スペースごとの設定など)は読み飛ばす。
+/// ファイルに無い項目は変更せず、未知の項目(エージェントごとの設定など)は読み飛ばす。
 pub fn apply_global(store: &GlobalStore, file: &SettingsFile) -> Result<Report, AppError> {
     let mut accepted: Vec<(&str, &str)> = Vec::new();
     let mut skipped = 0;
@@ -196,7 +196,7 @@ pub struct CopyReport {
 /// キーの生値はRust内で写し、画面には件数だけ返す。
 pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result<CopyReport, AppError> {
     if from.id == to.id {
-        return Err(AppError::InvalidSpace("same workspace".into()));
+        return Err(AppError::InvalidAgent("same workspace".into()));
     }
     let policy = command_policy::load(&batch::knowledge_root(from)?);
     let file = collect(&from.db, policy, String::new())?;
@@ -302,7 +302,7 @@ mod tests {
     }
 
     #[test]
-    fn space_export_excludes_global_items() {
+    fn agent_export_excludes_global_items() {
         let (_da, a) = mem();
         for key in [profile::KEY, chat::BASE_INSTRUCTIONS_KEY, wake::WORDS_KEY, batch::BATCH_INTERVAL_KEY] {
             a.set_legacy_setting(key, "x"); // 全体設定へ移す前の古い値
@@ -310,7 +310,7 @@ mod tests {
         a.set_setting(chat::SHELL_ACCESS_KEY, "1").unwrap();
         let exported = collect(&a, Policy::defaults(), "t".into()).unwrap();
         assert_eq!(exported.settings.keys().collect::<Vec<_>>(), vec![chat::SHELL_ACCESS_KEY]);
-        // 全体設定の項目は、スペースのファイルから取り込んでも読み飛ばす
+        // 全体設定の項目は、エージェントのファイルから取り込んでも読み飛ばす
         let (_db, b) = mem();
         let (report, _) = apply(&b, &file(&[(profile::KEY, "{}"), (chat::SHELL_ACCESS_KEY, "0")])).unwrap();
         assert_eq!(report, Report { applied: 1, skipped: 1 });
@@ -387,13 +387,13 @@ mod tests {
         let (_da, a) = ctx("a");
         let (_db, b) = ctx("b");
         a.db.set_legacy_setting(profile::KEY, r#"{"enabled":true,"name":"山田"}"#);
-        a.db.set_setting(crate::services::space_data::KEY, r#"{"enabled":true,"text":"x"}"#).unwrap();
+        a.db.set_setting(crate::services::agent_data::KEY, r#"{"enabled":true,"text":"x"}"#).unwrap();
         a.secrets.set_tts_key("tts-a").unwrap();
         a.secrets.set_key(crate::services::secrets::Provider::Anthropic, "ka").unwrap();
         let report = copy(&a, &b, CopyOptions { include_keys: true, ..Default::default() }).unwrap();
         assert_eq!(report.keys, 2);
         assert_eq!(b.db.get_setting(profile::KEY).unwrap(), None, "パーソナルデータは、キーを写すときでも写さない");
-        assert_eq!(b.db.get_setting(crate::services::space_data::KEY).unwrap(), None, "スペースデータも写さない");
+        assert_eq!(b.db.get_setting(crate::services::agent_data::KEY).unwrap(), None, "エージェントデータも写さない");
         assert_eq!(b.secrets.get_tts_key().unwrap().as_deref(), Some("tts-a"));
     }
 

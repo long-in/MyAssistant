@@ -6,20 +6,20 @@ use crate::{
     services::{
         debug_log,
         settings_transfer::{self, CopyOptions, CopyReport},
-        workspace::{ActiveWorkspace, Deleted, PALETTE, Space, WORKSPACE_CHANGED_EVENT, Workspaces},
+        workspace::{ActiveWorkspace, Deleted, PALETTE, Agent, WORKSPACE_CHANGED_EVENT, Workspaces},
     },
     utils::error::AppError,
 };
 
-/// ワークスペースのスペース一覧(作成順)。
+/// ワークスペースのエージェント一覧(作成順)。
 #[tauri::command]
-pub fn list_spaces(ws: State<'_, Workspaces>) -> Vec<Space> {
+pub fn list_agents(ws: State<'_, Workspaces>) -> Vec<Agent> {
     ws.list()
 }
 
-/// スペースに選べるイメージカラー(30色)。
+/// エージェントに選べるイメージカラー(30色)。
 #[tauri::command]
-pub fn list_space_colors() -> Vec<&'static str> {
+pub fn list_agent_colors() -> Vec<&'static str> {
     PALETTE.to_vec()
 }
 
@@ -29,31 +29,31 @@ pub fn get_active_workspace(ws: State<'_, Workspaces>) -> ActiveWorkspace {
     ws.active_info()
 }
 
-/// スペースを作る(上限30件)。選択はしない。
+/// エージェントを作る(上限30件)。選択はしない。
 #[tauri::command]
-pub fn create_space(app: AppHandle, ws: State<'_, Workspaces>, name: String, color: String) -> Result<Space, AppError> {
-    // スペースを作る前に、リーダーが必要
+pub fn create_agent(app: AppHandle, ws: State<'_, Workspaces>, name: String, color: String) -> Result<Agent, AppError> {
+    // エージェントを作る前に、リーダーが必要
     ws.ensure_leader()?;
-    let space = ws.create(&name, &color)?;
-    tray::refresh(&app); // メニューバー・トレイのSpacesに加える
-    Ok(space)
+    let agent = ws.create(&name, &color)?;
+    tray::refresh(&app); // メニューバー・トレイのAgentsに加える
+    Ok(agent)
 }
 
-/// スペースの名称とイメージカラーを変える。選択中なら画面へ通知する。
+/// エージェントの名称とイメージカラーを変える。選択中なら画面へ通知する。
 #[tauri::command]
-pub fn update_space(
+pub fn update_agent(
     app: AppHandle,
     ws: State<'_, Workspaces>,
     id: String,
     name: String,
     color: String,
-) -> Result<Space, AppError> {
-    let space = ws.update(&id, &name, &color)?;
+) -> Result<Agent, AppError> {
+    let agent = ws.update(&id, &name, &color)?;
     if ws.active_info().id == id {
         let _ = app.emit(WORKSPACE_CHANGED_EVENT, ws.active_info());
     }
     tray::refresh(&app);
-    Ok(space)
+    Ok(agent)
 }
 
 /// 削除後の状態。`kept_knowledge`は、残したナレッジの場所。
@@ -64,10 +64,10 @@ pub struct DeleteReport {
     pub kept_knowledge: Option<String>,
 }
 
-/// スペースを削除する。元に戻せないため、呼び出し側で確認を取ること。選択中ならパーソナルへ戻る。
+/// エージェントを削除する。元に戻せないため、呼び出し側で確認を取ること。選択中ならパーソナルへ戻る。
 /// `delete_knowledge`が偽なら、既定の場所のナレッジは消さずに残す。
 #[tauri::command]
-pub fn delete_space(
+pub fn delete_agent(
     app: AppHandle,
     ws: State<'_, Workspaces>,
     contexts: State<'_, SessionContexts>,
@@ -93,7 +93,7 @@ pub fn work_enabled(ws: State<'_, Workspaces>) -> bool {
     ws.work_enabled()
 }
 
-/// ワークの有効/無効を切り替える。無効にしても、リーダー・スペースのデータは残る。
+/// ワークの有効/無効を切り替える。無効にしても、リーダー・エージェントのデータは残る。
 /// 実行中・承認待ちの依頼があるときは無効にできない(`WorkBusy`)。開いていたら、パーソナルへ戻す。
 #[tauri::command]
 pub fn set_work_enabled(app: AppHandle, ws: State<'_, Workspaces>, enabled: bool) -> Result<(), AppError> {
@@ -116,7 +116,7 @@ pub fn switch_workspace(app: AppHandle, ws: State<'_, Workspaces>, id: String) -
     Ok(info)
 }
 
-/// `from`の設定を`to`へコピーする(`personal`またはスペースID)。`from`は変更しない。
+/// `from`の設定を`to`へコピーする(`personal`またはエージェントID)。`from`は変更しない。
 /// `include_keys`でAPIキー・AWS設定、`include_dictionary`で読み上げ辞書も写す。コピー先の既存の設定は上書きされる。
 #[tauri::command]
 pub fn copy_workspace_settings(
@@ -136,7 +136,7 @@ pub fn copy_workspace_settings(
     result
 }
 
-/// メニューバー・トレイの「Spaces」から切り替える。画面には `workspace-changed` で伝わる。
+/// メニューバー・トレイの「Agents」から切り替える。画面には `workspace-changed` で伝わる。
 pub fn switch_from_menu(app: &AppHandle, id: &str) {
     let ws = app.state::<Workspaces>();
     match ws.switch(id) {

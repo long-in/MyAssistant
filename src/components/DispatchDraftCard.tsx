@@ -5,15 +5,15 @@ import { Send, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { SPACE_NOTE_MAX_CHARS, errorMessage, leaderDispatch, type DispatchDraft, type DispatchReason } from "@/lib/api";
+import { AGENT_NOTE_MAX_CHARS, errorMessage, leaderDispatch, type DispatchDraft, type DispatchReason } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { useWorkspace } from "@/lib/workspace";
 
 /** 配布できなかった理由。 */
 const REASON_LABEL: Record<DispatchReason, string> = {
-  not_found: "スペースが見つかりません",
+  not_found: "エージェントが見つかりません",
   active: "開いているため配布できません",
-  limit: "同時に指示できるスペース数の上限に達しています",
+  limit: "同時に指示できるエージェント数の上限に達しています",
   busy: "別の依頼の最中です",
   no_provider: "APIキーが未登録です",
   error: "配布に失敗しました",
@@ -25,7 +25,7 @@ const REASON_LABEL: Record<DispatchReason, string> = {
  */
 export default function DispatchDraftCard({ draft, onClose, className }: { draft: DispatchDraft; onClose: () => void; className?: string }) {
   const t = useT();
-  const { spaces } = useWorkspace();
+  const { agents } = useWorkspace();
   const [text, setText] = useState(draft.instruction);
   const [picked, setPicked] = useState<Set<string>>(() => new Set(draft.targets.map((x) => x.id)));
   const [busy, setBusy] = useState(false);
@@ -42,9 +42,9 @@ export default function DispatchDraftCard({ draft, onClose, className }: { draft
     try {
       const results = await leaderDispatch(text, [...picked]);
       const started = results.filter((r) => r.started).length;
-      if (started > 0) toast.success(t("{count}件のスペースへ配布しました。", { count: started }));
+      if (started > 0) toast.success(t("{count}件のエージェントへ配布しました。", { count: started }));
       for (const r of results.filter((x) => !x.started)) {
-        const name = spaces.find((s) => s.id === r.space_id)?.name ?? r.space_id;
+        const name = agents.find((s) => s.id === r.agent_id)?.name ?? r.agent_id;
         toast.error(`${name}: ${t(REASON_LABEL[r.reason ?? "error"])}`);
       }
       if (started > 0) onClose();
@@ -63,11 +63,11 @@ export default function DispatchDraftCard({ draft, onClose, className }: { draft
           <X />
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground">{t("内容と宛先を確かめて、「配布」を押すと、選んだスペースで依頼が始まります。配布はまだされていません。")}</p>
-      <Textarea rows={3} value={text} maxLength={SPACE_NOTE_MAX_CHARS} aria-label={t("配布する指示")} onChange={(e) => setText(e.target.value)} />
+      <p className="text-xs text-muted-foreground">{t("内容と宛先を確かめて、「配布」を押すと、選んだエージェントで依頼が始まります。配布はまだされていません。")}</p>
+      <Textarea rows={3} value={text} maxLength={AGENT_NOTE_MAX_CHARS} aria-label={t("配布する指示")} onChange={(e) => setText(e.target.value)} />
       <div className="flex max-h-40 flex-col divide-y overflow-y-auto rounded-md border">
-        {spaces.length === 0 && <p className="p-3 text-sm text-muted-foreground">{t("まだスペースがありません。")}</p>}
-        {spaces.map((s) => (
+        {agents.length === 0 && <p className="p-3 text-sm text-muted-foreground">{t("まだエージェントがありません。")}</p>}
+        {agents.map((s) => (
           <label key={s.id} className="flex items-center gap-3 px-3 py-1.5 text-sm">
             <input type="checkbox" checked={picked.has(s.id)} onChange={() => toggle(s.id)} aria-label={s.name} />
             <span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: s.color }} />

@@ -322,9 +322,9 @@ struct MfaPrompt {
     mfa_serial: String,
     /// 直前のコードが拒否されたときの理由。
     error: Option<String>,
-    /// どのワークスペース(`personal`またはスペースID)が求めているか。コードはこのIDで返す。
+    /// どのワークスペース(`personal`またはエージェントID)が求めているか。コードはこのIDで返す。
     workspace_id: String,
-    /// スペースの名称とイメージカラー(パーソナルは`None`)。入力欄で、どのスペースのコードかを示す。
+    /// エージェントの名称とイメージカラー(パーソナルは`None`)。入力欄で、どのエージェントのコードかを示す。
     workspace_name: Option<String>,
     workspace_color: Option<String>,
 }

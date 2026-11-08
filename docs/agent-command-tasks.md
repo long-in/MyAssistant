@@ -2,7 +2,7 @@
 
 「〜してください」という依頼に対し、LLM が手順を考え、シェルコマンドをローカルで実行しながら自律的に進める。[agent-file-tools.md](agent-file-tools.md) のツールループを拡張した機能で、**Claude(Anthropic)選択時のみ**有効。設定画面の Command Tasks で切り替える(既定は有効、キー `shell_access`)。
 
-実装は `services/agent.rs`(`propose_plan` / `run_command`)、`services/shell.rs`(実行)、`services/command_policy.rs`(判定。[command-policy.md](command-policy.md))、フロントエンドの `ApprovalModal` / `ExecutionLog` / `lib/voiceApproval.ts`。
+実装は `services/tool_loop.rs`(`propose_plan` / `run_command`)、`services/shell.rs`(実行)、`services/command_policy.rs`(判定。[command-policy.md](command-policy.md))、フロントエンドの `ApprovalModal` / `ExecutionLog` / `lib/voiceApproval.ts`。
 
 ## 流れ
 
@@ -70,11 +70,11 @@ LLM 呼び出しの上限は、コマンド実行が有効なとき 1 依頼あ�
 
 承認は画面のボタンでも答えられるが、基本は音声。
 
-- 承認要求が出たら**自動で録音を始め**、発話後 1.2 秒の無音で文字起こしして判定する(録音の開始に約 2 秒かかる)。スペースキーの長押しでも答えられる。
+- 承認要求が出たら**自動で録音を始め**、発話後 1.2 秒の無音で文字起こしして判定する(録音の開始に約 2 秒かかる)。エージェントキーの長押しでも答えられる。
 - 判定は単語表(`lib/voiceApproval.ts`)で行い、LLM には判定させない。否定語を含めば否定、肯定語のみなら肯定、それ以外は聞き直す。30 文字を超える発話は返答として扱わない。詳細は [conversation-session.md](conversation-session.md#肯定否定の判定voiceapprovalts)。
 - 承認の待ち時間は 120 秒。超えたら拒否として扱う。数えるのは、そのワークスペースを選んでいる間だけ(ほかのワークスペースにいる間は止まり、戻れば残りの時間で続く)。ワークスペースを切り替えても依頼は止まらず、承認は回答を待つ([workspace.md](workspace.md))。
 
-## 中断(`agent_cancel`)
+## 中断(`task_cancel`)
 
 - 実行中の依頼は同時に 1 つだけ。`CancelToken`(複製して共有でき、どれか 1 つが `cancel` すれば全員に伝わる)で、LLM 待ち・コマンド実行・承認待ちのどれも中断できる。
 - 動いているコマンドは強制終了し、承認待ちは拒否として扱い、履歴を呼び出し前に戻して「作業を中断しました。」を返す。

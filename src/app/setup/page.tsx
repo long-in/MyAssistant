@@ -13,12 +13,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import AwsPanel from "@/components/AwsPanel";
-import DeleteSpaceModal from "@/components/DeleteSpaceModal";
+import DeleteAgentModal from "@/components/DeleteAgentModal";
 import NotePanel from "@/components/NotePanel";
 import CopySettingsCard from "@/components/CopySettingsCard";
 import CopyConfirmModal from "@/components/CopyConfirmModal";
 import { copyTargets, type CopyRequest } from "@/lib/copyTargets";
-import { DEFAULT_TUNING, getTuning, setTuning, LEADER_ID, PERSONAL_ID, getSpaceData, saveSpaceData, errorMessage, updateSpace, SPACE_NAME_MAX, leaderCopyApiKey, leaderGetPrompt, leaderSetPrompt, leaderGetLimit, leaderSetLimit, LEADER_LIMIT_MAX, type DeleteReport } from "@/lib/api";
+import { DEFAULT_TUNING, getTuning, setTuning, LEADER_ID, PERSONAL_ID, getAgentData, saveAgentData, errorMessage, updateAgent, AGENT_NAME_MAX, leaderCopyApiKey, leaderGetPrompt, leaderSetPrompt, leaderGetLimit, leaderSetLimit, LEADER_LIMIT_MAX, type DeleteReport } from "@/lib/api";
 import { bumpSettingsVersion, refreshWorkspace, useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
 import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, aquaKeyRegistered, deleteAquaKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, setCommandPolicy, type CommandPolicy, getShellAccess, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, saveAquaKey, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setShellAccess, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
@@ -95,7 +95,7 @@ function KeyRow({ title, description, registered, busy, card, onSave, onDelete }
   );
 }
 
-const AGENT_FIELDS: TuningField<Tuning>[] = [
+const TASK_FIELDS: TuningField<Tuning>[] = [
   { key: "web_search_max", label: "Web検索の回数", hint: "1回の依頼で検索できる上限。多いほど料金が増える。", unit: "回", min: 1, max: 20, step: 1 },
   { key: "web_fetch_max", label: "ページ取得の回数", hint: "1回の依頼でページを読める上限。", unit: "回", min: 1, max: 20, step: 1 },
   { key: "history_exchanges", label: "そのまま渡す会話の往復数", hint: "超えた古い会話はAIで要約して渡す(要約にも少量のトークンを使う)。", unit: "往復", min: 2, max: 30, step: 1 },
@@ -329,13 +329,13 @@ function CommandPolicyEditor() {
   );
 }
 
-/** 選択中のスペースへ、パーソナルやほかのスペースの設定をコピーする。パーソナルには出さない。上書きの前に、確認のモーダルで必ず再確認する。 */
-function CopyIntoSpace() {
+/** 選択中のエージェントへ、パーソナルやほかのエージェントの設定をコピーする。パーソナルには出さない。上書きの前に、確認のモーダルで必ず再確認する。 */
+function CopyIntoAgent() {
   const t = useT();
-  const { active, spaces } = useWorkspace();
+  const { active, agents } = useWorkspace();
   const [request, setRequest] = useState<CopyRequest | null>(null);
   if (active.id === PERSONAL_ID || active.id === LEADER_ID) return null; // リーダーは、設定のコピー先にしない
-  const targets = copyTargets(spaces);
+  const targets = copyTargets(agents);
   return (
     <>
       <CopySettingsCard targets={targets} suggestedTo={null} fixedTo={active.id} onRequest={setRequest} />
@@ -346,7 +346,7 @@ function CopyIntoSpace() {
           onClose={() => setRequest(null)}
           onCopied={(r) => {
             toast.success(t("設定を{count}件コピーしました。", { count: r.settings }) + (r.keys > 0 ? t("(APIキー{keys}件)", { keys: r.keys }) : "") + (r.words > 0 ? t("(読み上げ辞書{words}語)", { words: r.words }) : ""));
-            bumpSettingsVersion(); // コピー先は選択中のスペースなので、設定画面を読み直す
+            bumpSettingsVersion(); // コピー先は選択中のエージェントなので、設定画面を読み直す
           }}
         />
       )}
@@ -354,29 +354,29 @@ function CopyIntoSpace() {
   );
 }
 
-/** 選択中のスペースの名称とイメージカラーの変更。パーソナルとリーダーには出さない(固定のため)。 */
-function EditSpace() {
+/** 選択中のエージェントの名称とイメージカラーの変更。パーソナルとリーダーには出さない(固定のため)。 */
+function EditAgent() {
   const t = useT();
-  const { active, spaces, palette } = useWorkspace();
-  const space = spaces.find((p) => p.id === active.id);
+  const { active, agents, palette } = useWorkspace();
+  const agent = agents.find((p) => p.id === active.id);
   const [name, setName] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  if (active.id === PERSONAL_ID || active.id === LEADER_ID || !space) return null;
+  if (active.id === PERSONAL_ID || active.id === LEADER_ID || !agent) return null;
 
-  // 未編集のあいだは、いまの値を表示する。ほかのスペースが使っている色は選べない
-  const shownName = name ?? space.name;
-  const color = picked ?? space.color;
-  const usedBy = new Map(spaces.filter((p) => p.id !== space.id).map((p) => [p.color, p.name]));
-  const dirty = shownName.trim() !== space.name || color !== space.color;
+  // 未編集のあいだは、いまの値を表示する。ほかのエージェントが使っている色は選べない
+  const shownName = name ?? agent.name;
+  const color = picked ?? agent.color;
+  const usedBy = new Map(agents.filter((p) => p.id !== agent.id).map((p) => [p.color, p.name]));
+  const dirty = shownName.trim() !== agent.name || color !== agent.color;
   const save = async () => {
     setBusy(true);
     try {
-      await updateSpace(space.id, shownName, color);
+      await updateAgent(agent.id, shownName, color);
       await refreshWorkspace();
       setName(null);
       setPicked(null);
-      toast.success(t("スペースを更新しました。"));
+      toast.success(t("エージェントを更新しました。"));
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -386,15 +386,15 @@ function EditSpace() {
 
   return (
     <section className="hud-panel hud-accent px-5 py-4">
-      <Heading title="Space" help={t("スペースの名称と色")}>
-        <p>{t("名称とイメージカラーは、どのエージェントと話しているかを見分けるために表示されます。名称と色はスペースごとに重複できず、「パーソナル」「ワーク」などは予約名です。")}</p>
+      <Heading title="Agent" help={t("エージェントの名称と色")}>
+        <p>{t("名称とイメージカラーは、どのエージェントと話しているかを見分けるために表示されます。名称と色はエージェントごとに重複できず、「パーソナル」「ワーク」などは予約名です。")}</p>
       </Heading>
       <div className="flex flex-col gap-4">
         <Input
           value={shownName}
-          maxLength={SPACE_NAME_MAX}
-          placeholder={t("スペース名")}
-          aria-label={t("スペース名")}
+          maxLength={AGENT_NAME_MAX}
+          placeholder={t("エージェント名")}
+          aria-label={t("エージェント名")}
           onChange={(e) => setName(e.target.value)}
         />
         <div className="grid grid-cols-10 gap-2" role="radiogroup" aria-label={t("イメージカラー")}>
@@ -434,38 +434,38 @@ function EditSpace() {
   );
 }
 
-/** 選択中のスペースの削除。パーソナルには出さない。削除の前に、確認のモーダルで必ず再確認する。 */
-function DeleteSpace() {
+/** 選択中のエージェントの削除。パーソナルには出さない。削除の前に、確認のモーダルで必ず再確認する。 */
+function DeleteAgent() {
   const t = useT();
   const router = useRouter();
-  const { active, spaces } = useWorkspace();
+  const { active, agents } = useWorkspace();
   const [confirming, setConfirming] = useState(false);
-  const space = spaces.find((p) => p.id === active.id);
-  if (active.id === PERSONAL_ID || !space) return null;
+  const agent = agents.find((p) => p.id === active.id);
+  if (active.id === PERSONAL_ID || !agent) return null;
 
   const deleted = async (r: DeleteReport) => {
     await refreshWorkspace();
-    toast.success(t("スペースを削除しました。"), r.keptKnowledge ? { description: t("ナレッジは次の場所に残しました: {path}", { path: r.keptKnowledge }) } : undefined);
-    router.replace("/"); // 削除したスペースの画面から、パーソナルへ戻る
+    toast.success(t("エージェントを削除しました。"), r.keptKnowledge ? { description: t("ナレッジは次の場所に残しました: {path}", { path: r.keptKnowledge }) } : undefined);
+    router.replace("/"); // 削除したエージェントの画面から、パーソナルへ戻る
   };
 
   return (
     <section className="hud-panel hud-accent px-5 py-4">
-      <Heading title="Danger Zone" help={t("スペースの削除")}>
-        <p>{t("このスペースを、会話・設定・APIキーごと削除します。元に戻せません。")}</p>
+      <Heading title="Danger Zone" help={t("エージェントの削除")}>
+        <p>{t("このエージェントを、会話・設定・APIキーごと削除します。元に戻せません。")}</p>
         <ul>
           <li>{t("ナレッジは、削除時に残すか消すかを選べます(既定は残す)。")}</li>
           <li>{t("削除すると、パーソナルへ戻ります。")}</li>
         </ul>
       </Heading>
       <div className="mt-3 flex items-center justify-between gap-3">
-        <p className="text-xs text-muted-foreground">{t("「{name}」を削除します。", { name: space.name })}</p>
+        <p className="text-xs text-muted-foreground">{t("「{name}」を削除します。", { name: agent.name })}</p>
         <Button variant="destructive" size="sm" onClick={() => setConfirming(true)}>
           <Trash2 />
-          {t("このスペースを削除…")}
+          {t("このエージェントを削除…")}
         </Button>
       </div>
-      {confirming && <DeleteSpaceModal space={space} onClose={() => setConfirming(false)} onDeleted={(r) => void deleted(r)} />}
+      {confirming && <DeleteAgentModal agent={agent} onClose={() => setConfirming(false)} onDeleted={(r) => void deleted(r)} />}
     </section>
   );
 }
@@ -537,20 +537,20 @@ function DebugMode() {
   );
 }
 
-/** スペースデータ。パーソナルデータの代わりに、スペースだけで使う自由記述の指示。コピーの対象外。 */
-function SpaceData() {
+/** エージェントデータ。パーソナルデータの代わりに、エージェントだけで使う自由記述の指示。コピーの対象外。 */
+function AgentData() {
   const t = useT();
   return (
     <section className="hud-panel hud-accent px-5 py-4">
-      <Heading title="Space Data" help={t("スペースデータ")}>
-        <p>{t("このスペースだけで、AIへ毎回渡す指示です。スペースの目的や前提、口調などを書きます。")}</p>
+      <Heading title="Agent Data" help={t("エージェントデータ")}>
+        <p>{t("このエージェントだけで、AIへ毎回渡す指示です。エージェントの目的や前提、口調などを書きます。")}</p>
         <ul>
-          <li>{t("全スペース共通の指示は、全体設定の「ワーク」の「共通データ」に書きます。共通データのあとに、このデータを渡します。")}</li>
+          <li>{t("全エージェント共通の指示は、全体設定の「ワーク」の「共通データ」に書きます。共通データのあとに、このデータを渡します。")}</li>
           <li>{t("入力した内容は、選んでいるAIのプロバイダへ送られます。")}</li>
           <li>{t("設定のコピーでは写されません。次の送信から反映されます。")}</li>
         </ul>
       </Heading>
-      <NotePanel load={getSpaceData} save={saveSpaceData} label={t("スペースデータ")} placeholder={t("例: このスペースは営業支援用です。提案書の下書きでは、箇条書きを使ってください。")} />
+      <NotePanel load={getAgentData} save={saveAgentData} label={t("エージェントデータ")} placeholder={t("例: このエージェントは営業支援用です。提案書の下書きでは、箇条書きを使ってください。")} />
     </section>
   );
 }
@@ -567,12 +567,12 @@ function LeaderPrompt() {
           <li>{t("設定のコピーでは写されません。次の送信から反映されます。")}</li>
         </ul>
       </Heading>
-      <NotePanel load={leaderGetPrompt} save={leaderSetPrompt} label={t("リーダープロンプト")} placeholder={t("例: 宛先は、過去の履歴で同じ種類の指示を担当したスペースを優先してください。")} />
+      <NotePanel load={leaderGetPrompt} save={leaderSetPrompt} label={t("リーダープロンプト")} placeholder={t("例: 宛先は、過去の履歴で同じ種類の指示を担当したエージェントを優先してください。")} />
     </section>
   );
 }
 
-/** 同時に指示できるスペース数の上限。PCの性能に合わせて、リーダーが裏で動かすスペースの数を制限する。コピーの対象外。 */
+/** 同時に指示できるエージェント数の上限。PCの性能に合わせて、リーダーが裏で動かすエージェントの数を制限する。コピーの対象外。 */
 function LeaderLimit() {
   const t = useT();
   const [saved, setSaved] = useState<number | null>(null);
@@ -595,11 +595,11 @@ function LeaderLimit() {
   };
   return (
     <section className="hud-panel hud-accent px-5 py-4">
-      <Heading title="Active Spaces" help={t("同時に指示できるスペース数")}>
-        <p>{t("リーダーが一度に指示を出せる(実行中・承認待ちにできる)スペースの数です。PCの性能に合わせて決めてください。")}</p>
+      <Heading title="Active Agents" help={t("同時に指示できるエージェント数")}>
+        <p>{t("リーダーが一度に指示を出せる(実行中・承認待ちにできる)エージェントの数です。PCの性能に合わせて決めてください。")}</p>
         <ul>
-          <li>{t("上限に達すると、超えた分のスペースへは配布されません(順番待ちにはなりません)。空いてから、もう一度配布してください。")}</li>
-          <li>{t("数えるのは、リーダーが配布して動いているスペースだけです。スペースを直接開いて始めた依頼は数えず、制限もしません。")}</li>
+          <li>{t("上限に達すると、超えた分のエージェントへは配布されません(順番待ちにはなりません)。空いてから、もう一度配布してください。")}</li>
+          <li>{t("数えるのは、リーダーが配布して動いているエージェントだけです。エージェントを直接開いて始めた依頼は数えず、制限もしません。")}</li>
         </ul>
       </Heading>
       <div className="flex items-center gap-3">
@@ -609,7 +609,7 @@ function LeaderLimit() {
           max={LEADER_LIMIT_MAX}
           className="w-24"
           value={value}
-          aria-label={t("同時に指示できるスペース数")}
+          aria-label={t("同時に指示できるエージェント数")}
           onChange={(e) => setValue(e.target.value)}
           onBlur={() => void commit()}
           onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
@@ -620,10 +620,10 @@ function LeaderLimit() {
   );
 }
 
-/** リーダーのAPIキーを、パーソナルまたはスペースのキーからコピーする(コピー元は変わらない)。 */
+/** リーダーのAPIキーを、パーソナルまたはエージェントのキーからコピーする(コピー元は変わらない)。 */
 function LeaderKeyCopy({ onCopied }: { onCopied: () => void }) {
   const t = useT();
-  const { spaces } = useWorkspace();
+  const { agents } = useWorkspace();
   const [from, setFrom] = useState(PERSONAL_ID);
   const [busy, setBusy] = useState(false);
   const copy = async () => {
@@ -642,12 +642,12 @@ function LeaderKeyCopy({ onCopied }: { onCopied: () => void }) {
   return (
     <section className="hud-panel hud-accent px-5 py-4">
       <Heading title="Copy API key" help={t("APIキーのコピー")}>
-        <p>{t("リーダーのAPIキー(Anthropic)を、パーソナルまたはスペースのキーからコピーします。コピー元は変わりません。")}</p>
+        <p>{t("リーダーのAPIキー(Anthropic)を、パーソナルまたはエージェントのキーからコピーします。コピー元は変わりません。")}</p>
       </Heading>
       <div className="flex items-center gap-2">
         <select className="h-9 flex-1 rounded-md border bg-background px-2 text-sm" value={from} onChange={(e) => setFrom(e.target.value)} aria-label={t("コピー元")}>
           <option value={PERSONAL_ID}>{t("パーソナル")}</option>
-          {spaces.map((s) => (
+          {agents.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
             </option>
@@ -1250,10 +1250,10 @@ export default function Setup() {
         <PageHeader
           label="// System config"
           title={t("設定")}
-          description={t("ベースプロンプト、パーソナルデータ、ナレッジ整理の間隔、起動ワード、音声入力の待ち時間、表示言語、OSの通知は、全スペース共通の全体設定で管理します。")}
+          description={t("ベースプロンプト、パーソナルデータ、ナレッジ整理の間隔、起動ワード、音声入力の待ち時間、表示言語、OSの通知は、全エージェント共通の全体設定で管理します。")}
           chips={
             <>
-              <StatusPill on>{active.id === PERSONAL_ID ? "Personal" : active.id === LEADER_ID ? "Work / Leader" : `Work / ${active.space?.name ?? ""}`}</StatusPill>
+              <StatusPill on>{active.id === PERSONAL_ID ? "Personal" : active.id === LEADER_ID ? "Work / Leader" : `Work / ${active.agent?.name ?? ""}`}</StatusPill>
               <StatusPill on={linked > 0}>{t("AI接続")}: {linked} / {PROVIDERS.length}</StatusPill>
               <Link href="/global" className="inline-flex items-center rounded-full border border-dashed px-2 py-0.5 text-[0.65rem] text-muted-foreground transition-colors hover:border-primary hover:text-primary">
                 {t("全体設定")} →
@@ -1457,7 +1457,7 @@ export default function Setup() {
           </TabsContent>
 
           <TabsContent value="behavior" className="flex flex-col gap-6">
-          {active.id === LEADER_ID ? <><LeaderPrompt /><LeaderLimit /></> : active.id !== PERSONAL_ID && <SpaceData />}
+          {active.id === LEADER_ID ? <><LeaderPrompt /><LeaderLimit /></> : active.id !== PERSONAL_ID && <AgentData />}
           {active.id !== LEADER_ID && <TuningPanel
             title="Limits"
             help={t("検索回数などの上限")}
@@ -1470,7 +1470,7 @@ export default function Setup() {
                 </ul>
               </>
             }
-            fields={AGENT_FIELDS}
+            fields={TASK_FIELDS}
             load={getTuning}
             store={setTuning}
             defaults={DEFAULT_TUNING}
@@ -1486,11 +1486,11 @@ export default function Setup() {
           )}
 
           <TabsContent value="data" className="flex flex-col gap-6">
-          <EditSpace />
+          <EditAgent />
           <SettingsTransfer />
-          <CopyIntoSpace />
+          <CopyIntoAgent />
           <DebugMode />
-          <DeleteSpace />
+          <DeleteAgent />
           </TabsContent>
         </Tabs>
 

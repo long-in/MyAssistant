@@ -3,9 +3,9 @@
 import { useT } from "@/lib/i18n";
 import { Check, Loader2, Mic, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { AgentEvent } from "@/lib/api";
+import type { TaskEvent } from "@/lib/api";
 
-export type Approval = Extract<AgentEvent, { type: "approval" }>;
+export type Approval = Extract<TaskEvent, { type: "approval" }>;
 
 /** 音声での返答の待ち受け状態。 */
 export type Listening = "preparing" | "listening" | "transcribing" | "idle";

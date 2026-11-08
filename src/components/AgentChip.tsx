@@ -1,8 +1,8 @@
 import { User } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-/** スペースの名称を、イメージカラーの丸と並べて示す。パーソナル(色なし)はアイコンを使う。 */
-export default function SpaceChip({ name, color, className }: { name: string; color: string | null; className?: string }) {
+/** エージェントの名称を、イメージカラーの丸と並べて示す。パーソナル(色なし)はアイコンを使う。 */
+export default function AgentChip({ name, color, className }: { name: string; color: string | null; className?: string }) {
   return (
     <span className={cn("inline-flex min-w-0 items-center gap-2", className)}>
       {color ? (

@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import KnowledgeTree, { type NodeKind } from "@/components/KnowledgeTree";
 import { EmptyState, PaneHeader, StatusPill } from "@/components/GlobalPanels";
 import {
-  type SpaceKnowledge,
+  type AgentKnowledge,
   createKnowledgeDirIn,
   createKnowledgeFileIn,
   deleteKnowledgeIn,
@@ -31,12 +31,12 @@ const isNote = (path: string) => path.endsWith(".md");
 /** 同じパスか配下かを判定する(フォルダ操作の影響範囲)。 */
 const within = (path: string, base: string) => path === base || path.startsWith(`${base}/`);
 
-type Sel = { spaceId: string; path: string };
+type Sel = { agentId: string; path: string };
 
-/** 全スペースのナレッジを、スペースを切り替えずに一覧・作成・閲覧・編集・削除する。 */
+/** 全エージェントのナレッジを、エージェントを切り替えずに一覧・作成・閲覧・編集・削除する。 */
 export default function AllKnowledge() {
   const t = useT();
-  const [spaces, setSpaces] = useState<SpaceKnowledge[]>([]);
+  const [agents, setAgents] = useState<AgentKnowledge[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Sel | null>(null);
   const [content, setContent] = useState("");
@@ -48,14 +48,14 @@ export default function AllKnowledge() {
   const refresh = useCallback(
     () =>
       listAllKnowledge()
-        .then(setSpaces)
+        .then(setAgents)
         .catch((e) => toast.error(reportError(e))),
     [],
   );
   useEffect(() => {
     refresh();
   }, [refresh]);
-  // 会話ごとのリアルタイム更新(選択中のスペース分)を反映する
+  // 会話ごとのリアルタイム更新(選択中のエージェント分)を反映する
   useEffect(() => {
     const un = listen("knowledge-updated", () => {
       refresh();
@@ -75,12 +75,12 @@ export default function AllKnowledge() {
       cancelLabel: t("キャンセル"),
     }));
 
-  const open = async (spaceId: string, path: string) => {
-    if (selected?.spaceId === spaceId && selected.path === path) return;
+  const open = async (agentId: string, path: string) => {
+    if (selected?.agentId === agentId && selected.path === path) return;
     if (!(await confirmDiscard())) return;
     try {
-      const text = await readKnowledgeIn(spaceId, path);
-      setSelected({ spaceId, path });
+      const text = await readKnowledgeIn(agentId, path);
+      setSelected({ agentId, path });
       setContent(text);
       setDraft(text);
       setEditMode(false);
@@ -100,7 +100,7 @@ export default function AllKnowledge() {
     if (!selected || !dirty || saving) return;
     setSaving(true);
     try {
-      await writeKnowledgeIn(selected.spaceId, selected.path, draft);
+      await writeKnowledgeIn(selected.agentId, selected.path, draft);
       setContent(draft);
       await refresh();
       toast.success(t("保存しました。"));
@@ -111,15 +111,15 @@ export default function AllKnowledge() {
     }
   };
 
-  const createNode = async (spaceId: string, kind: NodeKind, path: string) => {
+  const createNode = async (agentId: string, kind: NodeKind, path: string) => {
     try {
       if (kind === "dir") {
-        await createKnowledgeDirIn(spaceId, path);
+        await createKnowledgeDirIn(agentId, path);
         await refresh();
       } else {
-        await createKnowledgeFileIn(spaceId, path);
+        await createKnowledgeFileIn(agentId, path);
         await refresh();
-        await open(spaceId, path);
+        await open(agentId, path);
         setEditMode(true);
       }
       return true;
@@ -129,13 +129,13 @@ export default function AllKnowledge() {
     }
   };
 
-  const renameNode = async (spaceId: string, _kind: NodeKind, from: string, to: string) => {
-    const affected = selected?.spaceId === spaceId && within(selected.path, from);
+  const renameNode = async (agentId: string, _kind: NodeKind, from: string, to: string) => {
+    const affected = selected?.agentId === agentId && within(selected.path, from);
     if (affected && !(await confirmDiscard())) return false;
     try {
-      await renameKnowledgeIn(spaceId, from, to);
+      await renameKnowledgeIn(agentId, from, to);
       if (affected && selected) {
-        setSelected({ spaceId, path: to + selected.path.slice(from.length) });
+        setSelected({ agentId, path: to + selected.path.slice(from.length) });
         setDraft(content);
       }
       await refresh();
@@ -146,26 +146,26 @@ export default function AllKnowledge() {
     }
   };
 
-  const deleteNode = async (space: SpaceKnowledge, kind: NodeKind, path: string) => {
+  const deleteNode = async (agent: AgentKnowledge, kind: NodeKind, path: string) => {
     const name = path.split("/").pop() ?? path;
     const ok = await ask(
       kind === "dir"
         ? t("フォルダ「{name}」と中のノートをすべて削除します。この操作は元に戻せません。続行しますか?", { name })
         : t("ノート「{name}」を削除します。この操作は元に戻せません。続行しますか?", { name }),
-      { title: `${t("削除の確認")} (${space.name})`, kind: "warning", okLabel: t("削除する"), cancelLabel: t("キャンセル") },
+      { title: `${t("削除の確認")} (${agent.name})`, kind: "warning", okLabel: t("削除する"), cancelLabel: t("キャンセル") },
     );
     if (!ok) return;
     try {
-      await deleteKnowledgeIn(space.id, path);
-      if (selected?.spaceId === space.id && within(selected.path, path)) clearSelection();
+      await deleteKnowledgeIn(agent.id, path);
+      if (selected?.agentId === agent.id && within(selected.path, path)) clearSelection();
       await refresh();
     } catch (e) {
       toast.error(reportError(e));
     }
   };
 
-  const reveal = (spaceId: string, path?: string) =>
-    revealKnowledgeInFinder(spaceId, path).catch((e) => toast.error(reportError(e)));
+  const reveal = (agentId: string, path?: string) =>
+    revealKnowledgeInFinder(agentId, path).catch((e) => toast.error(reportError(e)));
 
   const toggle = (id: string) =>
     setCollapsed((prev) => {
@@ -186,10 +186,10 @@ export default function AllKnowledge() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const total = spaces.reduce((n, s) => n + s.files.length, 0);
+  const total = agents.reduce((n, s) => n + s.files.length, 0);
   const readOnly = selected !== null && !isNote(selected.path);
   const doc = selected ? splitFrontmatter(draft) : null;
-  const selectedSpace = selected ? spaces.find((s) => s.id === selected.spaceId) : undefined;
+  const selectedAgent = selected ? agents.find((s) => s.id === selected.agentId) : undefined;
 
   return (
     <div className="flex h-full">
@@ -200,37 +200,37 @@ export default function AllKnowledge() {
           chips={<StatusPill on={total > 0}>{t("ノート {n}件", { n: total })}</StatusPill>}
         />
         <div className="flex-1 overflow-y-auto py-2">
-          {spaces.map((space) => {
-            const isCollapsed = collapsed.has(space.id);
+          {agents.map((agent) => {
+            const isCollapsed = collapsed.has(agent.id);
             return (
-              <section key={space.id} className="mb-2">
+              <section key={agent.id} className="mb-2">
                 <div className="flex items-center gap-1 px-2 py-1">
-                  <button className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-sm font-medium" onClick={() => toggle(space.id)}>
+                  <button className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-sm font-medium" onClick={() => toggle(agent.id)}>
                     {isCollapsed ? <ChevronRight className="size-4 shrink-0" /> : <ChevronDown className="size-4 shrink-0" />}
-                    <span className="size-2.5 shrink-0 rounded-full" style={{ background: space.color ?? "var(--primary)" }} />
-                    <span className="truncate">{space.name}</span>
-                    <span className="text-xs text-muted-foreground">{space.files.length}</span>
+                    <span className="size-2.5 shrink-0 rounded-full" style={{ background: agent.color ?? "var(--primary)" }} />
+                    <span className="truncate">{agent.name}</span>
+                    <span className="text-xs text-muted-foreground">{agent.files.length}</span>
                   </button>
                   <button
                     className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
                     title={t("Finderで開く")}
-                    onClick={() => reveal(space.id)}
+                    onClick={() => reveal(agent.id)}
                   >
                     <FolderOpen className="size-4" />
                   </button>
                 </div>
                 {!isCollapsed &&
-                  (space.error ? (
-                    <p className="px-4 py-2 text-xs text-destructive">{space.error}</p>
+                  (agent.error ? (
+                    <p className="px-4 py-2 text-xs text-destructive">{agent.error}</p>
                   ) : (
                     <KnowledgeTree
-                      files={space.files}
-                      dirs={space.dirs}
-                      selected={selected?.spaceId === space.id ? selected.path : null}
-                      onOpen={(p) => open(space.id, p)}
-                      onCreate={(k, p) => createNode(space.id, k, p)}
-                      onRename={(k, from, to) => renameNode(space.id, k, from, to)}
-                      onDelete={(k, p) => deleteNode(space, k, p)}
+                      files={agent.files}
+                      dirs={agent.dirs}
+                      selected={selected?.agentId === agent.id ? selected.path : null}
+                      onOpen={(p) => open(agent.id, p)}
+                      onCreate={(k, p) => createNode(agent.id, k, p)}
+                      onRename={(k, from, to) => renameNode(agent.id, k, from, to)}
+                      onDelete={(k, p) => deleteNode(agent, k, p)}
                       onInvalidName={() => toast.error(t("名前には英数字・日本語・「_」「-」「.」のみ使えます(フォルダは「.」不可)。"))}
                     />
                   ))}
@@ -245,13 +245,13 @@ export default function AllKnowledge() {
             <div className="flex items-center justify-between gap-3 border-b px-4 py-2">
               <span className="flex min-w-0 items-center gap-2 text-sm">
                 <FileText className="size-4 shrink-0 text-primary" />
-                <Badge variant="secondary">{selectedSpace?.name ?? selected.spaceId}</Badge>
+                <Badge variant="secondary">{selectedAgent?.name ?? selected.agentId}</Badge>
                 <span className="truncate">{selected.path}</span>
                 {dirty && <StatusPill on>{t("未保存")}</StatusPill>}
                 {readOnly && <StatusPill on={false}>{t("読み取り専用")}</StatusPill>}
               </span>
               <div className="flex shrink-0 gap-2">
-                <Button size="sm" variant="outline" onClick={() => reveal(selected.spaceId, selected.path)}>
+                <Button size="sm" variant="outline" onClick={() => reveal(selected.agentId, selected.path)}>
                   <FolderOpen /> {t("Finderで表示")}
                 </Button>
                 {!readOnly && (

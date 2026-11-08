@@ -54,7 +54,7 @@ mod tests {
 
     #[test]
     fn usage_is_summed_for_this_month_only() {
-        let db = Db::open_in_memory(Role::Space);
+        let db = Db::open_in_memory(Role::Agent);
         db.record_usage("anthropic", "m", 1, 2).unwrap();
         db.record_usage("anthropic", "m", 10, 20).unwrap();
         db.conn()

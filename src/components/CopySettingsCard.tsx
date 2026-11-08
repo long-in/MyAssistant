@@ -8,13 +8,13 @@ import { useT } from "@/lib/i18n";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { CopyRequest, CopyTarget } from "@/lib/copyTargets";
 import CopyOptions from "./CopyOptions";
-import SpaceChip from "./SpaceChip";
+import AgentChip from "./AgentChip";
 
 type Props = {
   targets: CopyTarget[];
-  /** コピー先の候補。作ったばかりのスペースなど。一覧に無ければ使わない。 */
+  /** コピー先の候補。作ったばかりのエージェントなど。一覧に無ければ使わない。 */
   suggestedTo: string | null;
-  /** コピー先を固定する(スペースの設定画面から、そのスペースへ写すとき)。選択欄は出さない。 */
+  /** コピー先を固定する(エージェントの設定画面から、そのエージェントへ写すとき)。選択欄は出さない。 */
   fixedTo?: string;
   /** 「Copy…」が押された。実行は、最終確認のあとに呼び出し側が行う。 */
   onRequest: (request: CopyRequest) => void;
@@ -22,7 +22,7 @@ type Props = {
 
 /**
  * 設定のコピー。コピー元とコピー先を選ぶ。コピー先の既定は決めない(上書きされるのは、明示して選んだ先だけ)。
- * 作ったばかりのスペースがあれば、コピー先の候補として最初から選んでおく。
+ * 作ったばかりのエージェントがあれば、コピー先の候補として最初から選んでおく。
  */
 export default function CopySettingsCard({ targets, suggestedTo, fixedTo, onRequest }: Props) {
   const t = useT();
@@ -31,7 +31,7 @@ export default function CopySettingsCard({ targets, suggestedTo, fixedTo, onRequ
   const [includeKeys, setIncludeKeys] = useState(false);
   const [includeDictionary, setIncludeDictionary] = useState(false);
 
-  // 選択は、いまの一覧に存在するものだけを有効にする(スペースの削除などで、古いIDが残らないように)
+  // 選択は、いまの一覧に存在するものだけを有効にする(エージェントの削除などで、古いIDが残らないように)
   const valid = (id: string | null) => (id !== null && targets.some((t) => t.id === id) ? id : null);
   const to = (fixedTo !== undefined ? valid(fixedTo) : valid(pickedTo)) ?? valid(suggestedTo);
   // コピー元は上書きされないので、未選択ならコピー先以外の先頭(パーソナル)を既定にしてよい
@@ -43,7 +43,7 @@ export default function CopySettingsCard({ targets, suggestedTo, fixedTo, onRequ
   const options = (list: CopyTarget[]) =>
     list.map((t) => (
       <SelectItem key={t.id} value={t.id}>
-        <SpaceChip name={t.name} color={t.color} />
+        <AgentChip name={t.name} color={t.color} />
       </SelectItem>
     ));
 
@@ -51,7 +51,7 @@ export default function CopySettingsCard({ targets, suggestedTo, fixedTo, onRequ
     <section id="copy-settings" className="hud-panel hud-accent scroll-mt-6 px-5 py-4">
       <Heading title="Copy Settings" help={t("設定のコピー")}>
         <p>
-          {t("パーソナルまたはほかのスペースの設定を、そのまま写します。モデル・音声・起動ワード・コマンド権限などが対象で、ナレッジ・会話は写しません。APIキー・読み上げ辞書は、選んだときだけ写します。パーソナルデータとスペースデータは写しません。コピー先の同じ設定は上書きされるため、コピーの前に確認します。")}
+          {t("パーソナルまたはほかのエージェントの設定を、そのまま写します。モデル・音声・起動ワード・コマンド権限などが対象で、ナレッジ・会話は写しません。APIキー・読み上げ辞書は、選んだときだけ写します。パーソナルデータとエージェントデータは写しません。コピー先の同じ設定は上書きされるため、コピーの前に確認します。")}
         </p>
       </Heading>
       <div className="flex flex-col gap-4">
@@ -65,7 +65,7 @@ export default function CopySettingsCard({ targets, suggestedTo, fixedTo, onRequ
           <ArrowRight className="size-4 text-muted-foreground" />
           {fixedTo !== undefined && to !== null ? (
             <span className="flex min-h-8 min-w-40 items-center rounded-lg border px-3 text-sm" aria-label={t("コピー先")}>
-              <SpaceChip name={targets.find((x) => x.id === to)?.name ?? ""} color={targets.find((x) => x.id === to)?.color ?? null} />
+              <AgentChip name={targets.find((x) => x.id === to)?.name ?? ""} color={targets.find((x) => x.id === to)?.color ?? null} />
             </span>
           ) : (
             <Select items={items(targets)} value={to} onValueChange={(v) => v && setPickedTo(v as string)}>

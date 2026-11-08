@@ -1,7 +1,7 @@
-import { PERSONAL_ID, type Space } from "@/lib/api";
+import { PERSONAL_ID, type Agent } from "@/lib/api";
 import { tr } from "@/lib/i18n";
 
-/** 設定のコピー元・コピー先に選べるワークスペース(パーソナルと各スペース)。 */
+/** 設定のコピー元・コピー先に選べるワークスペース(パーソナルと各エージェント)。 */
 export type CopyTarget = { id: string; name: string; color: string | null };
 
 /** 設定のコピーの依頼。`from`の設定を`to`へ写す。`to`の同じ項目は上書きされる。 */
@@ -14,7 +14,7 @@ export type CopyRequest = {
   includeDictionary: boolean;
 };
 
-export const copyTargets = (spaces: Space[]): CopyTarget[] => [
+export const copyTargets = (agents: Agent[]): CopyTarget[] => [
   { id: PERSONAL_ID, name: tr("パーソナル"), color: null },
-  ...spaces.map((s) => ({ id: s.id, name: s.name, color: s.color })),
+  ...agents.map((s) => ({ id: s.id, name: s.name, color: s.color })),
 ];

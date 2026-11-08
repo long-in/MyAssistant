@@ -6,7 +6,7 @@ import { Check } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AGENT_ATTENTION_EVENT, errorMessage, leaderOverview, leaderSetConfirmed, type LeaderTask } from "@/lib/api";
+import { TASK_ATTENTION_EVENT, errorMessage, leaderOverview, leaderSetConfirmed, type LeaderTask } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -46,7 +46,7 @@ export default function LeaderLedger({ active, className }: { active: boolean; c
     if (!active) return;
     const first = setTimeout(() => void refresh(), 0);
     const timer = setInterval(() => void refresh(), 3000);
-    const un = listen(AGENT_ATTENTION_EVENT, () => void refresh());
+    const un = listen(TASK_ATTENTION_EVENT, () => void refresh());
     return () => {
       clearTimeout(first);
       clearInterval(timer);
@@ -86,10 +86,10 @@ export default function LeaderLedger({ active, className }: { active: boolean; c
             <div className="mt-2 flex flex-col divide-y">
               {rows.map((r) => (
                 <div key={r.id} className="flex items-center gap-2 py-1.5 text-sm">
-                  <span className="size-3 shrink-0 rounded-full bg-muted" style={r.space_color ? { backgroundColor: r.space_color } : undefined} />
+                  <span className="size-3 shrink-0 rounded-full bg-muted" style={r.agent_color ? { backgroundColor: r.agent_color } : undefined} />
                   <span className="min-w-0 flex-1 truncate">
-                    {r.space_name}
-                    {!r.space_exists && <span className="ml-1 text-xs text-muted-foreground">{t("(削除済み)")}</span>}
+                    {r.agent_name}
+                    {!r.agent_exists && <span className="ml-1 text-xs text-muted-foreground">{t("(削除済み)")}</span>}
                   </span>
                   <StatusBadge status={r.live_status} />
                   <Button

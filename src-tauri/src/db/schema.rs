@@ -19,8 +19,8 @@ const BUSY_TIMEOUT_MS: u32 = 5_000;
 /// DBの役割。リーダーのDBだけが台帳を持つ。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
-    /// パーソナル・ワークのスペース。
-    Space,
+    /// パーソナル・ワークのエージェント。
+    Agent,
     /// リーダー。
     Leader,
 }
@@ -120,6 +120,11 @@ const MIGRATIONS: &[&str] = &[
           AND json_type(value, '$.upto_id') = 'text' AND json_type(value, '$.text') = 'text';
     DELETE FROM app_settings WHERE substr(key, 1, 8) = 'summary:';
     ",
+    // 版4: 「スペース」の「エージェント」への改称にともない、設定キー`space_data`を`agent_data`へ移す(新しいキーがあればそちらを優先)
+    "
+    UPDATE OR IGNORE app_settings SET key = 'agent_data' WHERE key = 'space_data';
+    DELETE FROM app_settings WHERE key = 'space_data';
+    ",
 ];
 
 /// 最新の版。
@@ -131,8 +136,8 @@ CREATE TABLE IF NOT EXISTS leader_tasks (
     id TEXT PRIMARY KEY,
     batch_id TEXT NOT NULL,
     instruction TEXT NOT NULL,
-    space_id TEXT NOT NULL,
-    space_name TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    agent_name TEXT NOT NULL,
     session_id TEXT NOT NULL,
     status TEXT NOT NULL,
     confirmed INTEGER NOT NULL DEFAULT 0,
@@ -155,9 +160,10 @@ pub fn prepare(conn: &mut Connection, path: Option<&Path>, role: Role) -> Result
     // 同じファイルを複数の接続で開くことがあるため、読み取りが書き込みを待たないWALにする(メモリ上のDBでは無視される)
     conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))?;
     migrate(conn, path, LATEST)?;
+    rename_legacy_ledger_columns(conn)?;
     match role {
         Role::Leader => conn.execute_batch(LEDGER)?,
-        Role::Space => drop_unused_ledger(conn)?,
+        Role::Agent => drop_unused_ledger(conn)?,
     }
     Ok(())
 }
@@ -198,6 +204,20 @@ fn backup(conn: &Connection, path: &Path, from: u32) -> Result<PathBuf, AppError
         .map_err(|e| AppError::Db(format!("backup before migration failed: {e}")))?;
     log::info!("database backed up before migration: {}", dest.display());
     Ok(dest)
+}
+
+/// 旧名(`space_id` / `space_name`)の台帳の列を、新名(`agent_id` / `agent_name`)へ改名する。行は残る。
+fn rename_legacy_ledger_columns(conn: &Connection) -> Result<(), AppError> {
+    if !table_exists(conn, "leader_tasks")? {
+        return Ok(());
+    }
+    for (old, new) in [("space_id", "agent_id"), ("space_name", "agent_name")] {
+        let has_old: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('leader_tasks') WHERE name = ?1)", [old], |r| r.get(0))?;
+        if has_old {
+            conn.execute_batch(&format!("ALTER TABLE leader_tasks RENAME COLUMN {old} TO {new};"))?;
+        }
+    }
+    Ok(())
 }
 
 /// リーダー以外のDBにある台帳を片付ける(以前は全DBに作っていた)。行があれば消さずに残す。
@@ -252,7 +272,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let path = d.path().join("timeline.db");
         let mut conn = Connection::open(&path).unwrap();
-        prepare(&mut conn, Some(&path), Role::Space).unwrap();
+        prepare(&mut conn, Some(&path), Role::Agent).unwrap();
         assert_eq!(version(&conn).unwrap(), LATEST);
         assert!(table_exists(&conn, "conversation_summaries").unwrap());
         assert!(!table_exists(&conn, "leader_tasks").unwrap());
@@ -263,7 +283,7 @@ mod tests {
     fn legacy_database_is_backed_up_and_migrated() {
         let (d, path) = legacy_file();
         let mut conn = Connection::open(&path).unwrap();
-        prepare(&mut conn, Some(&path), Role::Space).unwrap();
+        prepare(&mut conn, Some(&path), Role::Agent).unwrap();
         assert_eq!(version(&conn).unwrap(), LATEST);
 
         // 複製は元のまま(版0・要約は設定のまま)
@@ -312,7 +332,7 @@ mod tests {
         let (d, path) = legacy_file();
         for _ in 0..2 {
             let mut conn = Connection::open(&path).unwrap();
-            prepare(&mut conn, Some(&path), Role::Space).unwrap();
+            prepare(&mut conn, Some(&path), Role::Agent).unwrap();
         }
         let backups = std::fs::read_dir(d.path()).unwrap().filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().contains(".bak-")).count();
         assert_eq!(backups, 1);
@@ -323,25 +343,37 @@ mod tests {
         let (d, path) = legacy_file();
         std::fs::write(d.path().join("timeline.db.bak-v0"), b"older").unwrap();
         let mut conn = Connection::open(&path).unwrap();
-        prepare(&mut conn, Some(&path), Role::Space).unwrap();
+        prepare(&mut conn, Some(&path), Role::Agent).unwrap();
         assert_eq!(std::fs::read(d.path().join("timeline.db.bak-v0")).unwrap(), b"older");
         let backups = std::fs::read_dir(d.path()).unwrap().filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().starts_with("timeline.db.bak-v0-")).count();
         assert_eq!(backups, 1);
     }
 
     #[test]
-    fn leader_keeps_its_ledger_and_spaces_keep_one_with_rows() {
+    fn leader_keeps_its_ledger_and_agents_keep_one_with_rows() {
         let (_d, path) = legacy_file();
         let mut conn = Connection::open(&path).unwrap();
         prepare(&mut conn, Some(&path), Role::Leader).unwrap();
         assert!(table_exists(&conn, "leader_tasks").unwrap());
 
-        let mut space = Connection::open_in_memory().unwrap();
-        space.execute_batch(LEGACY).unwrap();
-        space
+        let mut agent = Connection::open_in_memory().unwrap();
+        agent.execute_batch(LEGACY).unwrap();
+        agent
             .execute_batch("INSERT INTO leader_tasks VALUES ('x','b','i','s','n','ss','done',0,'2026-01-01T00:00:00.000Z');")
             .unwrap();
-        prepare(&mut space, None, Role::Space).unwrap();
-        assert!(table_exists(&space, "leader_tasks").unwrap());
+        prepare(&mut agent, None, Role::Agent).unwrap();
+        assert!(table_exists(&agent, "leader_tasks").unwrap());
+    }
+
+    #[test]
+    fn legacy_ledger_columns_are_renamed_and_rows_kept() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(LEGACY).unwrap();
+        conn.execute_batch("INSERT INTO leader_tasks VALUES ('x','b','i','sid','名','ss','done',0,'2026-01-01T00:00:00.000Z');").unwrap();
+        prepare(&mut conn, None, Role::Leader).unwrap();
+        let (id, name): (String, String) = conn.query_row("SELECT agent_id, agent_name FROM leader_tasks WHERE id = 'x'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!((id.as_str(), name.as_str()), ("sid", "名"));
+        // 2回目は何もしない
+        prepare(&mut conn, None, Role::Leader).unwrap();
     }
 }

@@ -12,7 +12,7 @@ flowchart LR
   end
   subgraph BE["バックエンド (Rust / Tauri)"]
     CMD["commands/*<br/>Tauri コマンド"] --> SVC["services/*<br/>ロジック"]
-    SVC --> WS["Workspaces<br/>(パーソナル + スペース)"]
+    SVC --> WS["Workspaces<br/>(パーソナル + エージェント)"]
     WS --> DB[("timeline.db<br/>SQLite")]
     WS --> SEC["secrets.json"]
     WS --> KN[("ナレッジ<br/>Markdown")]
@@ -50,7 +50,7 @@ flowchart LR
 | 方式 | 用途 |
 | --- | --- |
 | `invoke` | 通常のコマンド呼び出し。すべて `lib/api.ts` に集約する |
-| `Channel<AgentEvent>` | `send_chat` の進捗(ツール呼び出し、承認要求、コマンド出力)を発話ごとに流す |
+| `Channel<TaskEvent>` | `send_chat` の進捗(ツール呼び出し、承認要求、コマンド出力)を発話ごとに流す |
 | イベント(`emit`) | ナレッジの更新通知(`knowledge-updated`)、ワークスペースの変更通知(`workspace-changed`) |
 
 エラーは `AppError`(`utils/error.rs`)を `{ code, message, source? }` にシリアライズして返す。フロントエンドは `code` で分岐し、`message` に API キーは含まれない。
@@ -59,7 +59,7 @@ flowchart LR
 
 | 型 | 役割 |
 | --- | --- |
-| `Workspaces` | ワークスペース(パーソナル + スペース)の一覧、読み込み済みの `WorkspaceCtx`、選択中の ID。別枠のリーダー(`leader()`。スペースの一覧には入らないが、選択・整理バッチの対象)も持つ |
+| `Workspaces` | ワークスペース(パーソナル + エージェント)の一覧、読み込み済みの `WorkspaceCtx`、選択中の ID。別枠のリーダー(`leader()`。エージェントの一覧には入らないが、選択・整理バッチの対象)も持つ |
 | `SessionContexts` | 会話ごとの訂正履歴の節のキャッシュ(セッション ID で識別) |
 | `GraphCache` | ナレッジのグラフ索引のキャッシュ(ルートのパスで識別。1 件分) |
 | `Recorder` | マイク録音 |
@@ -75,7 +75,7 @@ flowchart LR
 | `batch` | 整理バッチの多重実行防止 |
 | `debug` | デバッグログの出力先(ワークスペースごと) |
 | `agent` | 作業の依頼の実行状態(承認の応答口・中断・進捗と結果の記録)。切り替えても止まらない |
-| (削除の印) | 削除されたスペースを、裏の処理が確かめて止まるための印(`ensure_alive`) |
+| (削除の印) | 削除されたエージェントを、裏の処理が確かめて止まるための印(`ensure_alive`) |
 
 コマンドは引数 `ctx: Ctx` で選択中のワークスペースを受け取る。処理の途中で切り替わっても、受け取った `ctx` を使い続けるため、DB・キー・ナレッジが混ざらない。詳細は [workspace.md](workspace.md)。
 
@@ -85,8 +85,8 @@ flowchart LR
 sequenceDiagram
   participant App as アプリ
   participant Loop as 定期バッチ
-  App->>App: アプリデータ作成 → パーソナルの WorkspaceCtx(Db・secrets)を開く
-  App->>App: Workspaces を登録(スペース一覧 registry.json を読む)、デバッグログの出力先を決定
+  App->>App: アプリデータ作成 → 予約されたリストアがあれば差し替え(backup.md)→ パーソナルの WorkspaceCtx(Db・secrets)を開く
+  App->>App: Workspaces を登録(エージェント一覧 registry.json を読む)、デバッグログの出力先を決定
   App->>App: メニューバー(トレイ)を作成
   App->>Loop: 非同期タスクを起動
   loop 30秒ごとに見直し(各ワークスペースの間隔は既定30分)
@@ -97,7 +97,7 @@ sequenceDiagram
   App->>App: 終了
 ```
 
-- 定期バッチ(`services/scheduler.rs`)は、パーソナルと各スペースを、それぞれの設定の間隔で独立して動かす。30 秒ごとに見直し、前回から自分の間隔が過ぎたワークスペースだけを、ワークスペースごとの別タスクで実行する。遅い・失敗するワークスペースが他を待たせない。
+- 定期バッチ(`services/scheduler.rs`)は、パーソナルと各エージェントを、それぞれの設定の間隔で独立して動かす。30 秒ごとに見直し、前回から自分の間隔が過ぎたワークスペースだけを、ワークスペースごとの別タスクで実行する。遅い・失敗するワークスペースが他を待たせない。
 - 間隔の変更は、読み込み済みのワークスペースでは次の見直し(30 秒以内)に反映される。
-- 読み込んでいないスペースは、間隔を読むときと実行するときだけ一時的に開き、開いたままにしない。切り替えていないワークスペースの整理も止まらない。
+- 読み込んでいないエージェントは、間隔を読むときと実行するときだけ一時的に開き、開いたままにしない。切り替えていないワークスペースの整理も止まらない。
 - ウィンドウの閉じる操作は「隠す」に差し替える(メニューバー常駐、[frontend.md](frontend.md))。終了はトレイメニューの「終了」から行う。

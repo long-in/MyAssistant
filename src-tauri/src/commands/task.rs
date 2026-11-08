@@ -5,8 +5,8 @@ use tauri::{AppHandle, State, ipc::Channel};
 
 use crate::{
     services::{
-        agent::{self, AgentEvent, AgentOutcome, Env},
-        agent_run::RunSnapshot,
+        tool_loop::{self, TaskEvent, TaskOutcome, Env},
+        task_run::RunSnapshot,
         attention::{self, AttentionKind},
         cancel::CancelToken,
         leader, llm_client,
@@ -49,7 +49,7 @@ async fn wait_for_answer(
 /// `history`は直前までの会話(`user`/`assistant`のテキスト)で、今回の発話は`user_text`で渡す。
 /// `web_access`が有効なときは、インターネット検索・ページ取得(サーバーツール)も渡す。Bedrockでは使えない。
 /// `shell_access`が有効なときは、作業計画の提示とシェルコマンドの実行も渡す。
-/// 進捗(ツール呼び出し・承認要求・コマンド出力)は`on_event`へ流す。実行中は`agent_cancel`で中断できる。
+/// 進捗(ツール呼び出し・承認要求・コマンド出力)は`on_event`へ流す。実行中は`task_cancel`で中断できる。
 /// `is_foreground`は、このワークスペースを選んでいるかどうか。承認待ちの時間切れを数えるかどうかを決める。
 pub async fn run_with_tools(
     ctx: &WorkspaceCtx,
@@ -59,37 +59,37 @@ pub async fn run_with_tools(
     system: &str,
     web_access: Option<(u32, u32)>,
     shell_access: bool,
-    host: Option<agent::ToolHost<'_>>,
+    host: Option<tool_loop::ToolHost<'_>>,
     mut history: Vec<Value>,
     user_text: &str,
-    on_event: &(impl Fn(AgentEvent) + Sync),
+    on_event: &(impl Fn(TaskEvent) + Sync),
     on_usage: impl Fn(u64, u64),
     is_foreground: impl Fn() -> bool,
-) -> Result<AgentOutcome, AppError> {
-    let state = &ctx.shared.agent;
+) -> Result<TaskOutcome, AppError> {
+    let state = &ctx.shared.task;
     std::fs::create_dir_all(root).map_err(|e| AppError::Io(e.to_string()))?;
     // リーダーは、ファイル・コマンド・Webに代えて、台帳の参照と配布の下書きのツールだけを使う
     let leader = host.is_some();
     let (mut system, mut tools) = if leader {
         (format!("{system}\n\n{}", leader::TOOL_GUIDE), leader::tool_definitions())
     } else {
-        (format!("{system}\n\n{}", agent::TOOL_GUIDE), agent::tool_definitions(shell_access))
+        (format!("{system}\n\n{}", tool_loop::TOOL_GUIDE), tool_loop::tool_definitions(shell_access))
     };
     let (shell_access, web_access) = if leader { (false, None) } else { (shell_access, web_access) };
     if shell_access {
-        system.push_str(&format!("\n\n{}", agent::shell_guide()));
+        system.push_str(&format!("\n\n{}", tool_loop::shell_guide()));
     }
     // 検索・ページ取得はAnthropicのサーバーツールで、Bedrockには無い
     if let Some((search_max, fetch_max)) = web_access.filter(|_| provider == Provider::Anthropic) {
-        system.push_str(&format!("\n\n{}", agent::WEB_GUIDE));
-        tools.extend(agent::web_tool_definitions(search_max, fetch_max));
+        system.push_str(&format!("\n\n{}", tool_loop::WEB_GUIDE));
+        tools.extend(tool_loop::web_tool_definitions(search_max, fetch_max));
     }
     let (system, tools) = (&system, &tools);
     let cancel = CancelToken::default();
     state.set_cancel(cancel.clone());
     let env = Env::new(root).with_cancel(cancel.clone()).with_shell(shell_access).with_host(host);
     let is_foreground = &is_foreground;
-    let result = agent::run(
+    let result = tool_loop::run(
         &env,
         &mut history,
         user_text,
@@ -121,35 +121,35 @@ pub async fn run_with_tools(
 
 /// 承認への応答。待っていない`id`は無視する。
 #[tauri::command]
-pub fn agent_approve(ctx: Ctx, id: String, approved: bool) {
-    ctx.shared.agent.answer(&id, approved);
+pub fn task_approve(ctx: Ctx, id: String, approved: bool) {
+    ctx.shared.task.answer(&id, approved);
 }
 
 /// 実行中の依頼を中断する。動いているコマンドは強制終了し、承認待ちは拒否として扱う。実行中でなければ何もしない。
 #[tauri::command]
-pub fn agent_cancel(ctx: Ctx) {
-    ctx.shared.agent.cancel();
+pub fn task_cancel(ctx: Ctx) {
+    ctx.shared.task.cancel();
 }
 
 /// 切り替えから戻った画面が、そのワークスペースの依頼の状況を受け取り、続きの進捗を受ける接続を張り直す。
 /// 実行中なら以降の進捗と結果が`on_event`へ流れ、承認待ちがあれば`pending`で返る。裏で完了していた結果は`finished`で返る。
 #[tauri::command]
-pub fn agent_resume(
+pub fn task_resume(
     ws: State<'_, Workspaces>,
     workspace_id: String,
-    on_event: Channel<AgentEvent>,
+    on_event: Channel<TaskEvent>,
 ) -> Result<RunSnapshot, AppError> {
     let ctx = ws.resolve(&workspace_id)?;
-    Ok(ctx.shared.agent.snapshot_and_attach(on_event))
+    Ok(ctx.shared.task.snapshot_and_attach(on_event))
 }
 
 /// 画面がワークスペースを離れた。以降の進捗は記録だけにして、依頼は止めない。
 #[tauri::command]
-pub fn agent_detach(app: AppHandle, ws: State<'_, Workspaces>, workspace_id: String) {
+pub fn task_detach(app: AppHandle, ws: State<'_, Workspaces>, workspace_id: String) {
     if let Ok(ctx) = ws.resolve(&workspace_id) {
-        ctx.shared.agent.detach();
-        // 承認待ちのまま別のスペースへ移った: 対応が必要なことを、改めて知らせる
-        if let Some(a) = ctx.shared.agent.pending_approval()
+        ctx.shared.task.detach();
+        // 承認待ちのまま別のエージェントへ移った: 対応が必要なことを、改めて知らせる
+        if let Some(a) = ctx.shared.task.pending_approval()
             && attention::is_background(&app, &workspace_id)
         {
             attention::notify(&app, &workspace_id, AttentionKind::Approval, Some(&a), None);

@@ -1,18 +1,18 @@
-//! 開いていないスペースで、対応が必要になったことを画面へ知らせる。
+//! 開いていないエージェントで、対応が必要になったことを画面へ知らせる。
 //!
 //! 依頼が完了・失敗したとき、承認が必要になったときに、選択中ではないワークスペースのものなら、
-//! 全体のイベント(`ATTENTION_EVENT`)で通知する。画面はトーストで示し、そこから、そのスペースを開ける。
+//! 全体のイベント(`ATTENTION_EVENT`)で通知する。画面はトーストで示し、そこから、そのエージェントを開ける。
 use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::{
-    agent::{Approval, ApprovalKind},
+    tool_loop::{Approval, ApprovalKind},
     workspace::{Workspaces, active},
 };
 
 /// 対応が必要になったことを知らせるイベント名。ペイロードは`Attention`。
-pub const ATTENTION_EVENT: &str = "agent-attention";
+pub const ATTENTION_EVENT: &str = "task-attention";
 
 /// 詳細として載せる文字数の上限。
 const DETAIL_MAX_CHARS: usize = 120;
@@ -30,9 +30,9 @@ pub enum AttentionKind {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Attention {
-    /// 対象のワークスペース(`personal`またはスペースID)。
+    /// 対象のワークスペース(`personal`またはエージェントID)。
     pub workspace_id: String,
-    /// スペースの名称とイメージカラー(パーソナルは`None`)。
+    /// エージェントの名称とイメージカラー(パーソナルは`None`)。
     pub workspace_name: Option<String>,
     pub workspace_color: Option<String>,
     pub kind: AttentionKind,

@@ -44,8 +44,8 @@ async fn read_json(ctx: &WorkspaceCtx, api: &str, url: &str, request: &Value, re
 }
 
 /// エージェント用の上限。ツール結果を挟むため通常の対話より長く待つ。
-const AGENT_MAX_TOKENS: u32 = 8192;
-const AGENT_TIMEOUT: Duration = Duration::from_secs(120);
+const TASK_MAX_TOKENS: u32 = 8192;
+const TASK_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// ツール使用付きの1回分の応答。`content`はthinking等を含む生のブロックで、
 /// 次のリクエストへそのまま`assistant`メッセージとして戻す必要がある。
@@ -113,18 +113,18 @@ pub async fn complete_with_tools(
     async {
         let request = json!({
             "model": model,
-            "max_tokens": AGENT_MAX_TOKENS,
+            "max_tokens": TASK_MAX_TOKENS,
             "system": system,
             "messages": messages,
             "tools": tools,
         });
         let body = match provider {
-            Provider::Bedrock => invoke_bedrock(ctx, model, &request, AGENT_TIMEOUT).await?,
+            Provider::Bedrock => invoke_bedrock(ctx, model, &request, TASK_TIMEOUT).await?,
             _ => {
                 let key = ctx.secrets.get_key(provider)?
                     .ok_or_else(|| AppError::KeyMissing(provider.as_str().to_owned()))?;
                 let client = reqwest::Client::builder()
-                    .timeout(AGENT_TIMEOUT)
+                    .timeout(TASK_TIMEOUT)
                     .build()
                     .map_err(|_| AppError::Network)?;
                 let url = "https://api.anthropic.com/v1/messages";

@@ -4,25 +4,25 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { SPACE_NOTE_MAX_CHARS, errorMessage, type SpaceNote } from "@/lib/api";
+import { AGENT_NOTE_MAX_CHARS, errorMessage, type AgentNote } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 
 type Props = {
-  load: () => Promise<SpaceNote>;
-  save: (note: SpaceNote) => Promise<SpaceNote>;
+  load: () => Promise<AgentNote>;
+  save: (note: AgentNote) => Promise<AgentNote>;
   /** 入力欄とスイッチの読み上げ用の名前。 */
   label: string;
   placeholder: string;
 };
 
 /**
- * スペースデータ・共通データの編集欄。スイッチは切り替えた時点で、本文は入力欄を離れたときに保存する。
+ * エージェントデータ・共通データの編集欄。スイッチは切り替えた時点で、本文は入力欄を離れたときに保存する。
  * 無効の間は、入力済みでもAIへ何も渡さない。
  */
 export default function NotePanel({ load, save, label, placeholder }: Props) {
   const t = useT();
-  const [saved, setSaved] = useState<SpaceNote | null>(null);
-  const [value, setValue] = useState<SpaceNote | null>(null);
+  const [saved, setSaved] = useState<AgentNote | null>(null);
+  const [value, setValue] = useState<AgentNote | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -36,7 +36,7 @@ export default function NotePanel({ load, save, label, placeholder }: Props) {
 
   if (!value || !saved) return null;
 
-  const commit = async (next: SpaceNote) => {
+  const commit = async (next: AgentNote) => {
     setBusy(true);
     try {
       const n = await save(next);
@@ -69,13 +69,13 @@ export default function NotePanel({ load, save, label, placeholder }: Props) {
         rows={6}
         value={value.text}
         placeholder={placeholder}
-        maxLength={SPACE_NOTE_MAX_CHARS}
+        maxLength={AGENT_NOTE_MAX_CHARS}
         onChange={(e) => setValue({ ...value, text: e.target.value })}
         onBlur={() => value.text !== saved.text && !busy && void commit(value)}
         aria-label={label}
       />
       <p className="text-right text-xs text-muted-foreground">
-        {Array.from(value.text).length} / {SPACE_NOTE_MAX_CHARS}
+        {Array.from(value.text).length} / {AGENT_NOTE_MAX_CHARS}
       </p>
     </div>
   );
