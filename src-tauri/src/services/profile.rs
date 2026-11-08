@@ -1,12 +1,12 @@
 //! ユーザー本人の基本情報(パーソナルデータ)。設定ページから手動で入力した内容だけを保持し、会話からは抽出しない。
-//! `app_settings`にJSONで保存し、有効なときだけシステムプロンプトへ`<user_profile>`として渡す。
+//! 全体設定(`global_settings.json`)にJSONで保存し、有効なときだけシステムプロンプトへ`<user_profile>`として渡す。
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
 use super::global_settings::SettingsStore;
 use crate::utils::error::AppError;
 #[cfg(test)]
-use crate::db::Db;
+use super::global_settings::GlobalStore;
 
 pub const KEY: &str = "user_profile";
 
@@ -165,10 +165,10 @@ mod tests {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
     }
 
-    fn mem() -> (tempfile::TempDir, Db) {
+    fn mem() -> (tempfile::TempDir, GlobalStore) {
         let dir = tempfile::tempdir().unwrap();
-        let db = Db::open(&dir.path().join("t.db")).unwrap();
-        (dir, db)
+        let store = GlobalStore::open(dir.path());
+        (dir, store)
     }
 
     fn full() -> UserProfile {

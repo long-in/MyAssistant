@@ -946,6 +946,9 @@ mod tests {
         for c in [
             "cat ~/Library/Application\\ Support/app/secrets.json",
             "cat '/x/timeline.db'",
+            // WALのファイルと、マイグレーション前の複製も同じ名前で始まるので守られる
+            "cp /x/timeline.db-wal /tmp/",
+            "sqlite3 /x/timeline.db.bak-v0 .dump",
             "ls | xargs cat secrets.json",
             "cat ~/Library/Application\\ Support/*/sec*",
         ] {

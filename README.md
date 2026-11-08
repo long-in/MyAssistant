@@ -196,7 +196,7 @@ npm run tauri build
 
 | パス | 内容 |
 | --- | --- |
-| `timeline.db` | SQLite。会話ログ・使用量・アプリ設定 |
+| `timeline.db` | SQLite。会話ログ・要約・使用量・アプリ設定(起動時に自動でマイグレーションし、その前に `timeline.db.bak-v<版>` を残す) |
 | `secrets.json` | API キー。**平文 JSON**(権限 0600)。OS のキーチェーンは使っていません |
 | `workspaces/` | ワークのスペース。`registry.json`(一覧)と、スペースごとの `<UUID>/`(`timeline.db`・`secrets.json`・`knowledge/` などをパーソナルと同じ構成で持つ) |
 | `models/` | Whisper モデル |

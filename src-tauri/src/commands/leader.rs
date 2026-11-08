@@ -142,7 +142,7 @@ pub fn leader_dispatch(app: AppHandle, ws: State<'_, Workspaces>, text: String, 
     let running = leader::count_active(&leader.db.ledger_list(leader::LEDGER_LIMIT)?, |id| (ws.run_status(id), ws.run_session(id)));
     let mut slots = limit.saturating_sub(running);
     let batch_id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let now = crate::db::now();
     let mut results = Vec::new();
     for id in ids {
         let Some(space) = spaces.iter().find(|s| s.id == id).filter(|_| id != PERSONAL_ID) else {

@@ -1,413 +1,55 @@
-//! SQLite(timeline.db): 時系列の一次ログとアプリ設定。
+//! SQLite(timeline.db): 時系列の一次ログ・要約・使用量・アプリ設定と、リーダーの台帳。
+//!
+//! 表ごとの読み書きは下位のモジュールに分け、どれも`Db`のメソッドとして使う。スキーマと版の管理は`schema`。
 use std::{path::Path, sync::Mutex};
 
-use rusqlite::{Connection, params};
-use serde::Serialize;
+use rusqlite::Connection;
 
 use crate::utils::error::AppError;
 
-const SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS conversation_logs (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    role TEXT NOT NULL,
-    content TEXT NOT NULL,
-    provider TEXT,
-    model TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    is_processed BOOLEAN DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_logs_session ON conversation_logs(session_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_logs_unprocessed ON conversation_logs(is_processed);
-CREATE TABLE IF NOT EXISTS usage_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    provider TEXT NOT NULL,
-    model TEXT NOT NULL,
-    input_tokens INTEGER NOT NULL,
-    output_tokens INTEGER NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS app_settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS leader_tasks (
-    id TEXT PRIMARY KEY,
-    batch_id TEXT NOT NULL,
-    instruction TEXT NOT NULL,
-    space_id TEXT NOT NULL,
-    space_name TEXT NOT NULL,
-    session_id TEXT NOT NULL,
-    status TEXT NOT NULL,
-    confirmed BOOLEAN NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_leader_tasks_created ON leader_tasks(created_at);
-";
+mod ledger;
+mod logs;
+pub mod schema;
+mod settings;
+mod summaries;
+mod usage;
+
+pub use ledger::LedgerRow;
+pub use logs::{LogRow, PendingLog};
+pub use schema::Role;
+pub use summaries::Summary;
+pub use usage::UsageRow;
 
 pub struct Db(Mutex<Connection>);
 
-#[derive(Debug, Clone, Serialize)]
-pub struct LogRow {
-    pub id: String,
-    pub role: String,
-    pub content: String,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct UsageRow {
-    pub provider: String,
-    pub model: String,
-    pub requests: u64,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-}
-
-/// リーダーの台帳の1行(1回の配布の、1つの宛先)。リーダーのDBにだけ使う。
-/// 宛先の名称は、スペースが削除されても残せるよう控えておく。結果の本文は持たない。
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct LedgerRow {
-    pub id: String,
-    /// 同じ配布(同時に複数の宛先へ送ったもの)をまとめるID。
-    pub batch_id: String,
-    pub instruction: String,
-    pub space_id: String,
-    pub space_name: String,
-    pub session_id: String,
-    /// 最後に分かった状態(`running` / `done` / `failed` / `interrupted`)。承認待ちは実行中の一時状態なので保存しない。
-    pub status: String,
-    pub confirmed: bool,
-    pub created_at: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct PendingLog {
-    pub id: String,
-    pub session_id: String,
-    pub role: String,
-    pub content: String,
-    pub created_at: String,
+/// いまの日時(DBに保存する形式: UTC、ミリ秒、`Z`付きのRFC3339)。SQLの既定値(`schema::NOW_SQL`)と同じ形にする。
+pub fn now() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 impl Db {
+    /// テスト用: パーソナル・スペースのDBとして開く。アプリは役割を決めて`open_as`で開く。
+    #[cfg(test)]
     pub fn open(path: &Path) -> Result<Self, AppError> {
-        Self::init(Connection::open(path)?)
+        Self::open_as(path, Role::Space)
     }
 
-    fn init(conn: Connection) -> Result<Self, AppError> {
-        conn.execute_batch(SCHEMA)?;
+    /// 役割を指定して開く(無ければ作る)。未適用のマイグレーションがあれば当てる。リーダーのDBだけが台帳を持つ。
+    pub fn open_as(path: &Path, role: Role) -> Result<Self, AppError> {
+        let mut conn = Connection::open(path)?;
+        schema::prepare(&mut conn, Some(path), role)?;
         Ok(Self(Mutex::new(conn)))
     }
 
+    #[cfg(test)]
+    pub(crate) fn open_in_memory(role: Role) -> Self {
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema::prepare(&mut conn, None, role).unwrap();
+        Self(Mutex::new(conn))
+    }
+
+    /// 接続。ロックが毒されても(パニック後)中身を使い続ける。
     fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.0.lock().unwrap_or_else(|p| p.into_inner())
-    }
-
-    /// 保存した行のIDを返す。
-    pub fn insert_log(
-        &self,
-        session_id: &str,
-        role: &str,
-        content: &str,
-        provider: Option<&str>,
-        model: Option<&str>,
-    ) -> Result<String, AppError> {
-        let id = uuid::Uuid::new_v4().to_string();
-        self.conn().execute(
-            "INSERT INTO conversation_logs (id, session_id, role, content, provider, model)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id, session_id, role, content, provider, model],
-        )?;
-        Ok(id)
-    }
-
-    /// セッションの直近`limit`件を時系列順で返す(user/assistantのみ)。
-    /// セッションの全メッセージを古い順に返す(要約の対象を決めるため)。
-    pub fn session_messages(&self, session_id: &str) -> Result<Vec<LogRow>, AppError> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT id, role, content FROM conversation_logs
-             WHERE session_id = ?1 AND role IN ('user', 'assistant')
-             ORDER BY created_at ASC, rowid ASC",
-        )?;
-        let rows = stmt
-            .query_map(params![session_id], |r| Ok(LogRow { id: r.get(0)?, role: r.get(1)?, content: r.get(2)? }))?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
-    }
-
-    pub fn recent_messages(&self, session_id: &str, limit: u32) -> Result<Vec<LogRow>, AppError> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT id, role, content FROM (
-                SELECT id, role, content, created_at, rowid FROM conversation_logs
-                WHERE session_id = ?1 AND role IN ('user', 'assistant')
-                ORDER BY created_at DESC, rowid DESC LIMIT ?2
-             ) ORDER BY created_at ASC, rowid ASC",
-        )?;
-        let rows = stmt
-            .query_map(params![session_id, limit], |r| {
-                Ok(LogRow { id: r.get(0)?, role: r.get(1)?, content: r.get(2)? })
-            })?
-            .collect::<Result<_, _>>()?;
-        Ok(rows)
-    }
-
-    /// 未処理ログをセッション・時系列順で返す。
-    pub fn unprocessed(&self, limit: u32) -> Result<Vec<PendingLog>, AppError> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, content, created_at FROM conversation_logs
-             WHERE is_processed = 0 ORDER BY session_id, created_at, rowid LIMIT ?1",
-        )?;
-        let rows = stmt
-            .query_map([limit], |r| {
-                Ok(PendingLog {
-                    id: r.get(0)?,
-                    session_id: r.get(1)?,
-                    role: r.get(2)?,
-                    content: r.get(3)?,
-                    created_at: r.get(4)?,
-                })
-            })?
-            .collect::<Result<_, _>>()?;
-        Ok(rows)
-    }
-
-    /// 指定セッションに未処理ログが残っているか。
-    pub fn has_unprocessed(&self, session_id: &str) -> Result<bool, AppError> {
-        Ok(self.conn().query_row(
-            "SELECT EXISTS(SELECT 1 FROM conversation_logs WHERE session_id = ?1 AND is_processed = 0)",
-            [session_id],
-            |r| r.get(0),
-        )?)
-    }
-
-    /// LLM呼び出し1回分のトークン使用量を記録する。
-    pub fn record_usage(&self, provider: &str, model: &str, input: u64, output: u64) -> Result<(), AppError> {
-        self.conn().execute(
-            "INSERT INTO usage_logs (provider, model, input_tokens, output_tokens) VALUES (?1, ?2, ?3, ?4)",
-            params![provider, model, input as i64, output as i64],
-        )?;
-        Ok(())
-    }
-
-    /// 当月(ローカル時間)のプロバイダー・モデル別使用量。
-    pub fn usage_this_month(&self) -> Result<Vec<UsageRow>, AppError> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT provider, model, COUNT(*), SUM(input_tokens), SUM(output_tokens) FROM usage_logs
-             WHERE strftime('%Y-%m', created_at, 'localtime') = strftime('%Y-%m', 'now', 'localtime')
-             GROUP BY provider, model ORDER BY provider, model",
-        )?;
-        let rows = stmt
-            .query_map([], |r| {
-                Ok(UsageRow {
-                    provider: r.get(0)?,
-                    model: r.get(1)?,
-                    requests: r.get::<_, i64>(2)? as u64,
-                    input_tokens: r.get::<_, i64>(3)? as u64,
-                    output_tokens: r.get::<_, i64>(4)? as u64,
-                })
-            })?
-            .collect::<Result<_, _>>()?;
-        Ok(rows)
-    }
-
-    pub fn mark_processed(&self, ids: &[String]) -> Result<(), AppError> {
-        let mut conn = self.conn();
-        let tx = conn.transaction()?;
-        for id in ids {
-            tx.execute("UPDATE conversation_logs SET is_processed = 1 WHERE id = ?1", [id])?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
-    /// 複数の設定を1つのトランザクションで書く。途中で失敗したら、どれも書かれない。
-    pub fn set_settings(&self, items: &[(&str, &str)]) -> Result<(), AppError> {
-        let mut conn = self.conn();
-        let tx = conn.transaction()?;
-        for (key, value) in items {
-            tx.execute(
-                "INSERT INTO app_settings (key, value) VALUES (?1, ?2)
-                 ON CONFLICT(key) DO UPDATE SET value = ?2, updated_at = CURRENT_TIMESTAMP",
-                params![key, value],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
-    /// テスト用: 設定の書き込みだけを失敗させる(読み取りはできる)。
-    #[cfg(test)]
-    pub fn break_settings_for_test(&self) {
-        self.conn()
-            .execute_batch("CREATE TRIGGER fail_writes BEFORE INSERT ON app_settings BEGIN SELECT RAISE(ABORT, 'broken'); END;")
-            .unwrap();
-    }
-
-    pub fn get_setting(&self, key: &str) -> Result<Option<String>, AppError> {
-        match self.conn().query_row(
-            "SELECT value FROM app_settings WHERE key = ?1",
-            [key],
-            |r| r.get(0),
-        ) {
-            Ok(v) => Ok(Some(v)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    pub fn set_setting(&self, key: &str, value: &str) -> Result<(), AppError> {
-        self.conn().execute(
-            "INSERT INTO app_settings (key, value) VALUES (?1, ?2)
-             ON CONFLICT(key) DO UPDATE SET value = ?2, updated_at = CURRENT_TIMESTAMP",
-            params![key, value],
-        )?;
-        Ok(())
-    }
-
-    // ---- リーダーの台帳 ----
-
-    pub fn ledger_insert(&self, row: &LedgerRow) -> Result<(), AppError> {
-        self.conn().execute(
-            "INSERT INTO leader_tasks (id, batch_id, instruction, space_id, space_name, session_id, status, confirmed, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![row.id, row.batch_id, row.instruction, row.space_id, row.space_name, row.session_id, row.status, row.confirmed, row.created_at],
-        )?;
-        Ok(())
-    }
-
-    pub fn ledger_delete(&self, id: &str) -> Result<(), AppError> {
-        self.conn().execute("DELETE FROM leader_tasks WHERE id = ?1", [id])?;
-        Ok(())
-    }
-
-    /// 新しい順に`limit`件。
-    pub fn ledger_list(&self, limit: u32) -> Result<Vec<LedgerRow>, AppError> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT id, batch_id, instruction, space_id, space_name, session_id, status, confirmed, created_at
-             FROM leader_tasks ORDER BY created_at DESC, rowid DESC LIMIT ?1",
-        )?;
-        let rows = stmt
-            .query_map([limit], |r| {
-                Ok(LedgerRow {
-                    id: r.get(0)?,
-                    batch_id: r.get(1)?,
-                    instruction: r.get(2)?,
-                    space_id: r.get(3)?,
-                    space_name: r.get(4)?,
-                    session_id: r.get(5)?,
-                    status: r.get(6)?,
-                    confirmed: r.get(7)?,
-                    created_at: r.get(8)?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
-    }
-
-    /// セッションの依頼の状態を更新する(依頼が終わったとき)。
-    pub fn ledger_set_status_by_session(&self, session_id: &str, status: &str) -> Result<(), AppError> {
-        self.conn().execute("UPDATE leader_tasks SET status = ?2 WHERE session_id = ?1", params![session_id, status])?;
-        Ok(())
-    }
-
-    pub fn ledger_set_status(&self, id: &str, status: &str) -> Result<(), AppError> {
-        self.conn().execute("UPDATE leader_tasks SET status = ?2 WHERE id = ?1", params![id, status])?;
-        Ok(())
-    }
-
-    pub fn ledger_set_confirmed(&self, id: &str, confirmed: bool) -> Result<(), AppError> {
-        self.conn().execute("UPDATE leader_tasks SET confirmed = ?2 WHERE id = ?1", params![id, confirmed])?;
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn mem() -> Db {
-        Db::init(Connection::open_in_memory().unwrap()).unwrap()
-    }
-
-    #[test]
-    fn logs_roundtrip_in_order_and_unprocessed() {
-        let db = mem();
-        db.insert_log("s", "user", "hi", None, None).unwrap();
-        db.insert_log("s", "assistant", "hello", Some("anthropic"), Some("claude-sonnet-5-5")).unwrap();
-        db.insert_log("other", "user", "x", None, None).unwrap();
-        let rows = db.recent_messages("s", 10).unwrap();
-        assert_eq!(rows.iter().map(|r| r.content.as_str()).collect::<Vec<_>>(), ["hi", "hello"]);
-        let n: i64 = db
-            .conn()
-            .query_row("SELECT COUNT(*) FROM conversation_logs WHERE is_processed = 0", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(n, 3);
-    }
-
-    #[test]
-    fn recent_limit_keeps_latest() {
-        let db = mem();
-        for i in 0..5 {
-            db.insert_log("s", "user", &i.to_string(), None, None).unwrap();
-        }
-        let rows = db.recent_messages("s", 2).unwrap();
-        assert_eq!(rows.iter().map(|r| r.content.as_str()).collect::<Vec<_>>(), ["3", "4"]);
-    }
-
-    #[test]
-    fn unprocessed_and_mark() {
-        let db = mem();
-        let a = db.insert_log("s", "user", "a", None, None).unwrap();
-        let b = db.insert_log("s", "assistant", "b", None, None).unwrap();
-        assert_eq!(db.unprocessed(10).unwrap().len(), 2);
-        db.mark_processed(&[a]).unwrap();
-        let rest = db.unprocessed(10).unwrap();
-        assert_eq!(rest.len(), 1);
-        assert_eq!(rest[0].id, b);
-    }
-
-    fn row(id: &str, session: &str, created: &str) -> LedgerRow {
-        LedgerRow {
-            id: id.into(),
-            batch_id: "b".into(),
-            instruction: "調べて".into(),
-            space_id: "s1".into(),
-            space_name: "調査".into(),
-            session_id: session.into(),
-            status: "running".into(),
-            confirmed: false,
-            created_at: created.into(),
-        }
-    }
-
-    #[test]
-    fn ledger_roundtrip_status_and_confirm() {
-        let db = mem();
-        db.ledger_insert(&row("a", "sa", "2026-01-01T00:00:00Z")).unwrap();
-        db.ledger_insert(&row("b", "sb", "2026-01-02T00:00:00Z")).unwrap();
-        let rows = db.ledger_list(10).unwrap();
-        assert_eq!(rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["b", "a"]); // 新しい順
-        db.ledger_set_status_by_session("sa", "done").unwrap();
-        db.ledger_set_confirmed("a", true).unwrap();
-        let a = db.ledger_list(10).unwrap().into_iter().find(|r| r.id == "a").unwrap();
-        assert_eq!((a.status.as_str(), a.confirmed), ("done", true));
-        assert_eq!(db.ledger_list(1).unwrap().len(), 1);
-        db.ledger_delete("a").unwrap();
-        assert_eq!(db.ledger_list(10).unwrap().len(), 1);
-    }
-
-    #[test]
-    fn settings_upsert() {
-        let db = mem();
-        assert_eq!(db.get_setting("k").unwrap(), None);
-        db.set_setting("k", "1").unwrap();
-        db.set_setting("k", "2").unwrap();
-        assert_eq!(db.get_setting("k").unwrap().as_deref(), Some("2"));
     }
 }

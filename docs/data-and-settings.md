@@ -8,7 +8,7 @@
 
 | パス | 内容 |
 | --- | --- |
-| `timeline.db` | SQLite。会話ログ・使用量・アプリ設定 |
+| `timeline.db` | SQLite。会話ログ・要約・使用量・アプリ設定(リーダーは台帳も)。WAL の `timeline.db-wal` / `-shm` と、マイグレーション前の複製 `timeline.db.bak-v<版>` が並ぶことがある |
 | `secrets.json` | API キー。**平文 JSON**(権限 0600)。OS のキーチェーンは使っていない([security.md](security.md)) |
 | `models/` | Whisper モデル(`ggml-large-v3-turbo-q5_0.bin` / `ggml-small.bin`) |
 | `voice/` | 定型音声(`<id>-<ハッシュ>.mp3` / `.wav`。声ごとに別ファイル) |
@@ -20,10 +20,13 @@
 
 旧名(識別子 `dev.longin.tachicoma-agent`)のフォルダがあり新しいフォルダが無ければ、起動時に丸ごと改名して引き継ぐ(`services/legacy_data.rs`)。ナレッジ内の旧 `.tachicoma/` もコマンド権限の読み書き時に `.my-assistant/` へ改名する。旧名の設定ファイルも取り込める。
 
-## SQLite スキーマ(`db/mod.rs`)
+## SQLite スキーマ(`db/`)
+
+表ごとの読み書きは `db/{logs,summaries,usage,settings,ledger}.rs`、スキーマと版の管理は `db/schema.rs` に分けている。
 
 ```mermaid
 erDiagram
+  conversation_logs ||--o| conversation_summaries : "session_id"
   conversation_logs {
     TEXT id PK
     TEXT session_id
@@ -31,8 +34,14 @@ erDiagram
     TEXT content
     TEXT provider
     TEXT model
-    DATETIME created_at
-    BOOLEAN is_processed
+    TEXT created_at
+    INTEGER is_processed
+  }
+  conversation_summaries {
+    TEXT session_id PK
+    TEXT upto_id "conversation_logs.id"
+    TEXT text
+    TEXT updated_at
   }
   usage_logs {
     INTEGER id PK
@@ -40,23 +49,53 @@ erDiagram
     TEXT model
     INTEGER input_tokens
     INTEGER output_tokens
-    DATETIME created_at
+    TEXT created_at
   }
   app_settings {
     TEXT key PK
     TEXT value
-    DATETIME updated_at
+    TEXT updated_at
+  }
+  leader_tasks {
+    TEXT id PK
+    TEXT batch_id
+    TEXT instruction
+    TEXT space_id
+    TEXT space_name
+    TEXT session_id
+    TEXT status
+    INTEGER confirmed
+    TEXT created_at
   }
 ```
 
 | テーブル | 役割 | 主な操作 |
 | --- | --- | --- |
 | `conversation_logs` | 会話の一次ログ(時系列)。インデックスは `(session_id, created_at)` と `is_processed` | 保存、直近 N 件・全件の取得、未処理の取得、処理済みにする |
-| `usage_logs` | LLM 呼び出しごとのトークン使用量 | 記録、当月(ローカル時間)のプロバイダー・モデル別集計 |
-| `app_settings` | キー・値の設定(値は文字列。構造のあるものは JSON) | 取得、upsert |
+| `conversation_summaries` | 会話(セッション)ごとの要約。どこまで畳み込んだか(`upto_id`)と本文([chat-flow.md](chat-flow.md)) | 取得、upsert |
+| `usage_logs` | LLM 呼び出しごとのトークン使用量。インデックスは `created_at` | 記録、当月(ローカル時間)のプロバイダー・モデル別集計 |
+| `app_settings` | スペースごとのキー・値の設定(値は文字列。構造のあるものは JSON) | 取得、upsert、削除 |
+| `leader_tasks` | リーダーの台帳。**リーダーのDBにだけある**([workspace.md](workspace.md)) | 追加、一覧、状態・確認済みの更新 |
 
 - `conversation_logs.is_processed`: 整理バッチがナレッジへ反映したかどうか([knowledge.md](knowledge.md))。
-- 接続は `Mutex<Connection>`。ロックが毒されても(パニック後)中身を使い続ける。
+- **日時**はすべて UTC・ミリ秒・`Z` 付きの RFC3339(例 `2026-01-01T00:00:00.123Z`)。SQL の既定値(`schema::NOW_SQL`)と Rust で作る値(`db::now()`)を同じ形にしている。
+- 接続は `Mutex<Connection>`。ロックが毒されても(パニック後)中身を使い続ける。同じファイルを複数の接続で開くことがある(整理バッチで一時的に開くなど)ため、WAL(`timeline.db-wal` / `-shm`)と `busy_timeout`(5 秒)を設定する。
+- DB の役割(`db::Role`)は、開くときにワークスペースの ID で決める。リーダーは `leader_tasks` を作り、それ以外は以前のアプリが作っていた空の `leader_tasks` を消す(行があれば残して警告する)。
+
+### 版とマイグレーション(`db/schema.rs`)
+
+版は `PRAGMA user_version` で持ち、開くたびに未適用の版を古い順に当てる。各版は 1 つのトランザクション(書き込みのロックを取ってから版を確かめる)で当てる。
+
+| 版 | 内容 |
+| --- | --- |
+| 0 | 版管理を入れる前のDB(または空のDB) |
+| 1 | その時点のスキーマ(既存のDBには何もしない) |
+| 2 | 日時を上記の形式へそろえる(既定値を含む。表を作り直し、行の `rowid` は引き継ぐので同時刻の並びも変わらない)。`usage_logs(created_at)` のインデックスを追加 |
+| 3 | 会話の要約を `app_settings`(キー `summary:<session_id>`)から `conversation_summaries` へ移す。読めない値は移さない(従来も読まれていなかった) |
+
+- **既存のDBを書き換える前に複製を残す**: 同じフォルダへ `timeline.db.bak-v<元の版>` として `VACUUM INTO` で書き出す。同名のファイルがあれば日時を付けた別名にし、上書きしない。複製できなければDBを開かない(書き換えない)。空のDB(新規作成)では複製しない。
+- 複製と WAL のファイルも名前が `timeline.db` で始まるため、コマンド実行の保護の対象になる([command-policy.md](command-policy.md))。
+- 列や表を変えるときは `MIGRATIONS` の末尾に版を足す。既存の版の SQL は変えない。
 
 ## 設定項目(`app_settings`)
 
@@ -77,9 +116,12 @@ erDiagram
 | `debug_mode` | `0` / `1` | 無効 | Debug Mode |
 | `space_data` | スペースデータ(JSON `{enabled, text}`。スペースのみ。コピー・エクスポートの対象外) | 有効・空 | Space Data |
 | `knowledge_dir` | 絶対パス(空なら既定) | 既定 | ナレッジ画面 |
-| `summary:<session_id>` | 会話の要約(JSON) | — | — |
+| `debug_log_dir` | デバッグログの出力先(空なら既定) | 既定 | Debug Mode |
+| `leader_prompt` / `leader_max_active` | リーダーの指示(JSON)と同時に動かす依頼の上限(リーダーのみ) | 既定 | リーダーの設定 |
 
-**全体設定に移した項目**(ベースプロンプト `base_instructions`、OS通知、表示言語、音声入力の待ち時間 `voice_timing`、起動ワード `wake_enabled` / `wake_words`、パーソナルデータ `user_profile`、ナレッジ整理の間隔 `batch_interval_minutes`)は、`app_settings` ではなく `workspaces/global_settings.json` に保存する。スペースのDBに残った同名の値は読まない([global-settings.md](global-settings.md))。
+**全体設定に移した項目**(ベースプロンプト `base_instructions`、OS通知、表示言語、音声入力の待ち時間 `voice_timing`、起動ワード `wake_enabled` / `wake_words`、パーソナルデータ `user_profile`、ナレッジ整理の間隔 `batch_interval_minutes`)は、`app_settings` ではなく `workspaces/global_settings.json` に保存する。スペースのDBに残った同名の古い値は、全体設定の取り込みが済んだあとにDBを開いたとき消す([global-settings.md](global-settings.md))。
+
+**キーの一覧(`services/settings_registry.rs`)**: すべての設定キーについて、保存先(スペースのDB / 全体設定)と、書き出し・コピーの対象かどうか(と検証方法)をここで決める。書き出しの項目、全体設定のバックアップの項目、初回の取り込み・古い値の削除の対象は、この一覧から作る。保存先の取り違えを防ぐため、DBは全体設定のキーを、全体設定はスペースのキーを書き込みで拒否する。新しい設定を足すときは、この一覧にも登録する。
 
 自動保存: 調整項目と Command Policy は、入力欄を離れたときに保存する。
 
@@ -110,8 +152,8 @@ erDiagram
 
 ### 対象
 
-- `app_settings` のうち上表の**設定項目**(`routing` から `knowledge_dir` の手前まで。全体設定の項目は含まない)と、**コマンド権限**(`command-policy.json`)。
-- **含まない**: API キー、スペースデータ(`space_data`)、端末ごとに異なるナレッジの保存先(`knowledge_dir`)、会話ごとの要約、会話の履歴。
+- `app_settings` のうち、キーの一覧(`settings_registry`)で書き出しの対象にした**設定項目**(`routing`・`web_access`・`shell_access`・`stt_engine`・`stt_language`・`tts_engine`・`voicevox_style`・`tuning`・`batch_route`・`proofread_route`・`debug_mode`。全体設定の項目は含まない)と、**コマンド権限**(`command-policy.json`)。
+- **含まない**: API キー、スペースデータ(`space_data`)、端末ごとに異なるナレッジ・デバッグログの保存先(`knowledge_dir` / `debug_log_dir`)、取得する配布物の版(`whisper_revision` / `voicevox_versions`)、リーダーの設定、会話ごとの要約、会話の履歴。
 - 全体設定の項目(ベースプロンプト・パーソナルデータ・起動ワード・音声入力の待ち時間・ナレッジ整理の間隔・表示言語・OS通知)は含まない。全体設定には別のエクスポート/インポートがある([global-settings.md](global-settings.md))。
 - 書き出し・取り込みの対象は、選択中のワークスペースの設定。ワークスペース間で設定を写すには、各スペースの設定の「その他」にある設定のコピーを使う([workspace.md](workspace.md))。
 
