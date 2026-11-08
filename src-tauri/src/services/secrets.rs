@@ -4,7 +4,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{Mutex, OnceLock},
+    sync::Mutex,
     time::Duration,
 };
 
@@ -55,19 +55,78 @@ const AWS_PROFILE_ACCOUNT: &str = "aws_profile";
 /// 使うBedrockのモデルID一覧(JSON配列)。秘密ではないが、プロファイルと同じ理由で同じストアに置く。
 const AWS_MODELS_ACCOUNT: &str = "aws_models";
 
-struct Store {
+/// `Secrets::backup`で控えた内容。中身はこのモジュールの外へ出さない。
+pub struct SecretsBackup(HashMap<String, String>);
+
+/// 1つのワークスペース(`secrets.json`)分のキー保管庫。ワークスペースごとに別インスタンスを持つ。
+pub struct Secrets {
     path: PathBuf,
     map: Mutex<HashMap<String, String>>,
 }
 
-impl Store {
-    fn open(path: PathBuf) -> Result<Self, AppError> {
+impl Secrets {
+    /// `dir`直下の`secrets.json`を開く。無ければ空で始める。
+    pub fn open(dir: &Path) -> Result<Self, AppError> {
+        let path = dir.join("secrets.json");
         let map = match std::fs::read_to_string(&path) {
             Ok(text) => serde_json::from_str(&text).map_err(|e| AppError::SecretStore(e.to_string()))?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
             Err(e) => return Err(AppError::SecretStore(e.to_string())),
         };
         Ok(Self { path, map: Mutex::new(map) })
+    }
+
+    /// `src`の保存内容をすべてこの保管庫へ写す(同じ名前は上書き、`src`にだけ無いものは残す)。写した件数を返す。
+    /// 生値はこのモジュールの外へ出さない。ワークスペース間で設定をコピーするときに使う。
+    pub fn copy_from(&self, src: &Secrets) -> Result<usize, AppError> {
+        if std::ptr::eq(self, src) {
+            return Ok(0);
+        }
+        let snapshot = src.map().clone();
+        let count = snapshot.len();
+        let mut map = self.map();
+        // 書き込みに成功してからメモリへ反映する(失敗したときに、メモリだけ新しい内容になるのを避ける)
+        let mut merged = map.clone();
+        merged.extend(snapshot);
+        write_private(&self.path, &merged)?;
+        *map = merged;
+        Ok(count)
+    }
+
+    /// `src`のAPIキー(Anthropic)だけを写す。TTS・音声認識・AWSの設定は写さない。写したら`true`、`src`に無ければ`false`。
+    /// 生値はこのモジュールの外へ出さない。リーダーが他のワークスペースのキーを使うときに使う。
+    pub fn copy_api_key_from(&self, src: &Secrets, provider: Provider) -> Result<bool, AppError> {
+        if std::ptr::eq(self, src) || provider == Provider::Bedrock {
+            return Ok(false);
+        }
+        match src.get_key(provider)? {
+            Some(key) => self.set_key(provider, &key).map(|()| true),
+            None => Ok(false),
+        }
+    }
+
+    /// Bedrockのモデル一覧(秘密ではない設定項目)だけを`src`から写す。キーは写さない。`src`に無ければ何もしない。
+    pub fn copy_aws_models_from(&self, src: &Secrets) -> Result<(), AppError> {
+        if std::ptr::eq(self, src) {
+            return Ok(());
+        }
+        match src.get_aws_models()? {
+            Some(models) => self.set_aws_models(&models),
+            None => Ok(()),
+        }
+    }
+
+    /// 現在の保存内容を控える。`restore`で元へ戻すためのもので、中身は外から読めない。
+    pub fn backup(&self) -> SecretsBackup {
+        SecretsBackup(self.map().clone())
+    }
+
+    /// `backup`で控えた内容へ戻す。
+    pub fn restore(&self, backup: SecretsBackup) -> Result<(), AppError> {
+        let mut map = self.map();
+        write_private(&self.path, &backup.0)?;
+        *map = backup.0;
+        Ok(())
     }
 
     fn map(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
@@ -109,63 +168,121 @@ fn write_private(path: &Path, map: &HashMap<String, String>) -> Result<(), AppEr
     std::fs::rename(&tmp, path).map_err(io)
 }
 
-static STORE: OnceLock<Store> = OnceLock::new();
+impl Secrets {
+    fn get_secret(&self, account: &str) -> Result<Option<String>, AppError> {
+        Ok(self.get(account))
+    }
 
-/// 起動時に1回呼ぶ。`dir`はアプリデータディレクトリ。
-pub fn init(dir: &Path) -> Result<(), AppError> {
-    let store = Store::open(dir.join("secrets.json"))?;
-    let _ = STORE.set(store);
-    Ok(())
-}
+    fn set_secret(&self, account: &str, key: &str) -> Result<(), AppError> {
+        self.set(account, key)
+    }
 
-fn store() -> Result<&'static Store, AppError> {
-    STORE.get().ok_or_else(|| AppError::SecretStore("not initialized".into()))
-}
+    fn delete_secret(&self, account: &str) -> Result<(), AppError> {
+        self.delete(account)
+    }
 
-fn get_secret(account: &str) -> Result<Option<String>, AppError> {
-    Ok(store()?.get(account))
-}
+    pub fn has_tts_key(&self) -> Result<bool, AppError> {
+        Ok(self.get_secret(TTS_ACCOUNT)?.is_some())
+    }
 
-fn set_secret(account: &str, key: &str) -> Result<(), AppError> {
-    store()?.set(account, key)
-}
+    /// Rust内部のTTSクライアント専用。コマンドとして公開しないこと。
+    pub fn get_tts_key(&self) -> Result<Option<String>, AppError> {
+        self.get_secret(TTS_ACCOUNT)
+    }
 
-fn delete_secret(account: &str) -> Result<(), AppError> {
-    store()?.delete(account)
-}
+    pub fn set_tts_key(&self, key: &str) -> Result<(), AppError> {
+        self.set_secret(TTS_ACCOUNT, key)
+    }
 
-pub fn has_tts_key() -> Result<bool, AppError> {
-    Ok(get_secret(TTS_ACCOUNT)?.is_some())
-}
+    pub fn delete_tts_key(&self) -> Result<(), AppError> {
+        self.delete_secret(TTS_ACCOUNT)
+    }
 
-/// Rust内部のTTSクライアント専用。コマンドとして公開しないこと。
-pub fn get_tts_key() -> Result<Option<String>, AppError> {
-    get_secret(TTS_ACCOUNT)
-}
+    pub fn has_aqua_key(&self) -> Result<bool, AppError> {
+        Ok(self.get_secret(AQUA_ACCOUNT)?.is_some())
+    }
 
-pub fn set_tts_key(key: &str) -> Result<(), AppError> {
-    set_secret(TTS_ACCOUNT, key)
-}
+    /// Rust内部のAqua STTクライアント専用。コマンドとして公開しないこと。
+    pub fn get_aqua_key(&self) -> Result<Option<String>, AppError> {
+        self.get_secret(AQUA_ACCOUNT)
+    }
 
-pub fn delete_tts_key() -> Result<(), AppError> {
-    delete_secret(TTS_ACCOUNT)
-}
+    pub fn set_aqua_key(&self, key: &str) -> Result<(), AppError> {
+        self.set_secret(AQUA_ACCOUNT, key)
+    }
 
-pub fn has_aqua_key() -> Result<bool, AppError> {
-    Ok(get_secret(AQUA_ACCOUNT)?.is_some())
-}
+    pub fn delete_aqua_key(&self) -> Result<(), AppError> {
+        self.delete_secret(AQUA_ACCOUNT)
+    }
 
-/// Rust内部のAqua STTクライアント専用。コマンドとして公開しないこと。
-pub fn get_aqua_key() -> Result<Option<String>, AppError> {
-    get_secret(AQUA_ACCOUNT)
-}
+    pub fn has_key(&self, provider: Provider) -> Result<bool, AppError> {
+        match provider {
+            Provider::Bedrock => self.has_aws(),
+            p => Ok(self.get_secret(p.as_str())?.is_some()),
+        }
+    }
 
-pub fn set_aqua_key(key: &str) -> Result<(), AppError> {
-    set_secret(AQUA_ACCOUNT, key)
-}
+    /// Rust内部のLLMクライアント専用。コマンドとして公開しないこと。Bedrockは対象外(`get_aws_files`)。
+    pub fn get_key(&self, provider: Provider) -> Result<Option<String>, AppError> {
+        match provider {
+            Provider::Bedrock => Ok(None),
+            p => self.get_secret(p.as_str()),
+        }
+    }
 
-pub fn delete_aqua_key() -> Result<(), AppError> {
-    delete_secret(AQUA_ACCOUNT)
+    pub fn set_key(&self, provider: Provider, key: &str) -> Result<(), AppError> {
+        match provider {
+            Provider::Bedrock => Err(AppError::InvalidProvider(provider.as_str().to_owned())),
+            p => self.set_secret(p.as_str(), key),
+        }
+    }
+
+    pub fn delete_key(&self, provider: Provider) -> Result<(), AppError> {
+        match provider {
+            Provider::Bedrock => self.delete_aws(),
+            p => self.delete_secret(p.as_str()),
+        }
+    }
+
+    pub fn has_aws(&self) -> Result<bool, AppError> {
+        Ok(self.get_secret(AWS_CONFIG_ACCOUNT)?.is_some() || self.get_secret(AWS_CREDENTIALS_ACCOUNT)?.is_some())
+    }
+
+    /// Rust内部のAWS認証(`aws.rs`)専用。コマンドとして公開しないこと。未登録の側は空文字を返す。
+    pub fn get_aws_files(&self) -> Result<(String, String), AppError> {
+        Ok((
+            self.get_secret(AWS_CONFIG_ACCOUNT)?.unwrap_or_default(),
+            self.get_secret(AWS_CREDENTIALS_ACCOUNT)?.unwrap_or_default(),
+        ))
+    }
+
+    pub fn set_aws_files(&self, config: &str, credentials: &str) -> Result<(), AppError> {
+        self.set_secret(AWS_CONFIG_ACCOUNT, config)?;
+        self.set_secret(AWS_CREDENTIALS_ACCOUNT, credentials)
+    }
+
+    pub fn get_aws_profile(&self) -> Result<Option<String>, AppError> {
+        self.get_secret(AWS_PROFILE_ACCOUNT)
+    }
+
+    pub fn set_aws_profile(&self, name: &str) -> Result<(), AppError> {
+        self.set_secret(AWS_PROFILE_ACCOUNT, name)
+    }
+
+    pub fn get_aws_models(&self) -> Result<Option<String>, AppError> {
+        self.get_secret(AWS_MODELS_ACCOUNT)
+    }
+
+    pub fn set_aws_models(&self, json: &str) -> Result<(), AppError> {
+        self.set_secret(AWS_MODELS_ACCOUNT, json)
+    }
+
+    pub fn delete_aws(&self) -> Result<(), AppError> {
+        self.delete_secret(AWS_MODELS_ACCOUNT)?;
+        self.delete_secret(AWS_CONFIG_ACCOUNT)?;
+        self.delete_secret(AWS_CREDENTIALS_ACCOUNT)?;
+        self.delete_secret(AWS_PROFILE_ACCOUNT)
+    }
 }
 
 /// 音声一覧取得(読み取り専用)で疎通確認する。
@@ -194,75 +311,6 @@ fn http_client() -> Result<reqwest::Client, AppError> {
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|_| AppError::Network)
-}
-
-pub fn has_key(provider: Provider) -> Result<bool, AppError> {
-    match provider {
-        Provider::Bedrock => has_aws(),
-        p => Ok(get_secret(p.as_str())?.is_some()),
-    }
-}
-
-/// Rust内部のLLMクライアント専用。コマンドとして公開しないこと。Bedrockは対象外(`get_aws_files`)。
-pub fn get_key(provider: Provider) -> Result<Option<String>, AppError> {
-    match provider {
-        Provider::Bedrock => Ok(None),
-        p => get_secret(p.as_str()),
-    }
-}
-
-pub fn set_key(provider: Provider, key: &str) -> Result<(), AppError> {
-    match provider {
-        Provider::Bedrock => Err(AppError::InvalidProvider(provider.as_str().to_owned())),
-        p => set_secret(p.as_str(), key),
-    }
-}
-
-pub fn delete_key(provider: Provider) -> Result<(), AppError> {
-    match provider {
-        Provider::Bedrock => delete_aws(),
-        p => delete_secret(p.as_str()),
-    }
-}
-
-pub fn has_aws() -> Result<bool, AppError> {
-    Ok(get_secret(AWS_CONFIG_ACCOUNT)?.is_some() || get_secret(AWS_CREDENTIALS_ACCOUNT)?.is_some())
-}
-
-/// Rust内部のAWS認証(`aws.rs`)専用。コマンドとして公開しないこと。未登録の側は空文字を返す。
-pub fn get_aws_files() -> Result<(String, String), AppError> {
-    Ok((
-        get_secret(AWS_CONFIG_ACCOUNT)?.unwrap_or_default(),
-        get_secret(AWS_CREDENTIALS_ACCOUNT)?.unwrap_or_default(),
-    ))
-}
-
-pub fn set_aws_files(config: &str, credentials: &str) -> Result<(), AppError> {
-    set_secret(AWS_CONFIG_ACCOUNT, config)?;
-    set_secret(AWS_CREDENTIALS_ACCOUNT, credentials)
-}
-
-pub fn get_aws_profile() -> Result<Option<String>, AppError> {
-    get_secret(AWS_PROFILE_ACCOUNT)
-}
-
-pub fn set_aws_profile(name: &str) -> Result<(), AppError> {
-    set_secret(AWS_PROFILE_ACCOUNT, name)
-}
-
-pub fn get_aws_models() -> Result<Option<String>, AppError> {
-    get_secret(AWS_MODELS_ACCOUNT)
-}
-
-pub fn set_aws_models(json: &str) -> Result<(), AppError> {
-    set_secret(AWS_MODELS_ACCOUNT, json)
-}
-
-pub fn delete_aws() -> Result<(), AppError> {
-    delete_secret(AWS_MODELS_ACCOUNT)?;
-    delete_secret(AWS_CONFIG_ACCOUNT)?;
-    delete_secret(AWS_CREDENTIALS_ACCOUNT)?;
-    delete_secret(AWS_PROFILE_ACCOUNT)
 }
 
 /// モデル一覧取得(読み取り専用・無課金)で疎通確認する。
@@ -294,13 +342,57 @@ mod tests {
     #[test]
     fn store_persists_and_deletes() {
         let d = tempfile::tempdir().unwrap();
-        let path = d.path().join("secrets.json");
-        let s = Store::open(path.clone()).unwrap();
+        let s = Secrets::open(d.path()).unwrap();
         assert_eq!(s.get("anthropic"), None);
         s.set("anthropic", "k1").unwrap();
-        assert_eq!(Store::open(path.clone()).unwrap().get("anthropic").as_deref(), Some("k1"));
+        assert_eq!(Secrets::open(d.path()).unwrap().get("anthropic").as_deref(), Some("k1"));
         s.delete("anthropic").unwrap();
-        assert_eq!(Store::open(path).unwrap().get("anthropic"), None);
+        assert_eq!(Secrets::open(d.path()).unwrap().get("anthropic"), None);
+    }
+
+    #[test]
+    fn copy_api_key_copies_only_the_provider_key() {
+        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (src, leader) = (Secrets::open(a.path()).unwrap(), Secrets::open(b.path()).unwrap());
+        assert!(!leader.copy_api_key_from(&src, Provider::Anthropic).unwrap(), "コピー元にキーが無ければ何も写さない");
+        src.set_key(Provider::Anthropic, "ka").unwrap();
+        src.set_tts_key("tts-a").unwrap();
+        leader.set_key(Provider::Anthropic, "old").unwrap();
+        assert!(leader.copy_api_key_from(&src, Provider::Anthropic).unwrap());
+        assert_eq!(leader.get_key(Provider::Anthropic).unwrap().as_deref(), Some("ka")); // 上書き
+        assert!(!leader.has_tts_key().unwrap(), "キー以外(TTSなど)は写さない");
+        assert!(!leader.copy_api_key_from(&src, Provider::Bedrock).unwrap(), "Bedrockは対象外");
+        assert_eq!(src.get_key(Provider::Anthropic).unwrap().as_deref(), Some("ka")); // コピー元は変えない
+    }
+
+    #[test]
+    fn copy_from_merges_without_touching_source() {
+        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (sa, sb) = (Secrets::open(a.path()).unwrap(), Secrets::open(b.path()).unwrap());
+        sa.set_key(Provider::Anthropic, "ka").unwrap();
+        sa.set_tts_key("tts-a").unwrap();
+        sb.set_tts_key("tts-b").unwrap();
+        sb.set_aqua_key("aqua-b").unwrap();
+        assert_eq!(sb.copy_from(&sa).unwrap(), 2);
+        assert_eq!(sb.get_key(Provider::Anthropic).unwrap().as_deref(), Some("ka"));
+        assert_eq!(sb.get_tts_key().unwrap().as_deref(), Some("tts-a")); // 上書き
+        assert_eq!(sb.get_aqua_key().unwrap().as_deref(), Some("aqua-b")); // 残る
+        assert_eq!(sa.get_tts_key().unwrap().as_deref(), Some("tts-a"));
+        // 保存済みで、開き直しても残る
+        assert!(Secrets::open(b.path()).unwrap().has_key(Provider::Anthropic).unwrap());
+        // 自分自身へのコピーは何もしない(ロックの二重取得をしない)
+        assert_eq!(sa.copy_from(&sa).unwrap(), 0);
+    }
+
+    /// ワークスペース間でキーが混ざらないこと。
+    #[test]
+    fn stores_in_different_dirs_are_isolated() {
+        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (sa, sb) = (Secrets::open(a.path()).unwrap(), Secrets::open(b.path()).unwrap());
+        sa.set_key(Provider::Anthropic, "ka").unwrap();
+        assert!(sa.has_key(Provider::Anthropic).unwrap());
+        assert!(!sb.has_key(Provider::Anthropic).unwrap());
+        assert_eq!(Secrets::open(b.path()).unwrap().get_key(Provider::Anthropic).unwrap(), None);
     }
 
     #[cfg(unix)]
@@ -308,9 +400,8 @@ mod tests {
     fn store_file_is_owner_only() {
         use std::os::unix::fs::PermissionsExt;
         let d = tempfile::tempdir().unwrap();
-        let path = d.path().join("secrets.json");
-        Store::open(path.clone()).unwrap().set("a", "b").unwrap();
-        assert_eq!(std::fs::metadata(path).unwrap().permissions().mode() & 0o777, 0o600);
+        Secrets::open(d.path()).unwrap().set("a", "b").unwrap();
+        assert_eq!(std::fs::metadata(d.path().join("secrets.json")).unwrap().permissions().mode() & 0o777, 0o600);
     }
 
     /// 実キーでの疎通確認。`TTS_TEST_KEY`が必要。

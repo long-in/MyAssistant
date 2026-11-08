@@ -37,6 +37,9 @@ const TOOL_LABELS: Record<string, string> = {
   read_file: "読み取り",
   search_files: "検索",
   create_file: "作成",
+  space_list: "スペースの一覧",
+  ledger_list: "台帳の参照",
+  draft_dispatch: "配布の下書き",
 };
 
 const clock = (d: Date) => d.toLocaleTimeString("ja-JP", { hour12: false });

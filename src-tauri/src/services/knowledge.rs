@@ -261,25 +261,42 @@ pub fn list_other(root: &Path) -> Result<Vec<KnowledgeFile>, AppError> {
     Ok(out)
 }
 
+/// バイナリかどうかを調べるために、先頭から読む長さ。
+const BINARY_PROBE_BYTES: usize = 8 * 1024;
+
 /// Markdown以外のファイルの本文(閲覧専用)。バイナリは拒否し、大きい場合は新しい側の末尾だけを行の区切りから返す。
+/// 巨大なファイルでもメモリを使い切らないよう、全体は読まず、先頭(バイナリ判定)と末尾の`MAX_EDIT_BYTES`だけを読む。
 pub fn read_other(root: &Path, rel: &str) -> Result<String, AppError> {
+    use std::io::{Read, Seek, SeekFrom};
     if rel.ends_with(".md") || rel.split('/').any(|p| p.starts_with('.')) {
         return Err(AppError::PathNotAllowed);
     }
-    let bytes = fs::read(resolve_existing(root, rel)?).map_err(io)?;
+    let binary = || AppError::Io("バイナリファイルは表示できません".to_owned());
+    let mut file = fs::File::open(resolve_existing(root, rel)?).map_err(io)?;
+    let len = file.metadata().map_err(io)?.len();
+    let max = MAX_EDIT_BYTES as u64;
+
+    // 先頭にNULがあればバイナリ(大きいファイルでも、先頭だけで判定する)
+    let mut head = vec![0; BINARY_PROBE_BYTES.min(len as usize)];
+    file.read_exact(&mut head).map_err(io)?;
+    if head.contains(&0) {
+        return Err(binary());
+    }
+
+    // 表示する部分(小さければ全体、大きければ末尾)だけを読む
+    let start = len.saturating_sub(max);
+    file.seek(SeekFrom::Start(start)).map_err(io)?;
+    let mut bytes = Vec::with_capacity((len - start) as usize);
+    file.take(max).read_to_end(&mut bytes).map_err(io)?;
     if bytes.contains(&0) {
-        return Err(AppError::Io("バイナリファイルは表示できません".to_owned()));
+        return Err(binary());
     }
     let text = String::from_utf8_lossy(&bytes).into_owned();
-    if text.len() <= MAX_EDIT_BYTES {
+    if start == 0 {
         return Ok(text);
     }
-    let mut start = text.len() - MAX_EDIT_BYTES;
-    while !text.is_char_boundary(start) {
-        start += 1;
-    }
-    let tail = &text[start..];
-    Ok(tail.split_once('\n').map_or(tail, |(_, rest)| rest).to_owned())
+    // 途中から読んだので、先頭の欠けた行(と欠けた文字)を捨てる
+    Ok(text.split_once('\n').map_or(text.as_str(), |(_, rest)| rest).to_owned())
 }
 
 /// エクスポート・インポート・初期化の結果。
@@ -880,5 +897,45 @@ mod tests {
         // 削除後の発話は新しいキャプチャになる
         append_capture(&root, "abcdef123456", "さらに", "うん", "2026-10-28T09:00:00Z").unwrap();
         assert_eq!(list(&root).unwrap()[0].path, "Captures/2026-10-28_abcdef12.md");
+    }
+
+    #[test]
+    fn read_other_reads_only_the_tail_of_a_huge_file() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().to_path_buf();
+        fs::create_dir_all(root.join("logs")).unwrap();
+        // 上限(5MiB)を超える、行ごとに番号を振ったテキスト
+        let lines: Vec<String> = (0..500_000).map(|i| format!("line-{i:07}")).collect();
+        let text = lines.join("\n") + "\n";
+        assert!(text.len() > MAX_EDIT_BYTES);
+        fs::write(root.join("logs/big.log"), &text).unwrap();
+        let out = read_other(&root, "logs/big.log").unwrap();
+        assert!(out.len() <= MAX_EDIT_BYTES);
+        assert!(out.starts_with("line-"), "先頭の欠けた行は捨てて、行の区切りから返す");
+        assert!(out.ends_with("line-0499999\n"), "末尾(新しい側)を返す");
+        assert!(!out.contains("line-0000000"));
+        // 小さいファイルは全体を返す
+        fs::write(root.join("logs/small.log"), "a\nb\n").unwrap();
+        assert_eq!(read_other(&root, "logs/small.log").unwrap(), "a\nb\n");
+        // 空のファイル
+        fs::write(root.join("logs/empty.log"), "").unwrap();
+        assert_eq!(read_other(&root, "logs/empty.log").unwrap(), "");
+    }
+
+    #[test]
+    fn read_other_rejects_binary_even_when_huge() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().to_path_buf();
+        fs::create_dir_all(root.join("logs")).unwrap();
+        // 先頭にNULがある大きなファイル
+        let mut head_nul = vec![0u8; 16];
+        head_nul.extend(std::iter::repeat_n(b'a', MAX_EDIT_BYTES + 10));
+        fs::write(root.join("logs/head.bin"), &head_nul).unwrap();
+        assert!(read_other(&root, "logs/head.bin").is_err());
+        // 末尾にNULがある大きなファイル
+        let mut tail_nul = vec![b'a'; MAX_EDIT_BYTES + 10];
+        tail_nul.push(0);
+        fs::write(root.join("logs/tail.bin"), &tail_nul).unwrap();
+        assert!(read_other(&root, "logs/tail.bin").is_err());
     }
 }

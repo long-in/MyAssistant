@@ -3,17 +3,23 @@
 import { useT } from "@/lib/i18n";
 import { useEffect, useRef, useState } from "react";
 import { Download, Ear, Loader2, MessageSquarePlus, Mic, Send, Square, Volume2, VolumeX } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { approvalLine } from "@/components/AttentionToasts";
+import { notifyOsIfBackground } from "@/lib/osNotify";
 import { createPortal } from "react-dom";
 import ModelSelector from "./ModelSelector";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import WorkspaceBadge from "@/components/WorkspaceBadge";
 import { VoiceOrb } from "./Waveforms";
 import UsageHud from "./UsageHud";
 import Subtitles from "./Subtitles";
 import ApprovalModal, { type Approval, type Listening } from "./ApprovalModal";
 import AbortButton from "./AbortButton";
 import SwitchConfirm from "./SwitchConfirm";
+import DispatchDraftCard from "./DispatchDraftCard";
+import LeaderLedger from "./LeaderLedger";
 import ExecutionLog, { applyAgentEvent, emptyLog, type LogState } from "./ExecutionLog";
 import { type Turn } from "./Reply";
 import OrbReadout, { type Phase } from "./OrbReadout";
@@ -22,21 +28,31 @@ import { isPlainSpace, matchShortcut } from "@/lib/shortcuts";
 import { judgeAnswer } from "@/lib/voiceApproval";
 import { detectSwitch } from "@/lib/voiceCommands";
 import {
+  LEADER_ID,
   type AgentEvent,
+  type DispatchDraft,
   type KeyStatus,
   type ModelInfo,
   type Route,
+  type RunSnapshot,
   type UsageRow,
-  DEFAULT_TUNING,
-  type Tuning,
+  DEFAULT_VOICE_TIMING,
+  type VoiceTiming,
   type WakeConfig,
   agentApprove,
+  agentDetach,
+  agentResume,
   agentCancel,
   cancelRecording,
   downloadSttModel,
   getSttEngine,
+  getTtsEngine,
+  aquaKeyRegistered,
+  ttsKeyRegistered,
+  type SttEngine,
+  type TtsEngine,
   getKeyStatus,
-  getTuning,
+  getVoiceTiming,
   getWakeConfig,
   getUsageThisMonth,
   isSpeaking,
@@ -61,7 +77,7 @@ import {
   waitForSpeechEnd,
 } from "@/lib/api";
 
-// 録音の待ち時間(スペースを離したあとの猶予・声が入らず終える時間・話し終わりの無音)は、設定ページで変えられる(`tuning`)。
+// 録音の待ち時間(スペースを離したあとの猶予・声が入らず終える時間・話し終わりの無音)は、全体設定で変えられる(`voice_timing`)。
 
 /** 話し始めを待つ時間(ms)。超えたら録り直す。 */
 const ANSWER_WAIT_MS = 12000;
@@ -87,6 +103,9 @@ const TOOL_ACTIVITY: Record<string, string> = {
   read_file: "ファイルを読んでいます…",
   search_files: "ファイルを検索しています…",
   create_file: "ファイルを作成しています…",
+  space_list: "スペースの一覧を確認しています…",
+  ledger_list: "台帳を確認しています…",
+  draft_dispatch: "配布の下書きを作っています…",
 };
 
 /** `standby`: 常時待機が起動ワードを聞き取るために録音している。手動の操作が始まれば譲る。 */
@@ -102,24 +121,51 @@ const HIDE_WHEN_SMALL = "[@media(max-height:40rem),(max-width:40rem)]:hidden";
 const HIDE_WHEN_SMALL_FLEX = "flex [@media(max-height:40rem),(max-width:40rem)]:hidden";
 const SMALL_COLLAPSE_SUBTITLES = "h-[clamp(9rem,26vh,14rem)] [@media(max-height:40rem),(max-width:40rem)]:h-auto";
 
-/** 現在の会話のセッション。リロード・再起動で新しくなる。 */
-let currentSession = { id: crypto.randomUUID() };
+/** ワークスペースごとの現在の会話のセッション。リロード・再起動で新しくなる。切り替えて戻っても、同じ会話の続きになる。 */
+const sessions = new Map<string, { id: string }>();
+const sessionOf = (workspaceId: string) => {
+  let s = sessions.get(workspaceId);
+  if (!s) sessions.set(workspaceId, (s = { id: crypto.randomUUID() }));
+  return s;
+};
 
 /** `active`は対話画面を表示中かどうか。`modelSlot`はモデル選択を表示する左メニュー下部の要素。他の画面へ移動しても`Chat`は`AppShell`に残り、進行中の処理や待機を続ける。 */
-export default function Chat({ active, modelSlot }: { active: boolean; modelSlot: HTMLElement | null }) {
+export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: string; active: boolean; modelSlot: HTMLElement | null }) {
   const t = useT();
   const activeRef = useRef(active);
   useEffect(() => {
     activeRef.current = active;
   }, [active]);
   // 会話の切り替えは、ユーザーが明示したときだけ。コマンド実行の依頼・承認や画面移動では切り替えない(再起動後は、バックエンドが前回までの文脈をMarkdownから復元する)
-  const session = useRef(currentSession);
+  const session = useRef(sessionOf(workspaceId));
   // この会話(セッション)のやり取り。最後が現在の1件で、会話を切り替えるまで残す
   const [turns, setTurns] = useState<Turn[]>([]);
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState("");
   const [activity, setActivity] = useState<string | null>(null);
   const [approval, setApproval] = useState<Approval | null>(null);
+  // リーダーが作った配布の下書き。利用者が確かめて配布する
+  const [dispatchDraft, setDispatchDraft] = useState<DispatchDraft | null>(null);
+  const router = useRouter();
+
+  // 承認のダイアログは対話画面にある。設定などの別の画面を見ている間に承認が必要になったら、トーストで知らせる(「開く」で対話画面へ)。
+  // 承認に答えた・対話画面へ戻ったら、トーストを消す。ほかのスペースの通知(AttentionToasts)と、同じ識別子で重ならないようにする
+  useEffect(() => {
+    const id = `attention:${workspaceId}:approval`;
+    if (!approval || active) {
+      toast.dismiss(id);
+      return;
+    }
+    const one = (text: string) => {
+      const line = text.split(/\s+/).filter(Boolean).join(" ");
+      return line.length > 120 ? `${line.slice(0, 120)}…` : line;
+    };
+    const detail = approval.kind === "file" ? approval.path : approval.kind === "command" ? approval.preview : approval.kind === "allow_command" ? approval.steps.join(", ") : "";
+    const title = t("承認が必要です");
+    const description = approvalLine(approval.kind, one(detail));
+    toast.warning(title, { id, description, duration: Infinity, action: { label: t("開く"), onClick: () => router.push("/") } });
+    void notifyOsIfBackground(title, description);
+  }, [approval, active, workspaceId, router, t]);
   // 音声の返答の待ち受けは非同期で動くので、最新の承認要求をrefでも持つ
   const approvalRef = useRef<Approval | null>(null);
   const [listening, setListening] = useState<Listening>("idle");
@@ -141,6 +187,8 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
   const [needModel, setNeedModel] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [ttsReady, setTtsReady] = useState(false);
+  /** 設定不足の案内に使う、読み込み済みの設定の状況。読み込むまでは案内しない。 */
+  const [setup, setSetup] = useState<{ tts: TtsEngine; stt: SttEngine; sttKey: boolean } | null>(null);
   const [voiceReply, setVoiceReply] = useState(true);
   /** Voice Linkのキーが未登録なら読み上げず、字幕だけで応答する。 */
   const speakReply = voiceReply && ttsReady;
@@ -160,7 +208,7 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
   const standbyRun = useRef<(alive: () => boolean) => Promise<void>>(async () => {});
   const holdRef = useRef<(down: boolean) => void>(() => {});
   const micLock = useRef(false);
-  const tuning = useRef<Tuning>(DEFAULT_TUNING);
+  const tuning = useRef<VoiceTiming>(DEFAULT_VOICE_TIMING);
   const mounted = useRef(true);
   /** 手動の録音ごとの通し番号。無音の見張りが、古い録音に反応しないようにする。 */
   const manualRun = useRef(0);
@@ -193,9 +241,11 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
   // 対話画面へ戻るたびに、設定画面などでの変更(キー・モデル・待機設定)を読み直す
   useEffect(() => {
     if (!active) return;
-    Promise.all([listModels(), loadRouting(), getKeyStatus(), fetchTtsReady(), getWakeConfig(), getTuning()])
-      .then(([m, r, k, t, w, u]) => {
+    Promise.all([listModels(), loadRouting(), getKeyStatus(), fetchTtsReady(), getWakeConfig(), getVoiceTiming(), getTtsEngine(), getSttEngine(), ttsKeyRegistered(), aquaKeyRegistered(), sttModelReady()])
+      .then(([m, r, k, t, w, u, te, se, gk, ak, sm]) => {
         tuning.current = u;
+        setSetup({ tts: te, stt: se, sttKey: se === "google" ? gk : se === "aqua" ? ak : true });
+        setNeedModel(se === "local" && !sm);
         setModels(m);
         setRoute(r);
         setKeyStatus(k);
@@ -209,6 +259,13 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
     mounted.current = true;
     return () => {
       mounted.current = false;
+      // 待っている送信・会話のループを打ち切る(離れたあとに返答が届いても、読み上げたり、やり取りへ加えたりしない。
+      // 依頼そのものは止まらず、結果は戻ったときに受け取る)
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- DOMではなくカウンタ。離れる時点の最新の値を進める
+      resetEpoch.current++;
+      // ワークスペースの切り替えで作り直されるとき、読み上げと録音を止める(切替先へ音声を持ち越さない)
+      stopSpeech();
+      void cancelRecording().catch(() => {});
     };
   }, []);
 
@@ -237,7 +294,64 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
     if (e.type === "tool_call") setActivity(t(TOOL_ACTIVITY[e.name] ?? "ファイルを操作しています…"));
     else if (e.type === "tool_result") setActivity(null);
     else if (e.type === "approval") showApproval(e);
+    else if (e.type === "dispatch_draft") setDispatchDraft({ id: e.id, instruction: e.instruction, targets: e.targets });
+    else if (e.type === "finished") finishResumed(e);
   };
+
+  /** 切り替えから戻って続きを受けていた依頼が終わった。結果をやり取りに加える(読み上げはしない)。 */
+  const finishResumed = (e: Extract<AgentEvent, { type: "finished" }>) => {
+    setBusy(false);
+    setActivity(null);
+    showApproval(null);
+    refreshUsage();
+    const { reply, error } = e;
+    if (error) fail(error);
+    if (reply) {
+      setTurns((ts) =>
+        ts.map((x, i) => (i === ts.length - 1 && !x.reply ? { ...x, reply: reply.content, replyAt: new Date(), via: reply.model } : x)),
+      );
+    }
+  };
+
+  /** 切り替えて離れている間の依頼を、続きから再開する(実行中なら進捗と承認待ちを戻し、終わっていれば結果を見せる)。 */
+  const restoreRun = (snap: RunSnapshot) => {
+    if (!snap.running && !snap.finished) return;
+    const userAt = new Date();
+    const turn: Turn = { user: snap.user_text, userAt };
+    if (snap.finished) {
+      // 離れている間に終わっていた。結果だけを見せる
+      const { reply, error } = snap.finished;
+      if (error) fail(error);
+      if (reply) setTurns([{ ...turn, reply: reply.content, replyAt: new Date(), via: reply.model }]);
+      refreshUsage();
+      return;
+    }
+    setBusy(true);
+    setTurns([turn]);
+    setLog(snap.events.reduce(applyAgentEvent, emptyLog));
+    const lastDraft = [...snap.events].reverse().find((x) => x.type === "dispatch_draft");
+    if (lastDraft?.type === "dispatch_draft") setDispatchDraft({ id: lastDraft.id, instruction: lastDraft.instruction, targets: lastDraft.targets });
+    // 離れている間に求められた承認は、回答を待っている。戻ったので、ここで答えられる
+    if (snap.pending) showApproval({ type: "approval", ...snap.pending });
+  };
+  const agentEventRef = useRef(onAgentEvent);
+  const restoreRef = useRef(restoreRun);
+  useEffect(() => {
+    agentEventRef.current = onAgentEvent;
+    restoreRef.current = restoreRun;
+  });
+
+  // このワークスペースを開いたとき、実行中だった依頼の続きを受け取る。離れるときは、依頼を止めずに接続だけ外す
+  useEffect(() => {
+    let live = true;
+    agentResume(workspaceId, (e) => live && agentEventRef.current(e))
+      .then((snap) => live && restoreRef.current(snap))
+      .catch(() => {});
+    return () => {
+      live = false;
+      agentDetach(workspaceId).catch(() => {});
+    };
+  }, [workspaceId]);
 
   const answerApproval = (approved: boolean) => {
     const a = approvalRef.current;
@@ -262,13 +376,15 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
 
   /** 新しい会話を始める。これまでの文脈は引き継がず、実行中の処理と読み上げは止める。 */
   const startNewConversation = (interrupt: boolean) => {
-    currentSession = { id: crypto.randomUUID() };
-    session.current = currentSession;
+    const next = { id: crypto.randomUUID() };
+    sessions.set(workspaceId, next);
+    session.current = next;
     if (interrupt) resetEpoch.current++; // 会話中のループは自分で続けるので、止めるのは外からの操作のときだけ
     stopSpeech();
     if (gate.current.busy || approvalRef.current) cancelTask();
     setTurns([]);
     setLog(emptyLog);
+    setDispatchDraft(null);
     toast.success(t("新しい会話を始めました。"));
   };
 
@@ -336,6 +452,18 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
       showApproval(null);
     }
     return result;
+  };
+
+  /** 字幕の返答を、読み上げボタンから再生する。ミュート中でも、押したときは読み上げる。 */
+  const speakOnDemand = async (text: string) => {
+    unlockAudio();
+    stopSpeech();
+    try {
+      const audio = await synthesizeSpeech(text);
+      await playBase64Mp3(audio, text);
+    } catch (e) {
+      fail(e);
+    }
   };
 
   /** 入力欄の文章を送る。送信が始まったら欄を空にし、読み上げ中なら止めてから送る。 */
@@ -817,10 +945,18 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
     : t("処理中…");
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="relative flex h-full flex-col">
+      <WorkspaceBadge className="pointer-events-none absolute top-4 right-4 z-10" />
       {modelSlot && createPortal(<ModelSelector route={route} models={models} keyStatus={keyStatus} onChange={changeRoute} />, modelSlot)}
+      {setup && (
+        <div className="mx-6 mt-4 flex flex-col gap-2 empty:hidden">
+          {!Object.values(keyStatus).some(Boolean) && Object.keys(keyStatus).length > 0 && <SetupNotice text={t("APIキーが未登録のため、AIが応答できません。")} action={t("設定を開く")} onAction={() => router.push("/setup")} />}
+          {!ttsReady && voiceReply && <SetupNotice text={setup.tts === "voicevox" ? t("VOICEVOXが未取得のため、読み上げは動作しません(字幕のみ)。") : t("Google Cloudのキーが未登録のため、読み上げは動作しません(字幕のみ)。")} action={t("設定を開く")} onAction={() => router.push("/setup")} />}
+          {!setup.sttKey && <SetupNotice text={setup.stt === "aqua" ? t("Aqua Voiceのキーが未登録のため、音声入力は動作しません。") : t("Google Cloudのキーが未登録のため、音声入力は動作しません。")} action={t("設定を開く")} onAction={() => router.push("/setup")} />}
+        </div>
+      )}
       {needModel && (
-        <div className="mx-6 mt-4 flex items-center justify-between gap-3 rounded-lg border bg-muted/40 p-3 text-sm">
+        <div className="hud-panel hud-accent mx-6 mt-4 flex items-center justify-between gap-3 px-5 py-3 text-sm">
           <span>{t("音声入力にはローカル音声認識モデル(約470MB)のダウンロードが必要です。")}</span>
           <Button size="sm" disabled={downloading} onClick={download}>
             {downloading ? <Loader2 className="animate-spin" /> : <Download />}
@@ -829,8 +965,10 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
         </div>
       )}
 
+      {/* リーダーのときだけ、右に台帳を置く(円形波形は左のカラムの中央になる) */}
+      <div className="flex min-h-0 flex-1">
       {/* 中央: 読み上げ音声の円形波形 */}
-      <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 py-4">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-4 px-6 py-4">
         <div className={HIDE_WHEN_SMALL}>
           <UsageHud rows={usage} />
         </div>
@@ -849,7 +987,7 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
             type="button"
             variant="outline"
             size="sm"
-            className="pointer-events-auto self-start bg-background/80 backdrop-blur"
+            className="hud-label pointer-events-auto self-start border-primary/40 bg-background/80 backdrop-blur hover:border-primary"
             title={t("これまでの会話の流れを引き継がず、新しい会話を始める")}
             onClick={() => startNewConversation(true)}
           >
@@ -870,15 +1008,25 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
           </div>
           {switching && <SwitchConfirm listening={switchListening} onAnswer={answerSwitch} />}
           <div className={cn("flex min-h-0 w-full flex-1 flex-col items-center justify-end", HIDE_WHEN_SMALL)}>
-            <Subtitles turns={turns} pending={busy} onCorrected={(text) => setTurns((ts) => ts.map((x, i) => (i === ts.length - 1 ? { ...x, user: text } : x)))} />
+            <Subtitles turns={turns} pending={busy} speaking={speaking} onSpeak={ttsReady ? (text) => void speakOnDemand(text) : undefined} onStop={stopSpeech} onCorrected={(text) => setTurns((ts) => ts.map((x, i) => (i === ts.length - 1 ? { ...x, user: text } : x)))} />
           </div>
         </div>
       </div>
+      {workspaceId === LEADER_ID && <LeaderLedger active={active} className={cn("w-72 shrink-0 xl:w-[26rem]", HIDE_WHEN_SMALL)} />}
+      </div>
 
-      {approval && <ApprovalModal approval={approval} listening={listening} onAnswer={answerApproval} />}
+      {approval &&<ApprovalModal approval={approval} listening={listening} onAnswer={answerApproval} />}
+      {dispatchDraft && (
+        <DispatchDraftCard
+          key={dispatchDraft.id}
+          draft={dispatchDraft}
+          onClose={() => setDispatchDraft(null)}
+          className="absolute inset-x-6 bottom-28 z-20 mx-auto max-w-2xl"
+        />
+      )}
 
       {/* 下部: 操作ボタンと入力欄 */}
-      <div className="border-t border-primary/20 px-6 py-4">
+      <div className="border-t border-primary/30 bg-background/60 px-6 py-4 shadow-[0_-8px_24px_-12px_oklch(0.85_0.13_180/25%)] backdrop-blur">
         <div className="mx-auto flex max-w-4xl items-center gap-4">
           <Button
             type="button"
@@ -942,7 +1090,7 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
               disabled={busy || needModel}
               placeholder={status}
               aria-label={t("メッセージ")}
-              className="max-h-48 min-h-20 resize-none bg-background/60"
+              className="max-h-48 min-h-20 resize-none border-primary/30 bg-background/60 focus-visible:border-primary"
             />
             <Button
               type="submit"
@@ -957,6 +1105,18 @@ export default function Chat({ active, modelSlot }: { active: boolean; modelSlot
           </form>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** チャット画面上部の、設定不足の案内。 */
+function SetupNotice({ text, action, onAction }: { text: string; action: string; onAction: () => void }) {
+  return (
+    <div className="hud-panel hud-accent flex items-center justify-between gap-3 px-5 py-3 text-sm" role="status">
+      <span>{text}</span>
+      <Button size="sm" variant="outline" onClick={onAction}>
+        {action}
+      </Button>
     </div>
   );
 }

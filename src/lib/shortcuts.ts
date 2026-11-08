@@ -1,4 +1,4 @@
-export type ShortcutId = "mic" | "chat" | "knowledge" | "settings" | "help" | "abort";
+export type ShortcutId = "mic" | "chat" | "knowledge" | "settings" | "help" | "palette" | "abort";
 
 export type Shortcut = {
   id: ShortcutId;
@@ -15,6 +15,7 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "chat", keys: ["Mod", "1"], label: "対話を開く", description: "対話画面へ移動します。", scope: "どの画面でも" },
   { id: "knowledge", keys: ["Mod", "2"], label: "ナレッジを開く", description: "ナレッジ画面へ移動します。", scope: "どの画面でも" },
   { id: "settings", keys: ["Mod", "3"], label: "設定を開く", description: "APIキーなどの設定画面へ移動します。", scope: "どの画面でも" },
+  { id: "palette", keys: ["Mod", "K"], label: "スペースを検索して切り替え", description: "スペース名で検索し、Enterでそのスペースのチャットへ切り替えます(↑↓で選択、Escで閉じる)。", scope: "どの画面でも" },
   { id: "help", keys: ["Mod", "/"], label: "ショートカット一覧を開く", description: "このページを開きます。", scope: "どの画面でも" },
 ];
 
@@ -36,6 +37,7 @@ export function matchShortcut(e: KeyboardEvent): ShortcutId | null {
     case "Digit2": return "knowledge";
     case "Digit3": return "settings";
     case "Slash": return "help";
+    case "KeyK": return "palette";
     default: return null;
   }
 }

@@ -81,12 +81,48 @@ pub enum AppError {
     InvalidDictionary(String),
     #[error("invalid personal data: {0}")]
     InvalidProfile(String),
+    /// スペースデータ・共通データの不備(上限超過、使えない文字)。
+    #[error("invalid space data: {0}")]
+    InvalidSpaceData(String),
     /// 貼り付けたAWS設定の不備(プロファイルが無い、キーが無い、MFAコードの形式不正など)。
     #[error("{0}")]
     AwsConfig(String),
     /// MFAコードの入力が取り消された、または時間内に入力されなかった。
     #[error("MFA code was not provided")]
     MfaRequired,
+    /// スペースの名称・イメージカラーの不備。
+    #[error("invalid space: {0}")]
+    InvalidSpace(String),
+    /// 指定した保存先が、別のワークスペースの保存先(ナレッジ・デバッグログ)と重なっている。
+    #[error("path overlaps another workspace's location")]
+    PathInUse,
+    /// 名称がパーソナル・ワークの表示名と紛らわしいため使えない。
+    #[error("space name is reserved")]
+    ReservedName,
+    /// 指定した名称を、別のスペースがすでに使っている。
+    #[error("space name already in use")]
+    NameInUse,
+    /// 指定した色を、別のスペースがすでに使っている。
+    #[error("space color already in use")]
+    ColorInUse,
+    /// スペース数が上限に達している。
+    #[error("space limit reached")]
+    SpaceLimit,
+    /// 指定したスペースが無い。
+    #[error("space not found")]
+    SpaceNotFound,
+    /// スペースを作る前に、リーダーの作成が必要。
+    #[error("leader is required")]
+    LeaderRequired,
+    /// リーダーはすでにある(1つだけ)。
+    #[error("leader already exists")]
+    LeaderExists,
+    /// ワークが無効になっている(リーダーとスペースは使えない)。
+    #[error("work is disabled")]
+    WorkDisabled,
+    /// ワークの中に実行中・承認待ちの依頼があり、無効にできない。
+    #[error("work is busy")]
+    WorkBusy,
 }
 
 impl AppError {
@@ -134,8 +170,20 @@ impl AppError {
             Self::InvalidSettings(_) => "invalid_settings",
             Self::InvalidDictionary(_) => "invalid_dictionary",
             Self::InvalidProfile(_) => "invalid_profile",
+            Self::InvalidSpaceData(_) => "invalid_space_data",
             Self::AwsConfig(_) => "aws_config_error",
             Self::MfaRequired => "mfa_required",
+            Self::InvalidSpace(_) => "invalid_space",
+            Self::PathInUse => "path_in_use",
+            Self::ReservedName => "reserved_name",
+            Self::NameInUse => "name_in_use",
+            Self::ColorInUse => "color_in_use",
+            Self::SpaceLimit => "space_limit",
+            Self::SpaceNotFound => "space_not_found",
+            Self::LeaderRequired => "leader_required",
+            Self::LeaderExists => "leader_exists",
+            Self::WorkDisabled => "work_disabled",
+            Self::WorkBusy => "work_busy",
             Self::ProviderRejected(_) => "provider_rejected",
             Self::ApiDisabled => "api_disabled",
             Self::KeyRestricted => "key_restricted",

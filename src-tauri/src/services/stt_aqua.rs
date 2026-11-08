@@ -4,7 +4,7 @@ use std::time::Duration;
 use reqwest::multipart::{Form, Part};
 use serde_json::{Value, json};
 
-use super::{audio::WHISPER_RATE, debug_log, secrets};
+use super::{audio::WHISPER_RATE, debug_log, workspace::WorkspaceCtx};
 use crate::utils::error::AppError;
 
 const BASE_URL: &str = "https://api.aquavoice.com/v1";
@@ -55,13 +55,13 @@ fn error_from(status: u16, body: &str) -> AppError {
     }
 }
 
-pub async fn transcribe(samples: &[f32], language: &str) -> Result<String, AppError> {
-    transcribe_inner(samples, language).await.map_err(|e| e.with_source("aqua_stt"))
+pub async fn transcribe(ctx: &WorkspaceCtx, samples: &[f32], language: &str) -> Result<String, AppError> {
+    transcribe_inner(ctx, samples, language).await.map_err(|e| e.with_source("aqua_stt"))
 }
 
 /// `auto`は言語指定をAPIの自動判定に任せる。
-async fn transcribe_inner(samples: &[f32], language: &str) -> Result<String, AppError> {
-    let key = secrets::get_aqua_key()?.ok_or_else(|| AppError::KeyMissing("aqua".into()))?;
+async fn transcribe_inner(ctx: &WorkspaceCtx, samples: &[f32], language: &str) -> Result<String, AppError> {
+    let key = ctx.secrets.get_aqua_key()?.ok_or_else(|| AppError::KeyMissing("aqua".into()))?;
     let client = reqwest::Client::builder().timeout(TIMEOUT).build().map_err(|_| AppError::Network)?;
     let url = format!("{BASE_URL}/audio/transcriptions");
     let wav = to_wav(samples);
@@ -77,9 +77,9 @@ async fn transcribe_inner(samples: &[f32], language: &str) -> Result<String, App
         .map_err(AppError::from_reqwest)?;
     let status = res.status();
     let raw = res.text().await.unwrap_or_default();
-    if debug_log::enabled() {
+    if debug_log::enabled(ctx) {
         let request = json!({ "model": MODEL, "language": language, "file": format!("audio.wav ({wav_len} bytes)") });
-        debug_log::record_api("aqua_stt", &url, &request, status.as_u16(), &debug_log::parse_body(&raw));
+        debug_log::record_api(ctx, "aqua_stt", &url, &request, status.as_u16(), &debug_log::parse_body(&raw));
     }
     if !status.is_success() {
         return Err(error_from(status.as_u16(), &raw));

@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use super::{aws, secrets::Provider};
+use super::{aws, secrets::Provider, workspace::WorkspaceCtx};
 use crate::utils::error::AppError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -29,8 +29,8 @@ const FIXED: &[(Provider, &str, &str, Tier)] = &[
 ];
 
 /// 利用可能モデル。固定のモデルに、登録済みのBedrockモデルを足したもの。
-pub fn catalog() -> Vec<ModelInfo> {
-    catalog_with(&aws::models())
+pub fn catalog(ctx: &WorkspaceCtx) -> Vec<ModelInfo> {
+    catalog_with(&aws::models(ctx))
 }
 
 fn catalog_with(bedrock: &[String]) -> Vec<ModelInfo> {
@@ -55,8 +55,8 @@ pub struct Resolved {
 }
 
 /// `available`はAPIキー登録済みのプロバイダー。
-pub fn resolve(route: &Route, available: &[Provider]) -> Result<Resolved, AppError> {
-    resolve_in(&catalog(), route, available)
+pub fn resolve(ctx: &WorkspaceCtx, route: &Route, available: &[Provider]) -> Result<Resolved, AppError> {
+    resolve_in(&catalog(ctx), route, available)
 }
 
 fn resolve_in(catalog: &[ModelInfo], route: &Route, available: &[Provider]) -> Result<Resolved, AppError> {
@@ -72,8 +72,8 @@ fn resolve_in(catalog: &[ModelInfo], route: &Route, available: &[Provider]) -> R
 }
 
 /// 保存済みの選択が今も使えればそれを、なければ既定を返す。使えるプロバイダーが無ければ`None`。
-pub fn effective(saved: Option<Route>, available: &[Provider]) -> Option<Route> {
-    effective_in(&catalog(), saved, available)
+pub fn effective(ctx: &WorkspaceCtx, saved: Option<Route>, available: &[Provider]) -> Option<Route> {
+    effective_in(&catalog(ctx), saved, available)
 }
 
 /// 既定はClaudeのSonnet(Anthropic直接を優先、次にBedrockで名前にsonnetを含むもの)、

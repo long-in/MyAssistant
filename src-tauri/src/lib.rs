@@ -17,11 +17,15 @@ const EXIT_BATCH_TIMEOUT: Duration = Duration::from_secs(30);
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let app = tauri::Builder::default()
+    .menu(tray::app_menu)
+    .on_menu_event(|app, event| tray::on_app_menu_event(app, event.id().as_ref()))
     .plugin(tauri_plugin_dialog::init())
+    .plugin(tauri_plugin_notification::init())
     .invoke_handler(tauri::generate_handler![
-      tray::set_tray_language,
       commands::agent::agent_approve,
       commands::agent::agent_cancel,
+      commands::agent::agent_resume,
+      commands::agent::agent_detach,
       commands::aws::get_aws_status,
       commands::aws::preview_aws_config,
       commands::aws::save_aws_config,
@@ -46,12 +50,21 @@ pub fn run() {
       commands::profile::get_profile,
       commands::profile::save_profile,
       commands::profile::clear_profile,
+      commands::space_data::get_space_data,
+      commands::space_data::save_space_data,
+      commands::space_data::get_shared_data,
+      commands::space_data::save_shared_data,
       commands::knowledge::get_batch_interval,
       commands::knowledge::set_batch_interval,
       commands::settings::get_debug_mode,
       commands::settings::set_debug_mode,
       commands::settings_transfer::export_settings,
       commands::settings_transfer::import_settings,
+      commands::settings_transfer::export_global_settings,
+      commands::settings_transfer::import_global_settings,
+      commands::global_settings::get_global_prefs,
+      commands::global_settings::set_global_language,
+      commands::global_settings::set_global_os_notifications,
       commands::chat::add_stt_correction,
       commands::chat::get_usage_this_month,
       commands::chat::list_models,
@@ -64,6 +77,8 @@ pub fn run() {
       commands::chat::set_web_access,
       commands::chat::get_shell_access,
       commands::chat::set_shell_access,
+      commands::chat::get_voice_timing,
+      commands::chat::set_voice_timing,
       commands::chat::get_base_instructions,
       commands::chat::save_base_instructions,
       commands::voice::get_stt_engine,
@@ -125,43 +140,70 @@ pub fn run() {
       commands::knowledge::import_knowledge,
       commands::knowledge::reset_knowledge,
       commands::knowledge::run_batch,
+      commands::knowledge_all::list_all_knowledge,
+      commands::knowledge_all::read_knowledge_in,
+      commands::knowledge_all::write_knowledge_in,
+      commands::knowledge_all::create_knowledge_file_in,
+      commands::knowledge_all::create_knowledge_dir_in,
+      commands::knowledge_all::rename_knowledge_in,
+      commands::knowledge_all::delete_knowledge_in,
+      commands::knowledge_all::reveal_knowledge_in_finder,
       commands::knowledge::load_batch_route,
       commands::knowledge::save_batch_route,
+      commands::workspace::list_spaces,
+      commands::workspace::list_space_colors,
+      commands::workspace::get_active_workspace,
+      commands::workspace::create_space,
+      commands::workspace::update_space,
+      commands::workspace::delete_space,
+      commands::workspace::switch_workspace,
+      commands::workspace::copy_workspace_settings,
+      commands::workspace::work_enabled,
+      commands::workspace::set_work_enabled,
+      commands::leader::leader_exists,
+      commands::leader::create_leader,
+      commands::leader::leader_get_prompt,
+      commands::leader::leader_set_prompt,
+      commands::leader::leader_get_limit,
+      commands::leader::leader_set_limit,
+      commands::leader::leader_key_status,
+      commands::leader::leader_save_api_key,
+      commands::leader::leader_delete_api_key,
+      commands::leader::leader_copy_api_key,
+      commands::leader::leader_suggest,
+      commands::leader::leader_dispatch,
+      commands::leader::leader_overview,
+      commands::leader::leader_set_confirmed,
     ])
     .setup(|app| {
       use tauri::Manager;
       let dir = app.path().app_data_dir()?;
       services::legacy_data::migrate(&dir);
       std::fs::create_dir_all(&dir)?;
-      services::secrets::init(&dir)?;
       services::aws::init(app.handle());
-      app.manage(db::Db::open(&dir.join("timeline.db"))?);
+      // パーソナルは従来どおりアプリデータ直下(`timeline.db` / `secrets.json` / `knowledge`)
+      let personal = services::workspace::WorkspaceCtx::open(services::workspace::PERSONAL_ID, &dir)?;
+      // 全体設定は、初回だけパーソナルの現在値を初期値として取り込む
+      if let Err(e) = personal.global.migrate_from(&personal.db) {
+        log::warn!("global settings migration failed: {e}");
+      }
+      app.manage(services::workspace::Workspaces::new(&dir, personal));
       app.manage(commands::chat::SessionContexts::default());
       app.manage(services::graph::GraphCache::default());
-      app.manage(commands::agent::AgentState::default());
       app.manage(services::audio::Recorder::default());
       app.manage(services::stt::SttEngine::default());
       app.manage(services::vad::VadEngine::default());
       app.manage(services::voicevox::VoicevoxEngine::default());
-      app.manage(services::batch::BatchGuard::default());
-      if let Err(e) = services::debug_log::refresh(app.handle()) {
+      if let Err(e) = services::debug_log::refresh(&services::workspace::active(app.handle())) {
         log::warn!("debug log init failed: {e}");
       }
 
       tray::setup(app.handle())?;
+      // メニューバーは状態の登録前に作られるため、スペース一覧を含めて作り直す
+      tray::refresh(app.handle());
 
-      let handle = app.handle().clone();
-      tauri::async_runtime::spawn(async move {
-        loop {
-          // 設定変更を次の待ちから反映するため、毎回読み直す
-          let minutes = services::batch::interval_minutes(&handle.state::<db::Db>())
-            .unwrap_or(services::batch::DEFAULT_INTERVAL_MINUTES);
-          tokio::time::sleep(Duration::from_secs(u64::from(minutes) * 60)).await;
-          if let Err(e) = services::batch::run_guarded(&handle).await {
-            log::warn!("periodic batch failed: {e}");
-          }
-        }
-      });
+      // 整理バッチは、ワークスペースごとの間隔で独立して動かす
+      services::scheduler::spawn(app.handle().clone());
 
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -189,10 +231,14 @@ pub fn run() {
       api.prevent_exit();
       let handle = handle.clone();
       tauri::async_runtime::spawn(async move {
-        let run = services::batch::run_guarded(&handle);
-        if let Ok(Err(e)) = tokio::time::timeout(EXIT_BATCH_TIMEOUT, run).await {
-          log::warn!("exit batch failed: {e}");
-        }
+        let run = async {
+          for ctx in handle.state::<services::workspace::Workspaces>().all() {
+            if let Err(e) = services::batch::run_guarded(&ctx).await {
+              log::warn!("exit batch failed ({}): {e}", ctx.id);
+            }
+          }
+        };
+        let _ = tokio::time::timeout(EXIT_BATCH_TIMEOUT, run).await;
         handle.exit(0);
       });
     }

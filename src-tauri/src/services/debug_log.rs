@@ -10,9 +10,9 @@ use std::{
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use tauri::{AppHandle, Manager};
 
-use super::batch;
+
+use super::{batch, workspace::WorkspaceCtx};
 use crate::{db::Db, utils::{error::AppError, path}};
 
 pub const ENABLED_KEY: &str = "debug_mode";
@@ -21,8 +21,20 @@ pub const DIR_KEY: &str = "debug_log_dir";
 /// ナレッジ直下に作る既定のログ用ディレクトリ名。
 pub const DIR_NAME: &str = "debug-logs";
 
-/// 有効なときだけ出力先ディレクトリが入る。
-static LOG_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+/// ワークスペースごとの出力先。有効なときだけディレクトリが入る。
+/// ワークスペースが別なら出力先も別で、裏で動く処理も自分のワークスペースのログにだけ書く。
+#[derive(Default)]
+pub struct DebugLog(Mutex<Option<PathBuf>>);
+
+impl DebugLog {
+    fn dir(&self) -> Option<PathBuf> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    fn set(&self, dir: Option<PathBuf>) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = dir;
+    }
+}
 
 /// デバッグモードの設定値。未設定は無効。
 pub fn is_enabled(db: &Db) -> Result<bool, AppError> {
@@ -35,10 +47,10 @@ fn custom_dir(db: &Db) -> Result<Option<PathBuf>, AppError> {
 }
 
 /// ログの出力先(作成はしない)。
-pub fn log_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
-    match custom_dir(&app.state::<Db>())? {
+pub fn log_dir(ctx: &WorkspaceCtx) -> Result<PathBuf, AppError> {
+    match custom_dir(&ctx.db)? {
         Some(dir) => Ok(dir),
-        None => Ok(batch::knowledge_root(app)?.join(DIR_NAME)),
+        None => Ok(batch::knowledge_root(ctx)?.join(DIR_NAME)),
     }
 }
 
@@ -56,26 +68,26 @@ pub fn prepare_dir(dir: &Path) -> Result<PathBuf, AppError> {
 }
 
 /// 設定とナレッジの保存先から出力先を決め直す。ナレッジの保存先や設定を変えたときに呼ぶ。
-pub fn refresh(app: &AppHandle) -> Result<(), AppError> {
-    let db = app.state::<Db>();
-    let dir = if !is_enabled(&db)? {
+pub fn refresh(ctx: &WorkspaceCtx) -> Result<(), AppError> {
+    let db = &ctx.db;
+    let dir = if !is_enabled(db)? {
         None
-    } else if let Some(custom) = custom_dir(&db)? {
+    } else if let Some(custom) = custom_dir(db)? {
         Some(prepare_dir(&custom)?)
     } else {
-        Some(path::ensure_dir(&batch::knowledge_root(app)?, &[DIR_NAME.to_owned()])?)
+        Some(path::ensure_dir(&batch::knowledge_root(ctx)?, &[DIR_NAME.to_owned()])?)
     };
-    *LOG_DIR.lock().unwrap_or_else(|e| e.into_inner()) = dir;
+    ctx.debug.set(dir);
     Ok(())
 }
 
-pub fn enabled() -> bool {
-    LOG_DIR.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+pub fn enabled(ctx: &WorkspaceCtx) -> bool {
+    ctx.debug.dir().is_some()
 }
 
 /// 1件を追記する。無効なときは何もせず、書き込みに失敗しても本来の処理は止めない。
-pub fn record(kind: &str, data: Value) {
-    let Some(dir) = LOG_DIR.lock().unwrap_or_else(|e| e.into_inner()).clone() else {
+pub fn record(ctx: &WorkspaceCtx, kind: &str, data: Value) {
+    let Some(dir) = ctx.debug.dir() else {
         return;
     };
     let now = chrono::Local::now();
@@ -91,9 +103,9 @@ fn append(dir: &Path, day: &str, line: &Value) -> std::io::Result<()> {
 }
 
 /// APIの1往復を記録する。`response`が本文として読めなかったときは文字列のまま渡す。
-pub fn record_api(api: &str, url: &str, request: &Value, status: u16, response: &Value) {
-    if enabled() {
-        record("api", json!({ "api": api, "url": url, "request": request, "status": status, "response": response }));
+pub fn record_api(ctx: &WorkspaceCtx, api: &str, url: &str, request: &Value, status: u16, response: &Value) {
+    if enabled(ctx) {
+        record(ctx, "api", json!({ "api": api, "url": url, "request": request, "status": status, "response": response }));
     }
 }
 

@@ -4,7 +4,8 @@
 //! LLMへ一切送らないことで、常時待機中の利用料金を抑える。
 use serde::{Deserialize, Serialize};
 
-use crate::{db::Db, utils::error::AppError};
+use super::global_settings::SettingsStore;
+use crate::utils::error::AppError;
 
 pub const ENABLED_KEY: &str = "wake_enabled";
 pub const WORDS_KEY: &str = "wake_words";
@@ -82,7 +83,7 @@ pub fn detect(text: &str, words: &[String]) -> Option<String> {
     Some(rest.trim_start_matches(|c: char| !c.is_alphanumeric()).trim().to_owned())
 }
 
-pub fn load(db: &Db) -> Result<WakeConfig, AppError> {
+pub fn load(db: &impl SettingsStore) -> Result<WakeConfig, AppError> {
     let words = db
         .get_setting(WORDS_KEY)?
         .and_then(|v| serde_json::from_str::<Vec<String>>(&v).ok())
@@ -91,7 +92,7 @@ pub fn load(db: &Db) -> Result<WakeConfig, AppError> {
 }
 
 /// 保存し、実際に保存した設定を返す。起動ワードがなければ待機は有効にしない。
-pub fn save(db: &Db, config: &WakeConfig) -> Result<WakeConfig, AppError> {
+pub fn save(db: &impl SettingsStore, config: &WakeConfig) -> Result<WakeConfig, AppError> {
     let words = sanitize_words(&config.words);
     let enabled = config.enabled && !words.is_empty();
     db.set_setting(WORDS_KEY, &serde_json::to_string(&words).map_err(|e| AppError::Db(e.to_string()))?)?;

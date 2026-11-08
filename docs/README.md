@@ -12,11 +12,13 @@
 | [wake-standby.md](wake-standby.md) | 常時音声待機と起動ワード |
 | [knowledge.md](knowledge.md) | ナレッジの保存形式、キャプチャ、整理バッチ、入出力 |
 | [knowledge-graph.md](knowledge-graph.md) | グラフ索引と関連ノートの想起 |
+| [global-settings.md](global-settings.md) | 全スペース共通の全体設定 |
 | [user-profile.md](user-profile.md) | パーソナルデータ |
 | [agent-file-tools.md](agent-file-tools.md) | ファイル操作・インターネット検索のツール |
 | [agent-command-tasks.md](agent-command-tasks.md) | 作業依頼(計画の承認とコマンド実行) |
 | [command-policy.md](command-policy.md) | コマンドの許可・拒否の判定とポリシーファイル |
 | [data-and-settings.md](data-and-settings.md) | 保存データ、設定項目、調整値、設定のエクスポート・インポート |
+| [workspace.md](workspace.md) | パーソナルとワークのスペース、保存場所、切り替え、未対応事項 |
 | [security.md](security.md) | API キーの扱い、パスのサンドボックス、プロンプトインジェクション対策 |
 | [debug-log.md](debug-log.md) | デバッグモードとログ画面 |
 | [frontend.md](frontend.md) | 画面構成、ショートカット、メニューバー常駐 |

@@ -2,20 +2,23 @@ use std::{collections::HashMap, path::Path, sync::Mutex};
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use tauri::{AppHandle, Emitter, State, ipc::Channel};
+use tauri::{AppHandle, Emitter, Manager, State, ipc::Channel};
 
 use crate::{
-    commands::agent::{self as agent_cmd, AgentState},
+    commands::agent as agent_cmd,
     db::{Db, UsageRow},
     services::{
-        agent::AgentEvent,
+        agent::{self, AgentEvent},
+        attention::{self, AttentionKind},
         batch, compact,
+        global_settings::SettingsStore,
         graph::{self, GraphCache},
-        knowledge,
+        knowledge, leader,
         llm_router::{self, ModelInfo, Route},
         profile,
-        secrets::{self, Provider},
-        tuning,
+        secrets::Provider,
+        space_data, tuning,
+        workspace::{self, Ctx, WorkspaceCtx, Workspaces, active},
     },
     utils::error::AppError,
 };
@@ -54,7 +57,7 @@ const DEFAULT_BASE_INSTRUCTIONS: &str = "\
 - 数式・記号・英略語は読み上げて自然な言い方にする。話し言葉で、一文を短く。";
 
 /// 画面から登録されたベース指示。未登録(空白のみ含む)なら既定値。
-fn base_instructions(db: &Db) -> Result<String, AppError> {
+fn base_instructions(db: &impl SettingsStore) -> Result<String, AppError> {
     Ok(match db.get_setting(BASE_INSTRUCTIONS_KEY)? {
         Some(v) if !v.trim().is_empty() => v,
         _ => DEFAULT_BASE_INSTRUCTIONS.to_string(),
@@ -72,53 +75,72 @@ fn shell_access(db: &Db) -> Result<bool, AppError> {
 }
 
 #[tauri::command]
-pub fn get_shell_access(db: State<'_, Db>) -> Result<bool, AppError> {
-    shell_access(&db)
+pub fn get_shell_access(ctx: Ctx) -> Result<bool, AppError> {
+    shell_access(&ctx.db)
 }
 
 #[tauri::command]
-pub fn set_shell_access(db: State<'_, Db>, enabled: bool) -> Result<(), AppError> {
-    db.set_setting(SHELL_ACCESS_KEY, if enabled { "1" } else { "0" })
+pub fn set_shell_access(ctx: Ctx, enabled: bool) -> Result<(), AppError> {
+    ctx.db.set_setting(SHELL_ACCESS_KEY, if enabled { "1" } else { "0" })
 }
 
 #[tauri::command]
-pub fn get_web_access(db: State<'_, Db>) -> Result<bool, AppError> {
-    web_access(&db)
+pub fn get_web_access(ctx: Ctx) -> Result<bool, AppError> {
+    web_access(&ctx.db)
 }
 
 #[tauri::command]
-pub fn set_web_access(db: State<'_, Db>, enabled: bool) -> Result<(), AppError> {
-    db.set_setting(WEB_ACCESS_KEY, if enabled { "1" } else { "0" })
+pub fn set_web_access(ctx: Ctx, enabled: bool) -> Result<(), AppError> {
+    ctx.db.set_setting(WEB_ACCESS_KEY, if enabled { "1" } else { "0" })
 }
 
 #[tauri::command]
-pub fn get_tuning(db: State<'_, Db>) -> Result<tuning::Tuning, AppError> {
-    tuning::load(&db)
+pub fn get_tuning(ctx: Ctx) -> Result<tuning::Tuning, AppError> {
+    tuning::load(&ctx.db)
 }
 
 /// 調整項目を保存し、範囲内へ丸めた実際の値を返す。
 #[tauri::command]
-pub fn set_tuning(db: State<'_, Db>, tuning: tuning::Tuning) -> Result<tuning::Tuning, AppError> {
-    tuning::save(&db, tuning)
+pub fn set_tuning(ctx: Ctx, tuning: tuning::Tuning) -> Result<tuning::Tuning, AppError> {
+    tuning::save(&ctx.db, tuning)
+}
+
+/// 音声入力の待ち時間(全体設定)。
+#[tauri::command]
+pub fn get_voice_timing(ctx: Ctx) -> Result<tuning::VoiceTiming, AppError> {
+    tuning::load_voice(&*ctx.global)
+}
+
+/// 音声入力の待ち時間を保存し、範囲内へ丸めた実際の値を返す。
+#[tauri::command]
+pub fn set_voice_timing(ctx: Ctx, voice: tuning::VoiceTiming) -> Result<tuning::VoiceTiming, AppError> {
+    tuning::save_voice(&*ctx.global, voice)
 }
 
 #[tauri::command]
-pub fn get_base_instructions(db: State<'_, Db>) -> Result<String, AppError> {
-    base_instructions(&db)
+pub fn get_base_instructions(ctx: Ctx) -> Result<String, AppError> {
+    base_instructions(&*ctx.global)
 }
 
 /// ベース指示を保存する。空文字は既定値へ戻す扱い。
 #[tauri::command]
-pub fn save_base_instructions(db: State<'_, Db>, text: String) -> Result<(), AppError> {
-    db.set_setting(BASE_INSTRUCTIONS_KEY, text.trim())
+pub fn save_base_instructions(ctx: Ctx, text: String) -> Result<(), AppError> {
+    ctx.global.set_setting(BASE_INSTRUCTIONS_KEY, text.trim())
 }
 
 /// セッションごとの訂正履歴の節。最初の発話時に1回だけナレッジから作り、以降は使い回す。
 #[derive(Default)]
-pub struct SessionContexts(Mutex<HashMap<String, Option<String>>>);
+pub struct SessionContexts(Mutex<HashMap<(String, String), Option<String>>>);
 
-fn restore_corrections(app: &AppHandle) -> Option<String> {
-    let root = batch::knowledge_root(app).ok()?;
+impl SessionContexts {
+    /// 削除したワークスペースの分を捨てる。
+    pub fn forget_workspace(&self, workspace_id: &str) {
+        self.0.lock().unwrap_or_else(|p| p.into_inner()).retain(|(w, _), _| w != workspace_id);
+    }
+}
+
+fn restore_corrections(ctx: &WorkspaceCtx) -> Option<String> {
+    let root = batch::knowledge_root(ctx).ok()?;
     knowledge::recent_corrections(&root, CORRECTIONS_MAX).map(|c| {
         format!(
             "過去にユーザーが訂正した音声認識の聞き間違い(「誤」→「正」)です。同じ誤りがあれば正しい表記と解釈してください。\n\n\
@@ -164,7 +186,7 @@ const REFERENCE_NOTE: &str = "<stt_corrections>・<previous_context>・<related_
 /// 聞き取り間違いの訂正をナレッジ(Markdown)へ記録する。保存した場合は`true`。
 #[tauri::command]
 pub fn add_stt_correction(
-    app: AppHandle,
+    ctx: Ctx,
     contexts: State<'_, SessionContexts>,
     heard: String,
     correct: String,
@@ -173,10 +195,10 @@ pub fn add_stt_correction(
         return Err(AppError::EmptyMessage);
     }
     let now = chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
-    let saved = knowledge::add_correction(&batch::knowledge_root(&app)?, &heard, &correct, &now)?;
+    let saved = knowledge::add_correction(&batch::knowledge_root(&ctx)?, &heard, &correct, &now)?;
     if saved {
-        // 進行中のセッションにも次の発話から反映する
-        contexts.0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+        // 進行中のセッションにも次の発話から反映する(このワークスペースの分だけ)
+        contexts.forget_workspace(&ctx.id);
     }
     Ok(saved)
 }
@@ -189,26 +211,26 @@ pub struct ChatReply {
 }
 
 #[tauri::command]
-pub fn list_models() -> Vec<ModelInfo> {
-    llm_router::catalog()
+pub fn list_models(ctx: Ctx) -> Vec<ModelInfo> {
+    llm_router::catalog(&ctx)
 }
 
 /// 当月のトークン使用量(このアプリ経由の呼び出しのローカル集計)。
 #[tauri::command]
-pub fn get_usage_this_month(db: State<'_, Db>) -> Result<Vec<UsageRow>, AppError> {
-    db.usage_this_month()
+pub fn get_usage_this_month(ctx: Ctx) -> Result<Vec<UsageRow>, AppError> {
+    ctx.db.usage_this_month()
 }
 
 #[tauri::command]
 /// 前回選んだモデル。キー削除などで使えなくなっていれば既定にフォールバックする。
-pub fn load_routing(db: State<'_, Db>) -> Result<Option<Route>, AppError> {
-    let saved = db.get_setting(ROUTE_KEY)?.and_then(|v| serde_json::from_str(&v).ok());
-    Ok(llm_router::effective(saved, &batch::available_providers()))
+pub fn load_routing(ctx: Ctx) -> Result<Option<Route>, AppError> {
+    let saved = ctx.db.get_setting(ROUTE_KEY)?.and_then(|v| serde_json::from_str(&v).ok());
+    Ok(llm_router::effective(&ctx, saved, &batch::available_providers(&ctx.secrets)))
 }
 
 #[tauri::command]
-pub fn save_routing(db: State<'_, Db>, route: Route) -> Result<(), AppError> {
-    db.set_setting(ROUTE_KEY, &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?)
+pub fn save_routing(ctx: Ctx, route: Route) -> Result<(), AppError> {
+    ctx.db.set_setting(ROUTE_KEY, &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?)
 }
 
 /// ユーザー発話を保存 → ルーティング → LLM呼び出し → 応答を保存。
@@ -216,10 +238,9 @@ pub fn save_routing(db: State<'_, Db>, route: Route) -> Result<(), AppError> {
 #[tauri::command]
 pub async fn send_chat(
     app: AppHandle,
-    db: State<'_, Db>,
+    ctx: Ctx,
     contexts: State<'_, SessionContexts>,
     graphs: State<'_, GraphCache>,
-    agents: State<'_, AgentState>,
     session_id: String,
     text: String,
     route: Route,
@@ -229,32 +250,90 @@ pub async fn send_chat(
     if text.is_empty() {
         return Err(AppError::EmptyMessage);
     }
+    // 進捗・承認待ち・結果は、ワークスペースごとの記録にも残す。切り替えても依頼は止まらず、戻ったときに続きから再開できる
+    ctx.shared.agent.begin(&session_id, text, on_event);
+    run_recorded(&app, &ctx, &contexts, &graphs, session_id, text, route).await
+}
+
+/// 記録(`AgentState::begin`か`try_begin_detached`)を始めた依頼を実行し、結果を記録して、裏のスペースなら知らせる。
+/// 画面からの依頼(`send_chat`)と、リーダーから配布された依頼(`commands::leader`)が共有する。
+pub async fn run_recorded(
+    app: &AppHandle,
+    ctx: &WorkspaceCtx,
+    contexts: &SessionContexts,
+    graphs: &GraphCache,
+    session_id: String,
+    text: &str,
+    route: Route,
+) -> Result<ChatReply, AppError> {
+    let session = session_id.clone();
+    let result = send_chat_inner(app, ctx, contexts, graphs, session_id, text, route).await;
+    // リーダーから配布した依頼なら、終わったことを台帳へ残す(後で別の依頼に置き換わっても、結果が分かるように)
+    if let Some(leader) = app.try_state::<Workspaces>().and_then(|ws| ws.leader()) {
+        let status = if result.is_ok() { leader::STATUS_DONE } else { leader::STATUS_FAILED };
+        if let Err(e) = leader.db.ledger_set_status_by_session(&session, status) {
+            log::warn!("ledger update failed: {e}");
+        }
+    }
+    ctx.shared.agent.finish(match &result {
+        Ok(reply) => Ok(serde_json::to_value(reply).unwrap_or(Value::Null)),
+        Err(e) => Err(serde_json::to_value(e).unwrap_or(Value::Null)),
+    });
+    // 開いていないスペースで依頼が終わったら、対応(結果の確認)が必要なことを知らせる。削除されたスペースは知らせない
+    if ctx.ensure_alive().is_ok() && attention::is_background(app, &ctx.id) {
+        match &result {
+            Ok(_) => attention::notify(app, &ctx.id, AttentionKind::Finished, None, None),
+            Err(e) => attention::notify(app, &ctx.id, AttentionKind::Failed, None, serde_json::to_value(e).ok()),
+        }
+    }
+    result
+}
+
+async fn send_chat_inner(
+    app: &AppHandle,
+    ctx: &WorkspaceCtx,
+    contexts: &SessionContexts,
+    graphs: &GraphCache,
+    session_id: String,
+    text: &str,
+    route: Route,
+) -> Result<ChatReply, AppError> {
     let available: Vec<Provider> = Provider::ALL
         .into_iter()
-        .filter(|p| secrets::has_key(*p).unwrap_or(false))
+        .filter(|p| ctx.secrets.has_key(*p).unwrap_or(false))
         .collect();
-    let target = llm_router::resolve(&route, &available)?;
+    let target = llm_router::resolve(&ctx, &route, &available)?;
 
     // 訂正履歴はセッションの最初の発話で1回だけ読む
     let corrections = contexts
         .0
         .lock()
         .unwrap_or_else(|p| p.into_inner())
-        .entry(session_id.clone())
-        .or_insert_with(|| restore_corrections(&app))
+        .entry((ctx.id.clone(), session_id.clone()))
+        .or_insert_with(|| restore_corrections(&ctx))
         .clone();
-    let tuning = tuning::load(&db)?;
-    let base = base_instructions(&db)?;
-    db.insert_log(&session_id, "user", text, None, None)?;
+    let tuning = tuning::load(&ctx.db)?;
+    let base = base_instructions(&*ctx.global)?;
+    ctx.db.insert_log(&session_id, "user", text, None, None)?;
     // 往復数が上限を超えていれば古い分を要約し、LLMへは「要約 + 直近の会話」だけを渡す
-    let window = compact::prepare(&db, &session_id, tuning.history_exchanges, target.provider, &target.model).await?;
+    let window = compact::prepare(&ctx, &session_id, tuning.history_exchanges, target.provider, &target.model).await?;
     // 関連ナレッジは話題に合わせて発話ごとに想起する。「それ」などに備えて直前のユーザー発話も手がかりにする
     let previous = window.recent.iter().rev().filter(|r| r.role == "user").nth(1).map_or("", |r| r.content.as_str());
-    let related = batch::knowledge_root(&app)
+    let related = batch::knowledge_root(&ctx)
         .ok()
         .and_then(|root| related_context(&root, &graphs, &format!("{text}\n{previous}")));
     // 基本情報は設定の変更を次の発話から反映するため、セッションのキャッシュに入れず毎回読む
-    let personal = profile::load(&db)?.prompt_block(chrono::Local::now().date_naive());
+    // パーソナルはパーソナルデータ、スペースは共通データとスペースデータ(どちらもユーザーが書いた指示)を渡す。スペースにパーソナルデータは渡さない
+    // リーダーはリーダープロンプトだけを渡す(パーソナルデータ・共通データ・スペースデータは渡さない)
+    let (personal, instructions) = if ctx.id == workspace::PERSONAL_ID {
+        (profile::load(&*ctx.global)?.prompt_block(chrono::Local::now().date_naive()), Vec::new())
+    } else if ctx.id == workspace::LEADER_ID {
+        (None, leader::prompt_block(&leader::load_prompt(&ctx.db)?).into_iter().collect())
+    } else {
+        let shared = space_data::shared_block(&space_data::load_shared(app.state::<Workspaces>().root()));
+        (None, shared.into_iter().chain(space_data::space_block(&space_data::load(&ctx.db)?)).collect())
+    };
+    let base = if instructions.is_empty() { base } else { format!("{base}\n\n{}", instructions.join("\n\n")) };
     let reference: Vec<String> = personal
         .into_iter()
         .chain(corrections)
@@ -269,25 +348,79 @@ pub async fn send_chat(
     let rows = window.recent;
 
     let record_usage = |input: u64, output: u64| {
-        if let Err(e) = db.record_usage(target.provider.as_str(), &target.model, input, output) {
+        if let Err(e) = ctx.db.record_usage(target.provider.as_str(), &target.model, input, output) {
             log::warn!("usage record failed: {e}");
         }
     };
     // 今回の発話は保存済みなので履歴から外し、別に渡す
     let mut prior: Vec<Value> = rows.into_iter().map(|r| json!({ "role": r.role, "content": r.content })).collect();
     prior.pop();
-    let root = batch::knowledge_root(&app)?;
+    let root = batch::knowledge_root(&ctx)?;
     let system = system.as_deref().unwrap_or_default();
-    let out = agent_cmd::run_with_tools(&agents, &root, target.provider, &target.model, system, web_access(&db)?.then_some((tuning.web_search_max, tuning.web_fetch_max)), shell_access(&db)?, prior, text, &on_event, record_usage).await?;
+    // リーダーは、ファイル操作に代えて、台帳の参照と配布の下書きのツールを使う
+    let ws = app.state::<Workspaces>();
+    let leader_host = |id: &str, name: &str, input: &Value| {
+        leader::run_tool(ctx, &ws.list(), |sid| (ws.run_status(sid), ws.run_session(sid)), id, name, input)
+    };
+    let host: Option<agent::ToolHost<'_>> = (ctx.id == workspace::LEADER_ID).then_some(&leader_host);
+    let out = agent_cmd::run_with_tools(
+        ctx,
+        &root,
+        target.provider,
+        &target.model,
+        system,
+        web_access(&ctx.db)?.then_some((tuning.web_search_max, tuning.web_fetch_max)),
+        shell_access(&ctx.db)?,
+        host,
+        prior,
+        text,
+        &|event| {
+            // 開いていないスペースで承認が必要になったら、すぐ知らせる(画面が見ていなくても、承認は回答を待っている)
+            if let AgentEvent::Approval(a) = &event
+                && attention::is_background(app, &ctx.id)
+            {
+                attention::notify(app, &ctx.id, AttentionKind::Approval, Some(a), None);
+            }
+            ctx.shared.agent.emit(event);
+        },
+        record_usage,
+        || active(app).id == ctx.id,
+    )
+    .await?;
     let content = out.text;
-    db.insert_log(&session_id, "assistant", &content, Some(target.provider.as_str()), Some(&target.model))?;
+    // 実行中に削除されたスペースへは、応答もキャプチャも書かない
+    ctx.ensure_alive()?;
+    ctx.db.insert_log(&session_id, "assistant", &content, Some(target.provider.as_str()), Some(&target.model))?;
     // 会話内容は確認なしでキャプチャ(チャプター)として書き出す。整理は画面の「今すぐ整理」で行う
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    match batch::knowledge_root(&app).and_then(|root| knowledge::append_capture(&root, &session_id, text, &content, &now)) {
+    match batch::knowledge_root(&ctx).and_then(|root| knowledge::append_capture(&root, &session_id, text, &content, &now)) {
         Ok(()) => {
             let _ = app.emit(batch::KNOWLEDGE_UPDATED_EVENT, ());
         }
         Err(e) => log::warn!("capture failed: {e}"),
     }
     Ok(ChatReply { content, provider: target.provider.as_str(), model: target.model.clone() })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_contexts_are_per_workspace() {
+        let contexts = SessionContexts::default();
+        let key = |w: &str, s: &str| (w.to_owned(), s.to_owned());
+        {
+            let mut map = contexts.0.lock().unwrap();
+            map.insert(key("personal", "s1"), Some("personal corrections".into()));
+            map.insert(key("p1", "s1"), Some("space corrections".into())); // 同じセッションIDでも別のワークスペース
+            map.insert(key("p1", "s2"), None);
+        }
+        // 別のワークスペースの分は混ざらない
+        assert_eq!(contexts.0.lock().unwrap().get(&key("p1", "s1")).unwrap().as_deref(), Some("space corrections"));
+        contexts.forget_workspace("p1");
+        let map = contexts.0.lock().unwrap();
+        assert_eq!(map.len(), 1);
+        assert!(map.contains_key(&key("personal", "s1")));
+    }
 }

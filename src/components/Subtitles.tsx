@@ -2,7 +2,7 @@
 
 import { useT } from "@/lib/i18n";
 import { useEffect, useRef, useState } from "react";
-import { Check, Pencil, X } from "lucide-react";
+import { Check, Pencil, Square, Volume2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,11 +14,20 @@ export default function Subtitles({
   turns,
   pending,
   onCorrected,
+  speaking,
+  onSpeak,
+  onStop,
 }: {
   turns: Turn[];
   pending: boolean;
   /** 聞き取り訂正を保存したとき、正しい文を渡す。 */
   onCorrected: (text: string) => void;
+  /** 読み上げ中か。 */
+  speaking?: boolean;
+  /** 返答を読み上げる。渡さなければ(読み上げの準備がないとき)、ボタンは出さない。 */
+  onSpeak?: (text: string) => void;
+  /** 読み上げを止める。 */
+  onStop?: () => void;
 }) {
   const t = useT();
   const turn = turns.length ? turns[turns.length - 1] : null;
@@ -111,15 +120,26 @@ export default function Subtitles({
           </Button>
         </form>
       )}
-      {reply ? (
+      {reply && (
         <div className="rounded-sm bg-background/60 px-4 py-1.5 text-base leading-6 text-foreground [text-shadow:0_0_8px_var(--background)] backdrop-blur-sm">
           <Reply text={reply} />
         </div>
-      ) : (
-        pending && (
-          <p className="hud-label animate-hud-blink-slow text-[0.65rem]">Processing…</p>
-        )
       )}
+      {reply && onSpeak && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          className="text-muted-foreground"
+          aria-label={speaking ? t("読み上げを止める") : t("返答を読み上げる")}
+          title={speaking ? t("読み上げを止める") : t("返答を読み上げる")}
+          onClick={() => (speaking ? onStop?.() : onSpeak(reply))}
+        >
+          {speaking ? <Square /> : <Volume2 />}
+          {speaking ? t("停止") : t("読み上げ")}
+        </Button>
+      )}
+      {!reply && pending && <p className="hud-label animate-hud-blink-slow text-[0.65rem]">Processing…</p>}
     </div>
   );
 }

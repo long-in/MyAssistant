@@ -60,6 +60,19 @@ export const ERROR_MESSAGES: Record<string, string> = {
   mfa_required: "MFAコードが入力されませんでした。もう一度お試しください。",
   invalid_dictionary: "読み上げ辞書のJSONを取り込めませんでした。[{\"word\": \"語\", \"reading\": \"読み\"}] の形式で、ファイルは1MB以下にしてください。",
   invalid_settings: "設定ファイルの形式が正しくありません。このアプリが書き出したファイルを選んでください。",
+  // スペース(ワークスペースの管理)の画面に出る文言。表記は言語設定に従う
+  invalid_space_data: "指示は2,000文字以内で、< > と制御文字を含めずに入力してください。",
+  invalid_space: "スペースの名称(1〜40文字)またはイメージカラーが正しくありません。",
+  reserved_name: "その名称は予約されています。別のスペース名にしてください。",
+  name_in_use: "その名称は、ほかのスペースがすでに使っています。別の名称にしてください。",
+  color_in_use: "その色は、ほかのスペースがすでに使っています。別の色を選んでください。",
+  space_limit: "スペースは30件までです。不要なスペースを削除してください。",
+  space_not_found: "スペースが見つかりません。",
+  leader_required: "スペースを作るには、先にリーダーを作成してください。",
+  leader_exists: "リーダーはすでに作成されています。",
+  work_disabled: "ワークは無効です。全体設定で有効にしてください。",
+  work_busy: "ワークの中に実行中または承認待ちの依頼があります。完了してから無効にしてください。",
+  path_in_use: "その場所は、ほかのワークスペースのナレッジまたはデバッグログの保存先と重なっています。別の場所を選んでください。",
 };
 
 export function errorMessage(e: unknown): string {
@@ -109,7 +122,16 @@ export type AwsStatus = {
 
 /** MFAコードの入力を求めるイベント(Bedrock呼び出しはコードが届くまで待つ)。 */
 export const AWS_MFA_EVENT = "aws-mfa-required";
-export type AwsMfaPrompt = { profile: string; mfa_serial: string; error: string | null };
+export type AwsMfaPrompt = {
+  profile: string;
+  mfa_serial: string;
+  error: string | null;
+  /** コードを求めているワークスペース(`personal`またはスペースID)。コードはこのIDで返す。 */
+  workspace_id: string;
+  /** スペースの名称とイメージカラー。パーソナルは`null`。 */
+  workspace_name: string | null;
+  workspace_color: string | null;
+};
 
 export const getAwsStatus = () => invoke<AwsStatus>("get_aws_status");
 /** 貼り付け中の内容から読み取れるプロファイル一覧(保存しない)。 */
@@ -125,8 +147,9 @@ export const removeAwsModel = (model: string) => invoke<AwsStatus>("remove_aws_m
 export const selectAwsProfile = (name: string) => invoke<AwsStatus>("select_aws_profile", { name });
 /** 認証からモデル呼び出しまで通しで確認する。MFAが必要なら`AWS_MFA_EVENT`が飛び、コード入力まで待つ。 */
 export const testAwsConnection = () => invoke<AwsStatus>("test_aws_connection");
-export const submitAwsMfa = (code: string) => invoke<void>("submit_aws_mfa", { code });
-export const cancelAwsMfa = () => invoke<void>("cancel_aws_mfa");
+/** コードは、求めたワークスペースへ返す(選択中とは限らない)。 */
+export const submitAwsMfa = (workspaceId: string, code: string) => invoke<void>("submit_aws_mfa", { workspaceId, code });
+export const cancelAwsMfa = (workspaceId: string) => invoke<void>("cancel_aws_mfa", { workspaceId });
 
 export type Route = { provider: Provider; model: string };
 
@@ -165,6 +188,11 @@ export const sendChat = (sessionId: string, text: string, route: Route, onEvent:
 /** 承認の種類。file=ファイル作成、plan=作業計画、command=計画外・破壊的なコマンドの個別承認、allow_command=許可リストにないコマンドを許可に加えて実行。 */
 export type ApprovalKind = "file" | "plan" | "command" | "allow_command";
 
+/** 配布の下書きの宛先(スペース)。 */
+export type DraftTarget = { id: string; name: string; color: string };
+/** リーダーの配布の下書き。`targets`は、AIが推奨する宛先。 */
+export type DispatchDraft = { id: string; instruction: string; targets: DraftTarget[] };
+
 /** 音声対話中のファイル操作・作業の進捗。`approval`は実行前の承認要求で、`agentApprove`で応答する。 */
 export type AgentEvent =
   | { type: "text"; text: string }
@@ -182,7 +210,37 @@ export type AgentEvent =
       /** 個別承認が必要な理由(コマンドのみ)。 */
       reason: string;
     }
-  | { type: "command_output"; id: string; stream: "stdout" | "stderr"; text: string };
+  | { type: "command_output"; id: string; stream: "stdout" | "stderr"; text: string }
+  /** リーダーが作った配布の下書き。利用者が宛先を確かめて配布する(AIは配布できない)。 */
+  | ({ type: "dispatch_draft" } & DispatchDraft)
+  /** 依頼の完了。切り替えから戻って`agentResume`で接続し直した画面にだけ届く(最初の画面は`sendChat`の戻り値で受け取る)。 */
+  | { type: "finished"; reply: ChatReply | null; error: AppError | null };
+
+/** 切り替えから戻ったときに受け取る、そのワークスペースの依頼の状況。 */
+export type RunSnapshot = {
+  /** 実行中か(切り替えている間に終わっていれば偽)。 */
+  running: boolean;
+  session_id: string;
+  user_text: string;
+  /** これまでの進捗(新しい側の最大500件)。 */
+  events: AgentEvent[];
+  /** 回答待ちの承認。 */
+  pending: Omit<Extract<AgentEvent, { type: "approval" }>, "type"> | null;
+  /** 画面が見ていない間に終わった依頼の結果(一度だけ渡される)。 */
+  finished: { reply: ChatReply | null; error: AppError | null } | null;
+};
+
+/**
+ * ワークスペースへ戻ったとき、実行中だった依頼の状況を受け取り、以降の進捗(と結果)を受ける接続を張り直す。
+ * 切り替えても依頼は止まらず、承認が要るときは回答を待っている。
+ */
+export const agentResume = (workspaceId: string, onEvent: (e: AgentEvent) => void) => {
+  const channel = new Channel<AgentEvent>();
+  channel.onmessage = onEvent;
+  return invoke<RunSnapshot>("agent_resume", { workspaceId, onEvent: channel });
+};
+/** 画面がワークスペースを離れたことを知らせる。依頼は止まらず、進捗はバックエンドに記録される。 */
+export const agentDetach = (workspaceId: string) => invoke<void>("agent_detach", { workspaceId });
 
 export const agentApprove = (id: string, approved: boolean) =>
   invoke<void>("agent_approve", { id, approved });
@@ -238,23 +296,37 @@ export const DEBUG_MODE_EVENT = "debug-mode-changed";
 export const getWebAccess = () => invoke<boolean>("get_web_access");
 export const setWebAccess = (enabled: boolean) => invoke<void>("set_web_access", { enabled });
 
-/** 設定ページで変更できる数値の調整項目。保存時に範囲内へ丸められる。 */
+/** スペースごとの数値の上限。保存時に範囲内へ丸められる。 */
 export type Tuning = {
   web_search_max: number;
   web_fetch_max: number;
-  voice_idle_secs: number;
-  utterance_silence_secs: number;
-  release_tail_secs: number;
   history_exchanges: number;
 };
 export const DEFAULT_TUNING: Tuning = {
   web_search_max: 5,
   web_fetch_max: 5,
+  history_exchanges: 10,
+};
+
+/** 音声入力の待ち時間。全スペース共通(全体設定)。保存時に範囲内へ丸められる。 */
+export type VoiceTiming = {
+  voice_idle_secs: number;
+  utterance_silence_secs: number;
+  release_tail_secs: number;
+};
+export const DEFAULT_VOICE_TIMING: VoiceTiming = {
   voice_idle_secs: 3,
   utterance_silence_secs: 1.2,
   release_tail_secs: 0.5,
-  history_exchanges: 10,
 };
+export const getVoiceTiming = () => invoke<VoiceTiming>("get_voice_timing");
+export const setVoiceTiming = (voice: VoiceTiming) => invoke<VoiceTiming>("set_voice_timing", { voice });
+
+/** 全体設定のうち画面の環境の項目。未保存の項目はnull。 */
+export type GlobalPrefs = { language: "ja" | "en" | null; os_notifications: boolean | null };
+export const getGlobalPrefs = () => invoke<GlobalPrefs>("get_global_prefs");
+export const setGlobalLanguage = (language: "ja" | "en") => invoke<void>("set_global_language", { language });
+export const setGlobalOsNotifications = (enabled: boolean) => invoke<void>("set_global_os_notifications", { enabled });
 export const getTuning = () => invoke<Tuning>("get_tuning");
 /** 保存し、範囲内へ丸めた実際の値を返す。 */
 export const setTuning = (tuning: Tuning) => invoke<Tuning>("set_tuning", { tuning });
@@ -280,6 +352,15 @@ export const getProfile = () => invoke<UserProfile>("get_profile");
 /** 検証して保存し、整えた後の値を返す。 */
 export const saveProfile = (profile: UserProfile) => invoke<UserProfile>("save_profile", { profile });
 export const clearProfile = () => invoke<void>("clear_profile");
+
+/** スペースデータ・共通データ。ユーザーが書いた自由記述の指示で、有効な間だけAIへ毎回渡す。 */
+export type SpaceNote = { enabled: boolean; text: string };
+export const SPACE_NOTE_MAX_CHARS = 2000;
+export const getSpaceData = () => invoke<SpaceNote>("get_space_data");
+/** 検証して保存し、整えた後の値を返す。スペースの画面でだけ使う。 */
+export const saveSpaceData = (note: SpaceNote) => invoke<SpaceNote>("save_space_data", { note });
+export const getSharedData = () => invoke<SpaceNote>("get_shared_data");
+export const saveSharedData = (note: SpaceNote) => invoke<SpaceNote>("save_shared_data", { note });
 
 export type SttEngine = "local" | "google" | "aqua";
 export const getSttEngine = () => invoke<SttEngine>("get_stt_engine");
@@ -555,6 +636,33 @@ export type BatchReport = {
   failed_segments: number;
 };
 
+/** 1スペース分のナレッジ(全スペース一覧用)。`error`があれば一覧を取れなかった。`color`はパーソナルでは null。 */
+export type SpaceKnowledge = {
+  id: string;
+  name: string;
+  color: string | null;
+  root: string;
+  files: KnowledgeFile[];
+  dirs: string[];
+  error: string | null;
+};
+/** パーソナル・リーダー・全スペースのナレッジ(切り替えずに操作できる)。 */
+export const listAllKnowledge = () => invoke<SpaceKnowledge[]>("list_all_knowledge");
+export const readKnowledgeIn = (spaceId: string, path: string) => invoke<string>("read_knowledge_in", { spaceId, path });
+export const writeKnowledgeIn = (spaceId: string, path: string, content: string) =>
+  invoke<void>("write_knowledge_in", { spaceId, path, content });
+export const createKnowledgeFileIn = (spaceId: string, path: string) =>
+  invoke<string>("create_knowledge_file_in", { spaceId, path });
+export const createKnowledgeDirIn = (spaceId: string, path: string) =>
+  invoke<void>("create_knowledge_dir_in", { spaceId, path });
+export const renameKnowledgeIn = (spaceId: string, from: string, to: string) =>
+  invoke<void>("rename_knowledge_in", { spaceId, from, to });
+export const deleteKnowledgeIn = (spaceId: string, path: string) =>
+  invoke<void>("delete_knowledge_in", { spaceId, path });
+/** Finderで開く。`path`ありならそれを選択した状態で、なしならナレッジフォルダを開く。 */
+export const revealKnowledgeInFinder = (spaceId: string, path?: string) =>
+  invoke<void>("reveal_knowledge_in_finder", { spaceId, path: path ?? null });
+
 /** ナレッジ(Markdown)の保存先フォルダ。Obsidianのvaultとして開ける。 */
 export const knowledgeDir = () => invoke<string>("knowledge_dir");
 /** 保存先を変更する(nullで既定に戻す)。既存ファイルは移動されない。変更後のパスを返す。 */
@@ -589,6 +697,116 @@ export type SettingsTransferReport = { applied: number; skipped: number };
 export const exportSettings = (dest: string) => invoke<SettingsTransferReport>("export_settings", { dest });
 /** 書き出した設定ファイルを読み込んで反映する。 */
 export const importSettings = (src: string) => invoke<SettingsTransferReport>("import_settings", { src });
+/** 全体設定だけの書き出し・読み込み。 */
+export const exportGlobalSettings = (dest: string) => invoke<SettingsTransferReport>("export_global_settings", { dest });
+export const importGlobalSettings = (src: string) => invoke<SettingsTransferReport>("import_global_settings", { src });
 
 /** トレイメニューの表示言語を切り替える。 */
-export const setTrayLanguage = (lang: string) => invoke<void>("set_tray_language", { lang });
+
+/** パーソナルワークスペースのID。 */
+export const PERSONAL_ID = "personal";
+/** リーダー(各スペースのタスク進捗を管理する特別なスペース)のID・表示名・イメージカラー。スペースの一覧には入らない。 */
+export const LEADER_ID = "leader";
+export const LEADER_NAME = "Leader";
+export const LEADER_COLOR = "#f59e0b";
+/** 作れるスペースの上限。 */
+export const MAX_SPACES = 30;
+/** スペース名の最大文字数。 */
+export const SPACE_NAME_MAX = 40;
+
+/** ワークの1スペース(独立したエージェント)。`color`は`#rrggbb`。 */
+export type Space = { id: string; name: string; color: string; created_at: string };
+/** 現在のワークスペース。`space`はパーソナルのとき`null`。 */
+export type ActiveWorkspace = { id: string; space: Space | null };
+
+export const WORKSPACE_CHANGED_EVENT = "workspace-changed";
+
+/** 開いていないスペースで、対応が必要になったときの通知。 */
+export const AGENT_ATTENTION_EVENT = "agent-attention";
+export type AgentAttention = {
+  /** 対象のワークスペース(`personal`またはスペースID)。 */
+  workspace_id: string;
+  /** スペースの名称とイメージカラー。パーソナルは`null`。 */
+  workspace_name: string | null;
+  workspace_color: string | null;
+  /** approval=承認が必要、finished=依頼が完了、failed=依頼が失敗。 */
+  kind: "approval" | "finished" | "failed";
+  /** 承認の種類。承認のときだけ。 */
+  approval_kind: "file" | "plan" | "command" | "allow_command" | null;
+  /** 承認を求められている内容(ファイルは作成先、コマンドはその内容)。計画では空。 */
+  detail: string | null;
+  error: AppError | null;
+};
+
+/** スペースに選べるイメージカラー(30色)。 */
+export const listSpaceColors = () => invoke<string[]>("list_space_colors");
+export const listSpaces = () => invoke<Space[]>("list_spaces");
+export const getActiveWorkspace = () => invoke<ActiveWorkspace>("get_active_workspace");
+export const createSpace = (name: string, color: string) => invoke<Space>("create_space", { name, color });
+export const updateSpace = (id: string, name: string, color: string) =>
+  invoke<Space>("update_space", { id, name, color });
+/** 削除の結果。`keptKnowledge`は、残したナレッジの場所(残さなかった、または無かったときは null)。 */
+export type DeleteReport = { active: ActiveWorkspace; keptKnowledge: string | null };
+/** スペースを削除する。`deleteKnowledge`が false なら、既定の場所のナレッジは消さずに残す。 */
+export const deleteSpace = (id: string, deleteKnowledge: boolean) =>
+  invoke<DeleteReport>("delete_space", { id, deleteKnowledge });
+/** コピーした設定の項目数と、コピーしたキーの件数(キーの値は返らない)。 */
+export type CopyReport = { settings: number; keys: number; words: number };
+/** `from`の設定を`to`へコピーする(`personal`またはスペースID)。コピー先の既存の設定は上書きされる。 */
+export const copyWorkspaceSettings = (from: string, to: string, includeKeys: boolean, includeDictionary: boolean) =>
+  invoke<CopyReport>("copy_workspace_settings", { from, to, includeKeys, includeDictionary });
+export const switchWorkspace = (id: string) => invoke<ActiveWorkspace>("switch_workspace", { id });
+
+// ---- リーダー(各スペースのタスク進捗を管理する特別なスペース) ----
+
+/** 依頼のいまの状態。`interrupted`は、再起動などで依頼が失われたもの。 */
+export type TaskStatus = "running" | "awaiting_approval" | "done" | "failed" | "interrupted";
+/** 台帳の1行(1回の配布の、1つの宛先)。結果の本文は持たない。 */
+export type LeaderTask = {
+  id: string;
+  batch_id: string;
+  instruction: string;
+  space_id: string;
+  /** 配布したときの宛先の名称(スペースが削除されても残る)。 */
+  space_name: string;
+  status: string;
+  confirmed: boolean;
+  created_at: string;
+  live_status: TaskStatus;
+  space_exists: boolean;
+  space_color: string | null;
+};
+/** 各スペースのいまの依頼の状態(`idle`=動いていない)。直接の指示によるものも含む。 */
+export type SpaceRun = { id: string; name: string; color: string; status: "idle" | "running" | "awaiting_approval" | "done" | "failed" };
+/** `limit`=同時に指示できるスペース数の上限、`active`=リーダーが配布していま動いている(実行中・承認待ち)スペースの数。 */
+export type LeaderOverview = { tasks: LeaderTask[]; spaces: SpaceRun[]; limit: number; active: number };
+/** スペース数の上限(バックエンドの`MAX_SPACES`と同じ)。同時に指示できる数の上限の最大値。 */
+export const LEADER_LIMIT_MAX = 30;
+/** 配布できなかった理由。`active`=選択中のスペース、`limit`=同時に指示できる数の上限、`busy`=依頼の最中。 */
+export type DispatchReason = "not_found" | "active" | "limit" | "busy" | "no_provider" | "error";
+export type DispatchResult = { space_id: string; started: boolean; reason: DispatchReason | null };
+
+export const leaderExists = () => invoke<boolean>("leader_exists");
+/** ワークが有効か(未保存は有効)。無効のあいだも、リーダー・スペースのデータは残る。 */
+export const workEnabled = () => invoke<boolean>("work_enabled");
+/** ワークの有効/無効を切り替える。実行中・承認待ちがあるときは無効にできない。 */
+export const setWorkEnabled = (enabled: boolean) => invoke<void>("set_work_enabled", { enabled });
+export const createLeader = () => invoke<void>("create_leader");
+/** リーダープロンプト(行動原理・役割)。 */
+export const leaderGetPrompt = () => invoke<SpaceNote>("leader_get_prompt");
+export const leaderSetPrompt = (note: SpaceNote) => invoke<SpaceNote>("leader_set_prompt", { note });
+/** リーダーのAPIキーの登録有無のみ(生値は返らない)。 */
+export const leaderGetLimit = () => invoke<number>("leader_get_limit");
+export const leaderSetLimit = (limit: number) => invoke<number>("leader_set_limit", { limit });
+export const leaderKeyStatus = () => invoke<KeyStatus>("leader_key_status");
+export const leaderSaveApiKey = (provider: Provider, key: string) => invoke<void>("leader_save_api_key", { provider, key });
+export const leaderDeleteApiKey = (provider: Provider) => invoke<void>("leader_delete_api_key", { provider });
+/** `from`(`personal`またはスペースID)のAnthropicのAPIキーを、リーダーへコピーする。コピーできたか(コピー元に無ければ false)。 */
+export const leaderCopyApiKey = (from: string) => invoke<boolean>("leader_copy_api_key", { from });
+/** 宛先の提案(スペースID)。過去に配布した指示の履歴だけが根拠で、根拠が無ければ空。 */
+export const leaderSuggest = (text: string) => invoke<string[]>("leader_suggest", { text });
+/** 指示を、選んだスペースへ配布する。宛先は必ず利用者が選ぶ。 */
+export const leaderDispatch = (text: string, spaceIds: string[]) =>
+  invoke<DispatchResult[]>("leader_dispatch", { text, spaceIds });
+export const leaderOverview = () => invoke<LeaderOverview>("leader_overview");
+export const leaderSetConfirmed = (id: string, confirmed: boolean) => invoke<void>("leader_set_confirmed", { id, confirmed });

@@ -15,7 +15,7 @@ export default function UsageHud({ rows }: { rows: UsageRow[] }) {
   const unknown = costs.some((c) => c === null);
   return (
     <div
-      className="hud-panel absolute right-4 top-4 min-w-56 px-3 py-2 text-xs"
+      className="hud-panel absolute right-4 top-14 min-w-56 px-3 py-2 text-xs"
       title={t("このアプリ経由の当月分(ローカル集計)。単価は公開価格に基づく概算で、請求額とは一致しない場合があります。")}
     >
       <div className="mb-1.5 flex items-center justify-between">

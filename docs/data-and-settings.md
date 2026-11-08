@@ -4,6 +4,8 @@
 
 すべてアプリデータディレクトリ(識別子 `MyAssistant`)に保存され、リポジトリには含まれない。macOS では `~/Library/Application Support/MyAssistant/`。
 
+下の表の `timeline.db`・`secrets.json`・ナレッジは**ワークスペースごと**に持つ。パーソナルは下記のとおりアプリデータ直下、ワークのスペースは `workspaces/<UUID>/` 配下に同じ構成で置く([workspace.md](workspace.md))。`models/`・`voice/`・`voicevox/` は端末で共有する。
+
 | パス | 内容 |
 | --- | --- |
 | `timeline.db` | SQLite。会話ログ・使用量・アプリ設定 |
@@ -11,7 +13,10 @@
 | `models/` | Whisper モデル(`ggml-large-v3-turbo-q5_0.bin` / `ggml-small.bin`) |
 | `voice/` | 定型音声(`<id>-<ハッシュ>.mp3` / `.wav`。声ごとに別ファイル) |
 | `voicevox/` | VOICEVOX CORE・ONNX Runtime・OpenJTalk 辞書・音声モデル(設定画面から取得) |
-| ナレッジ | 既定ではアプリデータ配下。設定で任意のフォルダへ変更できる([knowledge.md](knowledge.md)) |
+| ナレッジ | 既定ではアプリデータ配下(`knowledge/`)。設定で任意のフォルダへ変更できる([knowledge.md](knowledge.md)) |
+| `tts_dictionary.json` | 読み上げ辞書(ユーザー登録分) |
+| `workspaces/registry.json` | ワークのスペース一覧(id・名称・イメージカラー・作成日時) |
+| `workspaces/<UUID>/` | スペースのデータ。`timeline.db`・`secrets.json`・`knowledge/`・`tts_dictionary.json` をパーソナルと同じ名前で持つ |
 
 旧名(識別子 `dev.longin.tachicoma-agent`)のフォルダがあり新しいフォルダが無ければ、起動時に丸ごと改名して引き継ぐ(`services/legacy_data.rs`)。ナレッジ内の旧 `.tachicoma/` もコマンド権限の読み書き時に `.my-assistant/` へ改名する。旧名の設定ファイルも取り込める。
 
@@ -58,28 +63,29 @@ erDiagram
 | キー | 値 | 既定 | 設定画面 |
 | --- | --- | --- | --- |
 | `routing` | `Route`(JSON) | Claude が使えれば Sonnet | 対話画面のモデル選択 |
-| `base_instructions` | 文字列 | 既定文 | Base Prompt |
 | `web_access` | `0` / `1` | 有効 | Web Search |
 | `shell_access` | `0` / `1` | 有効 | Command Tasks |
 | `stt_engine` | `local` / `google` / `aqua` | `local` | Voice Link |
 | `stt_language` | `auto` / `ja` / `en` / `zh` / `ko` | `auto` | Voice Link |
-| `tts_engine` | `google` / `voicevox` | `google` | Voice Link |
+| `tts_engine` | `google` / `voicevox` | `voicevox` | Voice Link |
 | `voicevox_style` | VOICEVOX のスタイル ID(数値の文字列) | `3`(ずんだもん ノーマル) | Voice Link |
 | `whisper_revision` | Hugging Face のリビジョン(ブランチ・タグ・コミット) | `main` | Voice Link(取得バージョン) |
 | `voicevox_versions` | 取得する配布物のバージョン(JSON: `core` / `onnxruntime` / `models` / `dict_release` / `dict`。未指定の項目は既定値) | CORE `0.17.1`、ONNX Runtime `1.23.2`、音声モデル `0.17.0`、辞書 `v1.11.1` / `1.11` | Voice Link(取得バージョン) |
-| `proofread_route` | `Route`(JSON)。空ならオフ | オフ | Proofread |
-| `wake_enabled` / `wake_words` | `0` / `1`、JSON 配列 | 無効 | Wake Words |
-| `tuning` | 調整項目(JSON) | 下表 | Voice Timing / Limits |
+| `tuning` | 上限の調整項目(JSON) | 下表 | Limits |
 | `batch_route` | `Route`(JSON) | 既定 | ナレッジ画面 |
-| `batch_interval_minutes` | 5〜1,440 | 30 | Knowledge Interval |
+| `proofread_route` | `Route`(JSON)。空は校正オフ | オフ | Proofread(設定の音声タブ) |
 | `debug_mode` | `0` / `1` | 無効 | Debug Mode |
-| `user_profile` | パーソナルデータ(JSON) | 有効・全項目未設定 | Personal Data |
+| `space_data` | スペースデータ(JSON `{enabled, text}`。スペースのみ。コピー・エクスポートの対象外) | 有効・空 | Space Data |
 | `knowledge_dir` | 絶対パス(空なら既定) | 既定 | ナレッジ画面 |
 | `summary:<session_id>` | 会話の要約(JSON) | — | — |
+
+**全体設定に移した項目**(ベースプロンプト `base_instructions`、OS通知、表示言語、音声入力の待ち時間 `voice_timing`、起動ワード `wake_enabled` / `wake_words`、パーソナルデータ `user_profile`、ナレッジ整理の間隔 `batch_interval_minutes`)は、`app_settings` ではなく `workspaces/global_settings.json` に保存する。スペースのDBに残った同名の値は読まない([global-settings.md](global-settings.md))。
 
 自動保存: 調整項目と Command Policy は、入力欄を離れたときに保存する。
 
 ## 調整項目(`tuning.rs`)
+
+スペースごとの上限(`tuning`)と、全体設定の音声入力の待ち時間(`voice_timing`)に分かれる。
 
 数値は保存時に範囲内へ丸める。未保存・欠けた項目は既定値。非数は下限になる。
 
@@ -104,8 +110,10 @@ erDiagram
 
 ### 対象
 
-- `app_settings` のうち上表の**設定項目**(`routing` から `user_profile` まで。パーソナルデータを含む)と、**コマンド権限**(`command-policy.json`)。
-- **含まない**: API キー、端末ごとに異なるナレッジの保存先(`knowledge_dir`)、会話ごとの要約、会話の履歴。
+- `app_settings` のうち上表の**設定項目**(`routing` から `knowledge_dir` の手前まで。全体設定の項目は含まない)と、**コマンド権限**(`command-policy.json`)。
+- **含まない**: API キー、スペースデータ(`space_data`)、端末ごとに異なるナレッジの保存先(`knowledge_dir`)、会話ごとの要約、会話の履歴。
+- 全体設定の項目(ベースプロンプト・パーソナルデータ・起動ワード・音声入力の待ち時間・ナレッジ整理の間隔・表示言語・OS通知)は含まない。全体設定には別のエクスポート/インポートがある([global-settings.md](global-settings.md))。
+- 書き出し・取り込みの対象は、選択中のワークスペースの設定。ワークスペース間で設定を写すには、各スペースの設定の「その他」にある設定のコピーを使う([workspace.md](workspace.md))。
 
 ### ファイル
 

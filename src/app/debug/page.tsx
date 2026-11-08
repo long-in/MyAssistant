@@ -3,12 +3,13 @@
 import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { Bug, Loader2, RefreshCw, ScrollText, Trash2 } from "lucide-react";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { EmptyState, PaneHeader, StatusPill } from "@/components/GlobalPanels";
 import {
   type DebugLogFile,
   deleteDebugLogs,
@@ -115,14 +116,23 @@ export default function Debug() {
   return (
     <div className="flex h-full">
       <aside className="flex w-64 shrink-0 flex-col border-r bg-background/40 backdrop-blur">
-        <div className="flex items-center justify-between border-b px-4 py-3">
-          <h1 className="hud-label text-[0.8rem] font-semibold text-foreground">Debug Logs</h1>
-          <Button size="sm" variant="ghost" onClick={() => refresh(selected)} aria-label={t("再読み込み")}>
-            <RefreshCw />
-          </Button>
-        </div>
+        <PaneHeader
+          icon={Bug}
+          title="Debug Logs"
+          action={
+            <Button size="sm" variant="ghost" onClick={() => refresh(selected)} aria-label={t("再読み込み")}>
+              <RefreshCw />
+            </Button>
+          }
+          chips={
+            <>
+              <StatusPill on={files.length > 0}>{t("ログ {n}件", { n: files.length })}</StatusPill>
+              {selected && <StatusPill on>{selected.replace(".jsonl", "")}</StatusPill>}
+            </>
+          }
+        />
         <div className="flex-1 overflow-y-auto p-3 text-sm">
-          {files.length === 0 && <p className="px-2 py-6 text-center text-muted-foreground">{t("ログはまだありません。")}</p>}
+          {files.length === 0 && <EmptyState icon={ScrollText}>{t("ログはまだありません。")}</EmptyState>}
           {files.map((f) => (
             <button
               key={f.name}
@@ -131,8 +141,8 @@ export default function Debug() {
                 load(f.name);
               }}
               className={cn(
-                "flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-left hover:bg-primary/10",
-                selected === f.name && "bg-primary/10 text-primary",
+                "relative flex w-full items-center justify-between rounded-sm px-3 py-1.5 text-left hover:bg-primary/10",
+                selected === f.name && "bg-primary/10 text-primary before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:bg-primary before:shadow-[0_0_8px_var(--primary)]",
               )}
             >
               <span>{f.name.replace(".jsonl", "")}</span>
@@ -153,7 +163,7 @@ export default function Debug() {
       <section className="flex min-w-0 flex-1 flex-col">
         <div className="flex items-center gap-2 border-b px-4 py-3">
           {kinds.map((k) => (
-            <Button key={k} size="sm" variant={kind === k ? "default" : "outline"} onClick={() => setKind(k)}>
+            <Button key={k} size="sm" className="rounded-full" variant={kind === k ? "default" : "outline"} onClick={() => setKind(k)}>
               {k === "all" ? t("すべて") : t(KIND_LABELS[k] ?? k)}
             </Button>
           ))}
@@ -161,9 +171,9 @@ export default function Debug() {
         </div>
         <div className="flex-1 space-y-2 overflow-y-auto p-4">
           {loading && <Loader2 className="mx-auto animate-spin text-muted-foreground" />}
-          {!loading && shown.length === 0 && <p className="py-10 text-center text-sm text-muted-foreground">{t("表示できる記録がありません。")}</p>}
+          {!loading && shown.length === 0 && <EmptyState icon={ScrollText}>{t("表示できる記録がありません。")}</EmptyState>}
           {shown.map((e, i) => (
-            <details key={`${e.time}-${i}`} className="hud-panel px-4 py-2 text-sm">
+            <details key={`${e.time}-${i}`} className="hud-panel hud-accent px-5 py-2 text-sm">
               <summary className="flex cursor-pointer items-center gap-3">
                 <Badge variant="outline">{t(KIND_LABELS[e.kind] ?? e.kind)}</Badge>
                 <span className="text-xs text-muted-foreground">{fmtTime(e.time)}</span>

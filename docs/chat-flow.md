@@ -43,14 +43,16 @@ sequenceDiagram
 
 - 自動ルーティングは無く、ユーザーが画面(`ModelSelector`)で選んだ `Route` を使う。選択は `app_settings.routing` に保存する。
 - 保存済みの選択が使えない(キーを削除した等)ときは既定へ戻す。既定は、Claude が使えれば Sonnet、なければ使えるプロバイダーのカタログ先頭。
-- 整理バッチ(`batch_route`)と音声認識の校正(`proofread_route`)は、対話とは別にモデルを指定できる。
+- 整理バッチ(`batch_route`)と音声認識の校正(`proofread_route`)は、対話とは別に、スペースごとにモデルを指定できる。
 
 ## システムプロンプトの構成
 
 ```text
 <ベース指示>                       ← 常に先頭
+<shared_data>                      共通データ(スペースのみ。有効かつ入力があるとき。ユーザーの指示)
+<space_data>                       スペースデータ(スペースのみ。同上)
 <参考データの節(順に)>
-  <user_profile>                   パーソナルデータ(有効かつ入力があるとき)
+  <user_profile>                   パーソナルデータ(パーソナルのみ。有効かつ入力があるとき)
   <stt_corrections>                聞き取りの訂正履歴
   <related_knowledge> など         発話に関連するナレッジ
   <conversation_summary>           古い会話の要約
@@ -100,7 +102,7 @@ flowchart LR
 | 設定 | キー | 既定 |
 | --- | --- | --- |
 | 使用モデル | `routing` | Claude が使えれば Sonnet |
-| ベース指示 | `base_instructions` | 既定文 |
+| ベース指示(全体設定) | `base_instructions` | 既定文 |
 | インターネット検索 | `web_access` | 有効 |
 | コマンドによる作業 | `shell_access` | 有効 |
-| 往復数の上限、検索・取得の上限 | `tuning` | [data-and-settings.md](data-and-settings.md) |
+| 往復数の上限、検索・取得の上限(スペースごと) | `tuning` | [data-and-settings.md](data-and-settings.md) |

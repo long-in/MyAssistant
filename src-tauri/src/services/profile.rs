@@ -3,7 +3,10 @@
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
-use crate::{db::Db, utils::error::AppError};
+use super::global_settings::SettingsStore;
+use crate::utils::error::AppError;
+#[cfg(test)]
+use crate::db::Db;
 
 pub const KEY: &str = "user_profile";
 
@@ -138,19 +141,19 @@ pub fn valid_json(value: &str, today: NaiveDate) -> bool {
 }
 
 /// 保存済みの基本情報。未保存や読めない場合は初期値(有効・全項目未設定)。
-pub fn load(db: &Db) -> Result<UserProfile, AppError> {
+pub fn load(db: &impl SettingsStore) -> Result<UserProfile, AppError> {
     Ok(db.get_setting(KEY)?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default())
 }
 
 /// 検証して保存し、実際に保存した値を返す。
-pub fn save(db: &Db, profile: &UserProfile, today: NaiveDate) -> Result<UserProfile, AppError> {
+pub fn save(db: &impl SettingsStore, profile: &UserProfile, today: NaiveDate) -> Result<UserProfile, AppError> {
     let profile = profile.normalized(today).map_err(AppError::InvalidProfile)?;
     db.set_setting(KEY, &serde_json::to_string(&profile).map_err(|e| AppError::Db(e.to_string()))?)?;
     Ok(profile)
 }
 
 /// 保存した基本情報をすべて消す。
-pub fn clear(db: &Db) -> Result<(), AppError> {
+pub fn clear(db: &impl SettingsStore) -> Result<(), AppError> {
     db.set_setting(KEY, "")
 }
 

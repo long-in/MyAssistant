@@ -26,6 +26,10 @@ const listeners = new Set<() => void>();
 
 const getLang = (): Lang => (current ??= detect());
 
+/** 現在の表示言語(フックの外で使う)。 */
+export const currentLang = getLang;
+
+/** 表示言語を切り替える。この端末にも写しを残す(起動時の表示のちらつきを避けるため)。全体設定への保存は`setGlobalLanguage`で行う。 */
 export function setLang(lang: Lang) {
   current = lang;
   try {
