@@ -102,15 +102,6 @@ impl Db {
         Ok(rows)
     }
 
-    /// 指定セッションに未処理ログが残っているか。
-    pub fn has_unprocessed(&self, session_id: &str) -> Result<bool, AppError> {
-        Ok(self.conn().query_row(
-            "SELECT EXISTS(SELECT 1 FROM conversation_logs WHERE session_id = ?1 AND is_processed = 0)",
-            [session_id],
-            |r| r.get(0),
-        )?)
-    }
-
     /// セッションごとの「未処理ログが残っているか」。ログが1件もないセッションは含まれない。
     pub fn session_states(&self) -> Result<Vec<(String, bool)>, AppError> {
         let conn = self.conn();

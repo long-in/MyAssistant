@@ -438,15 +438,6 @@ pub fn append_capture(root: &Path, session_id: &str, user: &str, assistant: &str
     atomic_write(&path, &doc)
 }
 
-/// 整理が済んだセッションのキャプチャを削除する(なければ何もしない)。
-pub fn remove_capture(root: &Path, session_id: &str) -> Result<(), AppError> {
-    let dir = ensure_dir(root, &[CAPTURE_CATEGORY.to_owned()])?;
-    match capture_path(&dir, &short_session(session_id)) {
-        Some(path) => fs::remove_file(path).map_err(io),
-        None => Ok(()),
-    }
-}
-
 /// 整理が済んだセッションのキャプチャをまとめて削除し、消した件数を返す。
 /// `states`は`(セッションID, 未処理ログが残っているか)`。
 /// - ファイル名にはセッションIDの先頭だけが入るので、先頭が同じセッションのどれかに未処理があれば残す。
@@ -924,9 +915,10 @@ mod tests {
         // 文脈復元にはキャプチャを含めない
         assert!(recent_context(&root, 5, 1000).unwrap().is_none());
 
-        remove_capture(&root, "abcdef123456").unwrap();
+        let done = [("abcdef123456".to_owned(), false)];
+        assert_eq!(sweep_captures(&root, &done).unwrap(), 1);
         assert!(list(&root).unwrap().is_empty());
-        remove_capture(&root, "abcdef123456").unwrap();
+        assert_eq!(sweep_captures(&root, &done).unwrap(), 0);
         // 削除後の発話は新しいキャプチャになる
         append_capture(&root, "abcdef123456", "さらに", "うん", "2026-10-28T09:00:00Z").unwrap();
         assert_eq!(list(&root).unwrap()[0].path, "Captures/2026-10-28_abcdef12.md");
