@@ -6,7 +6,6 @@ use crate::{
     commands::chat::CORRECTIONS_MAX,
     db::Db,
     services::{
-        global_settings::SettingsStore,
         audio::Recorder,
         batch, debug_log, knowledge,
         llm_router::{self, Route},
