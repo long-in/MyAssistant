@@ -205,33 +205,35 @@ export default function Skills() {
           title="Skills"
           chips={<StatusPill on={skills.length > 0}>{t("スキル {n}件", { n: skills.length })}</StatusPill>}
         />
-        <div className="hud-panel hud-accent m-3 px-4 py-3">
-          <p className="hud-label mb-2">Matching</p>
-          <p className="mb-2 text-xs text-muted-foreground">{t("発話に合うスキルを選ぶモデル")}</p>
-          <ModelSelector route={route} models={models} keyStatus={keyStatus} onChange={changeRoute} />
-          <p className="mt-2 text-xs text-muted-foreground">
-            {skills.length === 0
-              ? t("スキルがないので、選定は行われず、トークンも使いません。")
-              : t("発話のたびに、全スキルの名前と説明(約{n}トークン)を送って選びます。説明は短く保つと節約できます。", { n: indexTokens })}
-          </p>
-        </div>
-        <div className="flex-1 overflow-y-auto py-1">
-          {skills.map((s) => (
-            <button
-              key={s.name}
-              type="button"
-              onClick={() => select(s)}
-              className={`block w-full px-4 py-2 text-left text-sm transition-colors hover:bg-primary/5 ${
-                s.name === selected && !creating ? "bg-primary/10" : ""
-              }`}
-            >
-              <span className="block truncate font-medium">{s.name}</span>
-              <span className="block truncate text-xs text-muted-foreground">{s.description || t("(説明なし)")}</span>
-            </button>
-          ))}
-          {skills.length === 0 && (
-            <p className="px-4 py-6 text-center text-sm text-muted-foreground">{t("スキルはまだありません。")}</p>
-          )}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="hud-panel hud-accent m-3 px-4 py-3">
+            <p className="hud-label mb-2">Matching</p>
+            <p className="mb-2 text-xs text-muted-foreground">{t("発話に合うスキルを選ぶモデル")}</p>
+            <ModelSelector route={route} models={models} keyStatus={keyStatus} onChange={changeRoute} />
+            <p className="mt-2 text-xs text-muted-foreground">
+              {skills.length === 0
+                ? t("スキルがないので、選定は行われず、トークンも使いません。")
+                : t("発話のたびに、全スキルの名前と説明(約{n}トークン)を送って選びます。説明は短く保つと節約できます。", { n: indexTokens })}
+            </p>
+          </div>
+          <div className="py-1">
+            {skills.map((s) => (
+              <button
+                key={s.name}
+                type="button"
+                onClick={() => select(s)}
+                className={`block w-full px-4 py-2 text-left text-sm transition-colors hover:bg-primary/5 ${
+                  s.name === selected && !creating ? "bg-primary/10" : ""
+                }`}
+              >
+                <span className="block truncate font-medium">{s.name}</span>
+                <span className="block truncate text-xs text-muted-foreground">{s.description || t("(説明なし)")}</span>
+              </button>
+            ))}
+            {skills.length === 0 && (
+              <p className="px-4 py-6 text-center text-sm text-muted-foreground">{t("スキルはまだありません。")}</p>
+            )}
+          </div>
         </div>
         <div className="border-t px-4 py-3">
           <Button size="sm" className="w-full" onClick={startCreate}>

@@ -324,7 +324,9 @@ async fn send_chat_inner(
         .and_then(|root| related_context(&root, &graphs, &format!("{text}\n{previous}")));
     // スキルは全件を載せず、軽量モデルが選んだ候補(名前と説明だけ)を添える。スキルが無ければ何も呼ばず、トークンも使わない。リーダーは会話からの管理をしない
     let root = batch::knowledge_root(&ctx)?;
-    let prepared = skills::prepare(&ctx, &root, text, previous, ctx.id != workspace::LEADER_ID).await;
+    // 「はい」などの返事でも管理ツールを渡し続けるため、直近の会話(今回の発話を除く4件)でスキルに触れていたかも見る
+    let recent_mention = window.recent.iter().rev().skip(1).take(4).any(|r| skills::mentions_skills(&r.content));
+    let prepared = skills::prepare(&ctx, &root, text, previous, ctx.id != workspace::LEADER_ID, recent_mention).await;
     // 基本情報は設定の変更を次の発話から反映するため、セッションのキャッシュに入れず毎回読む
     // パーソナルはパーソナルデータ、エージェントは共通データとエージェントデータ(どちらもユーザーが書いた指示)を渡す。エージェントにパーソナルデータは渡さない
     // リーダーはリーダープロンプトだけを渡す(パーソナルデータ・共通データ・エージェントデータは渡さない)

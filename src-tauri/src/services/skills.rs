@@ -412,12 +412,20 @@ pub struct Prepared {
 
 /// 発話に合うスキルを選び、対話モデルへ添える節とツールの範囲を決める。
 /// スキルが無ければ選定を呼ばない。`may_manage`はスキルの作成・更新・削除を会話から許すか(リーダーは許さない)。
-pub async fn prepare(ctx: &WorkspaceCtx, root: &Path, text: &str, previous: &str, may_manage: bool) -> Prepared {
+/// `recent_mention`は直前の会話でスキルに触れていたか。「はい」などの確認の返事でも、管理ツールを渡し続けるために使う。
+pub async fn prepare(
+    ctx: &WorkspaceCtx,
+    root: &Path,
+    text: &str,
+    previous: &str,
+    may_manage: bool,
+    recent_mention: bool,
+) -> Prepared {
     let skills = list(root);
-    let mention = mentions_skills(text);
+    let mention = recent_mention || mentions_skills(text);
     let manage = may_manage && mention;
     if skills.is_empty() {
-        return Prepared { section: None, access: Access { use_skill: false, manage } };
+        return Prepared { section: None, access: Access { use_skill: mention, manage } };
     }
     let picks = if text.chars().count() >= SELECT_MIN_CHARS { select(ctx, &skills, text, previous).await } else { Vec::new() };
     let mut parts = Vec::<String>::new();
@@ -468,6 +476,22 @@ pub fn tool_use(root: &Path, input: &Value) -> Result<String, String> {
             Err(format!("スキル「{name}」はありません。登録済み: {}", names.join(", ")))
         }
     }
+}
+
+/// `list_skills`: 登録済みスキルの件数と一覧(名前・説明・呼び出し語)を返す。
+pub fn tool_list(root: &Path) -> String {
+    let skills = list(root);
+    if skills.is_empty() {
+        return "スキルは登録されていません。スキルはエージェントごとの保存なので、このエージェントには0件です。".into();
+    }
+    let mut out = format!("このエージェントのスキルは全{}件です。", skills.len());
+    for s in &skills {
+        out.push_str(&format!("\n- {}: {}", s.name, s.description));
+        if !s.triggers.is_empty() {
+            out.push_str(&format!(" [{}]", s.triggers.join(", ")));
+        }
+    }
+    out
 }
 
 /// `create_skill`: 承認なしで新規作成する。同名があれば失敗する。
@@ -656,6 +680,18 @@ mod tests {
         assert!(index_tokens(&two) > index_tokens(&one));
         assert_eq!(estimate_tokens("abcd"), 1);
         assert_eq!(estimate_tokens("あい"), 2);
+    }
+
+    #[test]
+    fn list_tool_reports_count_and_empty() {
+        let (_d, root) = root();
+        assert!(tool_list(&root).contains("0件"));
+        for i in 0..31 {
+            create(&root, skill(&format!("s{i:02}"))).unwrap();
+        }
+        let out = tool_list(&root);
+        assert!(out.contains("全31件"), "{out}");
+        assert_eq!(out.lines().count(), 1 + 31, "件数の制限なく全件を返す");
     }
 
     #[test]
