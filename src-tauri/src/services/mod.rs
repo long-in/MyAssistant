@@ -13,6 +13,7 @@ pub mod global_settings;
 pub mod graph;
 pub mod scheduler;
 pub mod secrets;
+pub mod settings_registry;
 pub mod settings_transfer;
 pub mod shell;
 pub mod space_data;

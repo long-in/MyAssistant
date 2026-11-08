@@ -1,8 +1,9 @@
 //! 全体設定。すべてのスペース(パーソナルを含む)で共通の設定を1か所に持つ。
 //!
 //! - 保存先はアプリデータの`workspaces/global_settings.json`(キーと文字列値の対応)。スペースを削除しても残る。
-//! - 各スペースのDBに同名の設定があっても読まない(各スペースから上書きできない)。値は消さない。
+//! - 項目は`settings_registry`で保存先が全体設定(`Scope::Global`)のキー。スペースごとのキーは書き込みで拒否する。
 //! - 初回(ファイルが無いとき)だけ、パーソナルのDBの現在値を初期値として取り込む(`migrate_from`)。
+//! - 取り込んだあと(ファイルがあるとき)は、各スペースのDBに残る同名の古い値を消す(`purge_legacy`)。ファイルが無いうちは消さない。
 //!
 //! 項目の読み書きは`SettingsStore`を通すので、DBの設定と同じ形で扱える。
 use std::{
@@ -13,6 +14,7 @@ use std::{
 
 use serde_json::Value;
 
+use super::settings_registry::{self, Scope};
 use crate::{db::Db, utils::error::AppError};
 
 const FILE: &str = "global_settings.json";
@@ -22,18 +24,6 @@ const DIR: &str = "workspaces";
 pub const LANGUAGE_KEY: &str = "language";
 /// アプリが背面のときのOS通知を使うか(`0` / `1`)。未保存なら使う。
 pub const OS_NOTIFICATIONS_KEY: &str = "os_notifications";
-
-/// 全体設定に入れる項目。ファイルのキーはDBの設定キーと同じ名前を使う。
-pub const KEYS: &[&str] = &[
-    crate::commands::chat::BASE_INSTRUCTIONS_KEY,
-    OS_NOTIFICATIONS_KEY,
-    LANGUAGE_KEY,
-    super::tuning::VOICE_KEY,
-    super::wake::ENABLED_KEY,
-    super::wake::WORDS_KEY,
-    super::profile::KEY,
-    super::batch::BATCH_INTERVAL_KEY,
-];
 
 /// 文字列の設定の読み書き。DBの設定と全体設定を、同じ形で扱うために使う。
 pub trait SettingsStore {
@@ -88,8 +78,16 @@ impl GlobalStore {
         }
     }
 
+    /// ファイルがあるか(初回の取り込みが済んだか)。
+    pub fn exists(&self) -> bool {
+        self.path.exists()
+    }
+
     /// 複数の項目をまとめて書く(途中で失敗したら、どれも書かれない)。
     pub fn set_settings(&self, items: &[(&str, &str)]) -> Result<(), AppError> {
+        for (k, _) in items {
+            settings_registry::check_global_write(k)?;
+        }
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let mut map = self.read_for_update();
         for (k, v) in items {
@@ -99,15 +97,22 @@ impl GlobalStore {
     }
 
     /// ファイルがまだ無いときだけ、パーソナルのDBの現在値を初期値として写す。VOICE TIMINGは調整項目から取り出す。
+    /// 写せたら(またはファイルが既にあれば)、パーソナルのDBに残る古い値を消す。
     pub fn migrate_from(&self, personal: &Db) -> Result<(), AppError> {
-        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
-        if self.path.exists() {
-            return Ok(());
+        {
+            let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+            if !self.path.exists() {
+                self.write(&Self::initial_values(personal)?)?;
+            }
         }
+        self.purge_legacy(personal)
+    }
+
+    fn initial_values(personal: &Db) -> Result<BTreeMap<String, String>, AppError> {
         let mut map = BTreeMap::new();
-        for key in KEYS {
+        for key in settings_registry::keys(Scope::Global) {
             if let Some(v) = personal.get_setting(key)? {
-                map.insert((*key).to_owned(), v);
+                map.insert(key.to_owned(), v);
             }
         }
         if let Some(t) = personal.get_setting(super::tuning::KEY)?.and_then(|v| serde_json::from_str::<Value>(&v).ok()) {
@@ -119,7 +124,16 @@ impl GlobalStore {
                 map.insert(super::tuning::VOICE_KEY.to_owned(), Value::Object(pick).to_string());
             }
         }
-        self.write(&map)
+        Ok(map)
+    }
+
+    /// DBに残る全体設定の古い値を消す。ファイルがまだ無ければ(初回の取り込み前なので)消さない。
+    pub fn purge_legacy(&self, db: &Db) -> Result<(), AppError> {
+        if !self.exists() {
+            return Ok(());
+        }
+        db.delete_settings(settings_registry::keys(Scope::Global))?;
+        Ok(())
     }
 }
 
@@ -158,8 +172,8 @@ mod tests {
     fn first_run_adopts_personal_values_once() {
         let d = tempfile::tempdir().unwrap();
         let db = personal(d.path());
-        db.set_setting("base_instructions", "敬語で").unwrap();
-        db.set_setting("batch_interval_minutes", "60").unwrap();
+        db.set_legacy_setting("base_instructions", "敬語で");
+        db.set_legacy_setting("batch_interval_minutes", "60");
         db.set_setting("web_access", "0").unwrap(); // 全体設定の対象外
         db.set_setting("tuning", r#"{"web_search_max":9,"voice_idle_secs":7.0}"#).unwrap();
         let g = GlobalStore::open(d.path());
@@ -169,10 +183,45 @@ mod tests {
         let voice: Value = serde_json::from_str(&g.get_setting("voice_timing").unwrap().unwrap()).unwrap();
         assert_eq!(voice["voice_idle_secs"], 7.0);
         assert!(voice.get("web_search_max").is_none());
+        // 取り込んだら、パーソナルのDBに残る古い値は消す(スペースごとの設定は残す)
+        assert_eq!(db.get_setting("base_instructions").unwrap(), None);
+        assert_eq!(db.get_setting("web_access").unwrap().as_deref(), Some("0"));
+        assert!(db.get_setting("tuning").unwrap().is_some());
         // 2回目以降は、パーソナルが変わっても取り込み直さない
-        db.set_setting("base_instructions", "別の値").unwrap();
+        db.set_legacy_setting("base_instructions", "別の値");
         g.migrate_from(&db).unwrap();
         assert_eq!(g.get_setting("base_instructions").unwrap().as_deref(), Some("敬語で"));
+        assert_eq!(db.get_setting("base_instructions").unwrap(), None);
+    }
+
+    #[test]
+    fn legacy_values_are_kept_until_the_first_import() {
+        use crate::services::workspace::WorkspaceCtx;
+        let d = tempfile::tempdir().unwrap();
+        let legacy = Db::open(&d.path().join("timeline.db")).unwrap();
+        legacy.set_legacy_setting("base_instructions", "敬語で");
+        drop(legacy);
+        // ファイルが無いうちに開いても消さない(このあと取り込むため)
+        let personal = WorkspaceCtx::open("personal", d.path()).unwrap();
+        assert_eq!(personal.db.get_setting("base_instructions").unwrap().as_deref(), Some("敬語で"));
+        personal.global.migrate_from(&personal.db).unwrap();
+        assert_eq!(personal.global.get_setting("base_instructions").unwrap().as_deref(), Some("敬語で"));
+        // 取り込んだあとに開いたスペースは、開いたときに消す
+        let space = d.path().join("space");
+        std::fs::create_dir_all(&space).unwrap();
+        let old = Db::open(&space.join("timeline.db")).unwrap();
+        old.set_legacy_setting("wake_words", r#"["旧"]"#);
+        drop(old);
+        let s = WorkspaceCtx::open_shared("s", &space, Default::default(), personal.global.clone()).unwrap();
+        assert_eq!(s.db.get_setting("wake_words").unwrap(), None);
+    }
+
+    #[test]
+    fn space_keys_are_rejected() {
+        let d = tempfile::tempdir().unwrap();
+        let g = GlobalStore::open(d.path());
+        assert!(g.set_settings(&[("base_instructions", "x"), ("routing", "{}")]).is_err());
+        assert_eq!(g.get_setting("base_instructions").unwrap(), None);
     }
 
     #[test]
@@ -195,8 +244,8 @@ mod tests {
         let a = WorkspaceCtx::open_shared("a", &d.path().join("a"), Default::default(), global.clone()).unwrap();
         let b = WorkspaceCtx::open_shared("b", &d.path().join("b"), Default::default(), global).unwrap();
         // スペースのDBに古い値があっても、全体設定は読まない
-        a.db.set_setting(wake::WORDS_KEY, r#"["旧"]"#).unwrap();
-        a.db.set_setting(wake::ENABLED_KEY, "1").unwrap();
+        a.db.set_legacy_setting(wake::WORDS_KEY, r#"["旧"]"#);
+        a.db.set_legacy_setting(wake::ENABLED_KEY, "1");
         assert!(wake::load(&*a.global).unwrap().words.is_empty());
         // どのスペースから保存しても、全スペースに同じ値が見える
         wake::save(&*b.global, &wake::WakeConfig { enabled: true, words: vec!["やあ".into()] }).unwrap();

@@ -9,16 +9,12 @@ use serde_json::Value;
 use super::{
     aws, batch,
     command_policy::{self, Policy},
-    debug_log,
-    global_settings::{self, GlobalStore, SettingsStore},
-    profile, pronunciation, proofread, tuning, wake,
+    global_settings::{GlobalStore, SettingsStore},
+    profile, pronunciation,
+    settings_registry::{self, Kind, Scope},
     workspace::WorkspaceCtx,
 };
-use crate::{
-    commands::{chat, voice},
-    db::Db,
-    utils::error::AppError,
-};
+use crate::{db::Db, utils::error::AppError};
 
 /// ファイルの形式を識別する値と版。
 const APP_ID: &str = "MyAssistant";
@@ -29,48 +25,15 @@ const FORMAT_VERSION: u32 = 1;
 pub const MAX_FILE_BYTES: u64 = 1_000_000;
 const MAX_TEXT_CHARS: usize = 20_000;
 
-/// 値の検証方法。
-#[derive(Clone, Copy)]
-enum Kind {
-    /// `"0"`または`"1"`。
-    Flag,
-    /// JSONとして読める文字列(空文字は未設定を表す)。
-    Json,
-    /// 指定した値のどれか。
-    OneOf(&'static [&'static str]),
-    /// 自由な文字列。
-    Text,
-    /// 検証を通る基本情報のJSON(空文字は未設定を表す)。
-    Profile,
-    /// 整理バッチの間隔(分)。
-    Interval,
+/// 書き出し・コピーの対象(スペースごとの設定)。一覧は`settings_registry`で決める。
+fn entries() -> impl Iterator<Item = (&'static str, Kind)> {
+    settings_registry::transferable(Scope::Space)
 }
 
-const ENTRIES: &[(&str, Kind)] = &[
-    (chat::ROUTE_KEY, Kind::Json),
-    (chat::WEB_ACCESS_KEY, Kind::Flag),
-    (chat::SHELL_ACCESS_KEY, Kind::Flag),
-    (voice::STT_ENGINE_KEY, Kind::OneOf(&["local", "google", "aqua"])),
-    (voice::STT_LANGUAGE_KEY, Kind::Text),
-    (voice::TTS_ENGINE_KEY, Kind::OneOf(&["google", "voicevox"])),
-    (voice::VOICEVOX_STYLE_KEY, Kind::Text),
-    (tuning::KEY, Kind::Json),
-    (super::batch::BATCH_ROUTE_KEY, Kind::Json),
-    (proofread::ROUTE_KEY, Kind::Json),
-    (debug_log::ENABLED_KEY, Kind::Flag),
-];
-
 /// 全体設定の項目。全スペースで共通で、設定のエクスポート・コピーの対象にはしない(全体設定のバックアップだけが扱う)。
-const GLOBAL_ENTRIES: &[(&str, Kind)] = &[
-    (chat::BASE_INSTRUCTIONS_KEY, Kind::Text),
-    (global_settings::OS_NOTIFICATIONS_KEY, Kind::Flag),
-    (global_settings::LANGUAGE_KEY, Kind::OneOf(&["ja", "en"])),
-    (tuning::VOICE_KEY, Kind::Json),
-    (wake::ENABLED_KEY, Kind::Flag),
-    (wake::WORDS_KEY, Kind::Json),
-    (profile::KEY, Kind::Profile),
-    (batch::BATCH_INTERVAL_KEY, Kind::Interval),
-];
+fn global_entries() -> impl Iterator<Item = (&'static str, Kind)> {
+    settings_registry::transferable(Scope::Global)
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SettingsFile {
@@ -101,9 +64,9 @@ fn valid(kind: Kind, value: &str) -> bool {
 /// 現在の設定をファイルの内容にまとめる。未設定の項目は含めない。
 pub fn collect(db: &Db, policy: Policy, exported_at: String) -> Result<SettingsFile, AppError> {
     let mut settings = BTreeMap::new();
-    for (key, _) in ENTRIES {
+    for (key, _) in entries() {
         if let Some(v) = db.get_setting(key)? {
-            settings.insert((*key).to_owned(), v);
+            settings.insert(key.to_owned(), v);
         }
     }
     Ok(SettingsFile {
@@ -146,8 +109,8 @@ fn validate(file: &SettingsFile) -> Result<Validated, AppError> {
     let mut accepted = Vec::new();
     let mut skipped = 0;
     for (key, value) in &file.settings {
-        match ENTRIES.iter().find(|(k, _)| *k == key) {
-            Some((k, kind)) if valid(*kind, value) => accepted.push((*k, value.clone())),
+        match entries().find(|(k, _)| k == key) {
+            Some((k, kind)) if valid(kind, value) => accepted.push((k, value.clone())),
             Some(_) => return Err(AppError::InvalidSettings(format!("{key}の値が不正です"))),
             None => skipped += 1,
         }
@@ -183,9 +146,9 @@ pub fn apply(db: &Db, file: &SettingsFile) -> Result<(Report, Option<Policy>), A
 /// 全体設定をファイルの内容にまとめる。未設定の項目は含めない。
 pub fn collect_global(store: &GlobalStore, exported_at: String) -> Result<SettingsFile, AppError> {
     let mut settings = BTreeMap::new();
-    for (key, _) in GLOBAL_ENTRIES {
+    for (key, _) in global_entries() {
         if let Some(v) = store.get_setting(key)? {
-            settings.insert((*key).to_owned(), v);
+            settings.insert(key.to_owned(), v);
         }
     }
     Ok(SettingsFile { app: APP_ID.into(), version: FORMAT_VERSION, exported_at, settings, command_policy: None })
@@ -197,8 +160,8 @@ pub fn apply_global(store: &GlobalStore, file: &SettingsFile) -> Result<Report, 
     let mut accepted: Vec<(&str, &str)> = Vec::new();
     let mut skipped = 0;
     for (key, value) in &file.settings {
-        match GLOBAL_ENTRIES.iter().find(|(k, _)| *k == key) {
-            Some((k, kind)) if valid(*kind, value) => accepted.push((*k, value.as_str())),
+        match global_entries().find(|(k, _)| k == key) {
+            Some((k, kind)) if valid(kind, value) => accepted.push((k, value.as_str())),
             Some(_) => return Err(AppError::InvalidSettings(format!("{key}の値が不正です"))),
             None => skipped += 1,
         }
@@ -294,6 +257,7 @@ pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{commands::chat, services::{global_settings, wake}};
 
     fn mem() -> (tempfile::TempDir, Db) {
         let dir = tempfile::tempdir().unwrap();
@@ -317,9 +281,9 @@ mod tests {
         a.set_setting(chat::SHELL_ACCESS_KEY, "0").unwrap();
         a.set_setting(chat::ROUTE_KEY, r#"{"provider":"anthropic","model":"x"}"#).unwrap();
         a.set_setting("knowledge_dir", "/somewhere").unwrap();
-        a.set_setting("summary:abc", "{}").unwrap();
+        a.save_summary("abc", &crate::db::Summary { upto_id: "x".into(), text: "要約".into() }).unwrap();
         let text = serde_json::to_string(&collect(&a, Policy::defaults(), "t".into()).unwrap()).unwrap();
-        assert!(!text.contains("/somewhere") && !text.contains("summary:abc"));
+        assert!(!text.contains("/somewhere") && !text.contains("要約"));
 
         let (_db, b) = mem();
         let (report, policy) = apply(&b, &parse(&text).unwrap()).unwrap();
@@ -341,7 +305,7 @@ mod tests {
     fn space_export_excludes_global_items() {
         let (_da, a) = mem();
         for key in [profile::KEY, chat::BASE_INSTRUCTIONS_KEY, wake::WORDS_KEY, batch::BATCH_INTERVAL_KEY] {
-            a.set_setting(key, "x").unwrap();
+            a.set_legacy_setting(key, "x"); // 全体設定へ移す前の古い値
         }
         a.set_setting(chat::SHELL_ACCESS_KEY, "1").unwrap();
         let exported = collect(&a, Policy::defaults(), "t".into()).unwrap();
@@ -394,11 +358,11 @@ mod tests {
         let (_da, a) = ctx("a");
         let (_db, b) = ctx("b");
         a.db.set_setting(chat::SHELL_ACCESS_KEY, "0").unwrap();
-        a.db.set_setting(profile::KEY, r#"{"enabled":true,"name":"山田"}"#).unwrap();
-        a.db.set_setting(chat::BASE_INSTRUCTIONS_KEY, "全体設定の項目").unwrap();
+        a.db.set_legacy_setting(profile::KEY, r#"{"enabled":true,"name":"山田"}"#);
+        a.db.set_legacy_setting(chat::BASE_INSTRUCTIONS_KEY, "全体設定の項目");
         let custom = tempfile::tempdir().unwrap(); // コピー元は別の場所をナレッジの保存先にしている
         a.db.set_setting("knowledge_dir", &custom.path().to_string_lossy()).unwrap();
-        a.db.set_setting("summary:abc", "{}").unwrap();
+        a.db.save_summary("abc", &crate::db::Summary { upto_id: "x".into(), text: "要約".into() }).unwrap();
         a.secrets.set_tts_key("tts-a").unwrap();
         command_policy::add_allow(custom.path(), &["mytool".to_owned()]).unwrap();
         b.db.set_setting(chat::WEB_ACCESS_KEY, "0").unwrap(); // コピー元に無い項目は残る
@@ -407,9 +371,10 @@ mod tests {
         assert_eq!(report.keys, 0);
         assert_eq!(b.db.get_setting(chat::SHELL_ACCESS_KEY).unwrap().as_deref(), Some("0"));
         assert_eq!(b.db.get_setting(chat::WEB_ACCESS_KEY).unwrap().as_deref(), Some("0"));
-        for key in [profile::KEY, chat::BASE_INSTRUCTIONS_KEY, "knowledge_dir", "summary:abc"] {
+        for key in [profile::KEY, chat::BASE_INSTRUCTIONS_KEY, "knowledge_dir"] {
             assert_eq!(b.db.get_setting(key).unwrap(), None, "{key}");
         }
+        assert_eq!(b.db.summary("abc").unwrap(), None);
         assert!(!b.secrets.has_tts_key().unwrap());
         assert!(command_policy::load(&batch::knowledge_root(&b).unwrap()).allow.contains(&"mytool".to_owned()));
         // コピー元は変わらない
@@ -421,7 +386,7 @@ mod tests {
     fn copy_options_include_keys_but_never_the_profile() {
         let (_da, a) = ctx("a");
         let (_db, b) = ctx("b");
-        a.db.set_setting(profile::KEY, r#"{"enabled":true,"name":"山田"}"#).unwrap();
+        a.db.set_legacy_setting(profile::KEY, r#"{"enabled":true,"name":"山田"}"#);
         a.db.set_setting(crate::services::space_data::KEY, r#"{"enabled":true,"text":"x"}"#).unwrap();
         a.secrets.set_tts_key("tts-a").unwrap();
         a.secrets.set_key(crate::services::secrets::Provider::Anthropic, "ka").unwrap();

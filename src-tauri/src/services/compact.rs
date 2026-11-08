@@ -2,7 +2,6 @@
 //!
 //! 送る過去会話が上限(往復数)を超えたら、古い分を既存の要約へ畳み込み、直近の半分だけをそのまま残す。
 //! 要約は会話ごとにDBへ保存し、以降は「要約 + 要約後の会話」だけをLLMへ渡す。
-use serde::{Deserialize, Serialize};
 
 use super::{
     llm_client::{self, ChatMessage},
@@ -10,7 +9,7 @@ use super::{
     workspace::WorkspaceCtx,
 };
 use crate::{
-    db::{Db, LogRow},
+    db::{Db, LogRow, Summary as Stored},
     utils::error::AppError,
 };
 
@@ -24,19 +23,9 @@ const SYSTEM: &str = "\
 /// 要約の最大文字数。モデルが超過した場合の保険。
 const SUMMARY_MAX_CHARS: usize = 1_500;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Stored {
-    /// 要約に畳み込み済みの最後のメッセージID。
-    upto_id: String,
-    text: String,
-}
-
-fn key(session_id: &str) -> String {
-    format!("summary:{session_id}")
-}
-
+/// 保存済みの要約。読めなければ(DBのエラー)要約なしとして続ける。
 fn load(db: &Db, session_id: &str) -> Option<Stored> {
-    db.get_setting(&key(session_id)).ok()?.and_then(|v| serde_json::from_str(&v).ok())
+    db.summary(session_id).map_err(|e| log::warn!("summary not loaded: {e}")).ok().flatten()
 }
 
 /// 今回のLLM呼び出しに使う会話。
@@ -108,13 +97,8 @@ pub async fn prepare(ctx: &WorkspaceCtx, session_id: &str, exchanges: u32, provi
         match summarize(ctx, provider, model, previous, &all[from..from + fold]).await {
             Ok(text) => {
                 let next = Stored { upto_id: all[from + fold - 1].id.clone(), text };
-                match serde_json::to_string(&next) {
-                    Ok(v) => {
-                        if let Err(e) = db.set_setting(&key(session_id), &v) {
-                            log::warn!("summary not saved: {e}");
-                        }
-                    }
-                    Err(e) => log::warn!("summary not saved: {e}"),
+                if let Err(e) = db.save_summary(session_id, &next) {
+                    log::warn!("summary not saved: {e}");
                 }
                 stored = Some(next);
             }

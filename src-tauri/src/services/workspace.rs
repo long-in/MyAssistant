@@ -22,7 +22,10 @@ use tauri::{
 use super::{
     agent_run::{AgentState, RunStatus}, aws::AwsState, batch, batch::BatchGuard, debug_log, debug_log::DebugLog, global_settings::{GlobalStore, SettingsStore}, secrets::Secrets,
 };
-use crate::{db::Db, utils::error::AppError};
+use crate::{
+    db::{Db, Role},
+    utils::error::AppError,
+};
 
 /// パーソナルワークスペースのID。保存先は従来どおりアプリデータ直下。
 pub const PERSONAL_ID: &str = "personal";
@@ -51,6 +54,8 @@ const DIR_NAME: &str = "workspaces";
 /// 削除時に残したナレッジを置くフォルダ(アプリデータ直下)。
 const KEPT_DIR_NAME: &str = "kept-knowledge";
 const REGISTRY_FILE: &str = "registry.json";
+/// ワークスペースごとのDBのファイル名。
+const DB_FILE: &str = "timeline.db";
 
 /// 1ワークスペース分の状態。`dir`配下に`timeline.db`と`secrets.json`を置く。
 pub struct WorkspaceCtx {
@@ -87,12 +92,18 @@ impl WorkspaceCtx {
     }
 
     /// 共有状態と全体設定を指定して開く。同じワークスペースを開き直すときに、前の状態を引き継ぐ。
+    /// リーダーのDBだけが台帳を持つ。全体設定の取り込みが済んでいれば、DBに残る全体設定の古い値を消す。
     pub fn open_shared(id: &str, dir: &Path, shared: Arc<Shared>, global: Arc<GlobalStore>) -> Result<Self, AppError> {
         std::fs::create_dir_all(dir).map_err(|e| AppError::Io(e.to_string()))?;
+        let role = if id == LEADER_ID { Role::Leader } else { Role::Space };
+        let db = Db::open_as(&dir.join(DB_FILE), role)?;
+        if let Err(e) = global.purge_legacy(&db) {
+            log::warn!("legacy global settings not purged for {id}: {e}");
+        }
         Ok(Self {
             id: id.to_owned(),
             dir: dir.to_owned(),
-            db: Db::open(&dir.join("timeline.db"))?,
+            db,
             secrets: Secrets::open(dir)?,
             debug: DebugLog::default(),
             global,
@@ -194,7 +205,7 @@ impl Workspaces {
         // リーダーは、作成済み(フォルダがある)なら開く。開けなければ警告して、未作成として扱う
         let leader_dir = root.join(DIR_NAME).join(LEADER_ID);
         let leader = leader_dir
-            .join("timeline.db")
+            .join(DB_FILE)
             .exists()
             .then(|| WorkspaceCtx::open_shared(LEADER_ID, &leader_dir, Arc::new(Shared::default()), global.clone()))
             .and_then(|r| r.map_err(|e| log::warn!("leader not opened: {e}")).ok())
