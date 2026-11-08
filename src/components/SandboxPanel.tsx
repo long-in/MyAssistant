@@ -150,6 +150,11 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
               <RefreshCw className="size-3.5" />
             </Button>
           </div>
+          {status?.container_name && (
+            <p className="text-xs text-muted-foreground">
+              {t("コンテナ名")}: <span className="font-mono">{status.container_name}</span>
+            </p>
+          )}
           {status?.docker === "missing" && (
             <p className="text-xs text-muted-foreground">{t("Dockerが見つかりません。Docker Desktop などをインストールして起動してください。")}</p>
           )}

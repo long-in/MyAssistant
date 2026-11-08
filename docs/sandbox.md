@@ -16,10 +16,18 @@
                  └─ docker exec(出力の逐次通知・タイムアウト・中断は shell.rs と共通)
 
 [Docker]
-  myassistant-agent-<UUID>   /workspace  = そのエージェントのナレッジ(bind mount)
+  myassistant-<ランダム8桁>  /workspace  = そのエージェントのナレッジ(bind mount)
                              /home/agent = 専用ボリューム myassistant-home-<UUID>
   ネットワーク myassistant-net-<UUID>(エージェントごとに別)
 ```
+
+## 名前とエージェントの対応
+
+- コンテナ名は `myassistant-<ランダム8桁>` で、コンテナを作るときに決めます。名前にはエージェントの名前も ID も含めないため、`docker ps` だけでは持ち主は分かりません。
+- 持ち主は**ラベル**で持ちます(`myassistant.agent=<エージェントID>`。イメージ・ネットワークにも付けます)。アプリはこのラベルでコンテナを探します。
+- どのエージェントのコンテナかは、そのエージェントの設定画面(権限タブの Sandbox)の「コンテナ名」で確認できます。`docker ps --filter label=myassistant.agent=<ID>` でも引けます。
+- コンテナを作り直す(イメージの変更・ナレッジの場所の変更・「コンテナを作り直す」)と、新しい名前になります。エージェント名を変えても名前は変わりません。
+- ネットワークとボリュームは、データを失わないよう ID から決まる名前です(`myassistant-net-<ID>`、`myassistant-home-<ID>`)。
 
 ## 分離の内容
 

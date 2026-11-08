@@ -259,6 +259,8 @@ export type SandboxStatus = {
   /** 現在のDockerfileのイメージがビルド済みか。 */
   image_ready: boolean;
   container_running: boolean;
+  /** このエージェントのコンテナの名前(`myassistant-<ランダム>`)。まだ作っていなければ null。 */
+  container_name: string | null;
   building: boolean;
 };
 export const getSandboxStatus = () => invoke<SandboxStatus>("get_sandbox_status");

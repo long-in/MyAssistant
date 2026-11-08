@@ -1,5 +1,6 @@
 /** 日本語の原文 → 英語。辞書にない文字列は原文のまま表示される。 */
 export const EN: Record<string, string> = {
+  "コンテナ名": "Container name",
   "サンドボックス": "Sandbox",
   "このエージェントのコマンドを、専用のDockerコンテナの中で実行します。": "Runs this agent's commands inside its own Docker container.",
   "コンテナから見えるのは、このエージェントのナレッジ(/workspace)と専用ボリュームだけです。ほかのエージェントや ~/.aws には届きません。": "The container can only see this agent's knowledge (/workspace) and its own volume. It cannot reach other agents or ~/.aws.",

@@ -36,7 +36,7 @@ pub const TEMPLATE: &str = include_str!("../../resources/sandbox/Dockerfile");
 pub const BUILD_EVENT: &str = "sandbox-build-progress";
 
 const IMAGE_PREFIX: &str = "myassistant-sandbox-";
-const CONTAINER_PREFIX: &str = "myassistant-agent-";
+const CONTAINER_PREFIX: &str = "myassistant-";
 const NETWORK_PREFIX: &str = "myassistant-net-";
 const VOLUME_PREFIX: &str = "myassistant-home-";
 /// このアプリが作ったリソースの印。値はエージェントID。
@@ -82,8 +82,10 @@ fn short(id: &str) -> String {
     id.chars().filter(|c| *c != '-').take(8).collect()
 }
 
-pub fn container_name(id: &str) -> String {
-    format!("{CONTAINER_PREFIX}{id}")
+/// 新しいコンテナの名前。エージェントとの対応は名前ではなくラベル(`myassistant.agent`)で持ち、画面で確認できる。
+fn new_container_name() -> String {
+    let random: String = uuid::Uuid::new_v4().simple().to_string().chars().take(8).collect();
+    format!("{CONTAINER_PREFIX}{random}")
 }
 
 fn network_name(id: &str) -> String {
@@ -326,23 +328,31 @@ pub struct Status {
     /// 現在のDockerfileのイメージがビルド済みか。
     pub image_ready: bool,
     pub container_running: bool,
+    /// このエージェントのコンテナの名前(まだ作っていなければ`None`)。
+    pub container_name: Option<String>,
     pub building: bool,
 }
 
 pub async fn status(id: &str, ws_dir: &Path) -> Status {
     let building = is_building(id);
     let Some(bin) = find_docker() else {
-        return Status { docker: DockerState::Missing, image_ready: false, container_running: false, building };
+        return Status { docker: DockerState::Missing, image_ready: false, container_running: false, container_name: None, building };
     };
     if !daemon_up(&bin).await {
-        return Status { docker: DockerState::Stopped, image_ready: false, container_running: false, building };
+        return Status { docker: DockerState::Stopped, image_ready: false, container_running: false, container_name: None, building };
     }
     let image_ready = match std::fs::read_to_string(dockerfile_path(ws_dir)) {
         Ok(text) => image_exists(&bin, &image_tag(id, &text)).await,
         Err(_) => false,
     };
-    let container_running = inspect_container(&bin, id).await.is_some_and(|c| c.running);
-    Status { docker: DockerState::Ready, image_ready, container_running, building }
+    let container = find_container(&bin, id).await;
+    Status {
+        docker: DockerState::Ready,
+        image_ready,
+        container_running: container.as_ref().is_some_and(|c| c.running),
+        container_name: container.map(|c| c.name),
+        building,
+    }
 }
 
 async fn daemon_up(bin: &Path) -> bool {
@@ -518,30 +528,47 @@ fn spawn_lines<R: tokio::io::AsyncRead + Unpin + Send + 'static>(pipe: R, tx: mp
 // ------------------------------------------------------------------ コンテナ
 
 struct Container {
+    name: String,
     running: bool,
     image: String,
     root: String,
 }
 
-async fn inspect_container(bin: &Path, id: &str) -> Option<Container> {
-    let fmt = format!("{{{{.State.Running}}}}|{{{{index .Config.Labels \"{LABEL_IMAGE}\"}}}}|{{{{index .Config.Labels \"{LABEL_ROOT}\"}}}}");
-    let o = docker(bin, &["inspect", "-f", &fmt, &container_name(id)], CLI_TIMEOUT).await.ok()?;
-    if !o.ok {
-        return None;
+/// このエージェントのコンテナの名前をすべて返す(ラベルで探す。通常は0か1つ)。
+async fn container_names(bin: &Path, id: &str) -> Vec<String> {
+    let filter = format!("label={LABEL_AGENT}={id}");
+    match docker(bin, &["ps", "-a", "--filter", &filter, "--format", "{{.Names}}"], CLI_TIMEOUT).await {
+        Ok(o) if o.ok => o.stdout.lines().map(str::trim).filter(|n| !n.is_empty()).map(str::to_owned).collect(),
+        _ => Vec::new(),
     }
-    let mut parts = o.stdout.splitn(3, '|');
-    Some(Container {
-        running: parts.next()? == "true",
-        image: parts.next()?.to_owned(),
-        root: parts.next()?.to_owned(),
-    })
+}
+
+async fn find_container(bin: &Path, id: &str) -> Option<Container> {
+    let fmt = format!("{{{{.State.Running}}}}|{{{{index .Config.Labels \"{LABEL_IMAGE}\"}}}}|{{{{index .Config.Labels \"{LABEL_ROOT}\"}}}}");
+    for name in container_names(bin, id).await {
+        let Ok(o) = docker(bin, &["inspect", "-f", &fmt, &name], CLI_TIMEOUT).await else { continue };
+        if !o.ok {
+            continue;
+        }
+        let mut parts = o.stdout.splitn(3, '|');
+        let (Some(running), Some(image), Some(root)) = (parts.next(), parts.next(), parts.next()) else { continue };
+        return Some(Container { name, running: running == "true", image: image.to_owned(), root: root.to_owned() });
+    }
+    None
+}
+
+/// このエージェントのコンテナをすべて消す(ボリュームは残る)。
+async fn remove_containers(bin: &Path, id: &str) {
+    for name in container_names(bin, id).await {
+        let _ = docker(bin, &["rm", "-f", &name], CLI_TIMEOUT).await;
+    }
 }
 
 /// `docker run`の引数。マウントはナレッジと専用ボリュームだけ。
-fn run_args(id: &str, tag: &str, root: &Path) -> Vec<String> {
+fn run_args(id: &str, name: &str, tag: &str, root: &Path) -> Vec<String> {
     let root = root.display().to_string();
     let mut a: Vec<String> = ["run", "-d", "--init", "--name"].iter().map(|s| (*s).to_owned()).collect();
-    a.push(container_name(id));
+    a.push(name.to_owned());
     let mut push = |items: &[&str]| a.extend(items.iter().map(|s| (*s).to_owned()));
     push(&["--label", &format!("{LABEL_AGENT}={id}")]);
     push(&["--label", &format!("{LABEL_IMAGE}={tag}")]);
@@ -566,27 +593,25 @@ fn run_args(id: &str, tag: &str, root: &Path) -> Vec<String> {
 async fn ensure_container(bin: &Path, id: &str, tag: &str, root: &Path) -> Result<String, String> {
     let lock = ws_lock(id);
     let _held = lock.lock().await;
-    let name = container_name(id);
     let root_s = root.display().to_string();
     if root_s.contains(',') {
         return Err("ナレッジのフォルダ名に「,」を含むため、サンドボックスにマウントできません。".into());
     }
-    match inspect_container(bin, id).await {
+    match find_container(bin, id).await {
         Some(c) if c.image == tag && c.root == root_s => {
             if !c.running {
-                let o = docker(bin, &["start", &name], CLI_TIMEOUT).await?;
+                let o = docker(bin, &["start", &c.name], CLI_TIMEOUT).await?;
                 if !o.ok {
                     return Err(format!("コンテナを起動できませんでした: {}", clip_err(&o.stderr)));
                 }
             }
-            return Ok(name);
+            return Ok(c.name);
         }
-        Some(_) => {
-            // イメージかナレッジの場所が変わった。ボリュームは残して作り直す
-            let _ = docker(bin, &["rm", "-f", &name], CLI_TIMEOUT).await;
-        }
+        // イメージかナレッジの場所が変わった。ボリュームは残して作り直す
+        Some(_) => remove_containers(bin, id).await,
         None => {}
     }
+    let name = new_container_name();
     let net = network_name(id);
     let exists = docker(bin, &["network", "inspect", &net], CLI_TIMEOUT).await.is_ok_and(|o| o.ok);
     if !exists {
@@ -595,7 +620,7 @@ async fn ensure_container(bin: &Path, id: &str, tag: &str, root: &Path) -> Resul
             return Err(format!("ネットワークを作れませんでした: {}", clip_err(&o.stderr)));
         }
     }
-    let args = run_args(id, tag, root);
+    let args = run_args(id, &name, tag, root);
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let o = docker(bin, &refs, Duration::from_secs(120)).await?;
     if !o.ok {
@@ -628,7 +653,8 @@ pub async fn reset_container(id: &str) -> Result<(), String> {
     let bin = require_docker().await?;
     let lock = ws_lock(id);
     let _held = lock.lock().await;
-    docker(&bin, &["rm", "-f", &container_name(id)], CLI_TIMEOUT).await.map(|_| ())
+    remove_containers(&bin, id).await;
+    Ok(())
 }
 
 // ------------------------------------------------------------------ 実行
@@ -772,7 +798,9 @@ async fn reap_idle() {
             .and_then(|m| m.get(&id))
             .is_some_and(|u| u.active == 0 && u.last.elapsed() >= IDLE_STOP);
         if still_idle {
-            let _ = docker(&bin, &["stop", "-t", "3", &container_name(&id)], Duration::from_secs(30)).await;
+            for name in container_names(&bin, &id).await {
+                let _ = docker(&bin, &["stop", "-t", "3", &name], Duration::from_secs(30)).await;
+            }
             if let Some(m) = USAGE.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
                 m.remove(&id);
             }
@@ -810,10 +838,19 @@ pub fn remove_agent_blocking(id: &str) {
             .stderr(Stdio::null())
             .status();
     };
-    run(&["rm", "-f", &container_name(id)]);
+    let filter = format!("label={LABEL_AGENT}={id}");
+    if let Ok(o) = std::process::Command::new(&bin)
+        .args(["ps", "-aq", "--filter", &filter])
+        .env("PATH", path_for(&bin))
+        .stdin(Stdio::null())
+        .output()
+    {
+        for container in String::from_utf8_lossy(&o.stdout).split_whitespace() {
+            run(&["rm", "-f", container]);
+        }
+    }
     run(&["network", "rm", &network_name(id)]);
     run(&["volume", "rm", "-f", &volume_name(id)]);
-    let filter = format!("label={LABEL_AGENT}={id}");
     if let Ok(o) = std::process::Command::new(&bin)
         .args(["images", "-q", "--filter", &filter])
         .env("PATH", path_for(&bin))
@@ -927,8 +964,18 @@ mod tests {
     }
 
     #[test]
+    fn container_names_are_random_and_do_not_contain_the_agent() {
+        let (a, b) = (new_container_name(), new_container_name());
+        assert_ne!(a, b);
+        for n in [&a, &b] {
+            assert!(n.starts_with("myassistant-") && n.len() == "myassistant-".len() + 8, "{n}");
+            assert!(n["myassistant-".len()..].bytes().all(|c| c.is_ascii_hexdigit()));
+        }
+    }
+
+    #[test]
     fn container_mounts_only_the_workspace_and_its_own_volume() {
-        let args = run_args(ID, "img:1", Path::new("/data/knowledge"));
+        let args = run_args(ID, "myassistant-1a2b3c4d", "img:1", Path::new("/data/knowledge"));
         let mounts: Vec<&String> = args.iter().enumerate().filter(|(i, _)| *i > 0 && args[i - 1] == "--mount").map(|(_, a)| a).collect();
         assert_eq!(mounts.len(), 2);
         assert!(mounts[0].contains("source=/data/knowledge,target=/workspace"));
@@ -936,6 +983,8 @@ mod tests {
         for flag in ["--read-only", "--cap-drop", "no-new-privileges", "--init"] {
             assert!(args.iter().any(|a| a == flag), "{flag}");
         }
+        assert!(args.windows(2).any(|w| w[0] == "--name" && w[1] == "myassistant-1a2b3c4d"));
+        assert!(args.contains(&format!("myassistant.agent={ID}")));
         assert!(!args.iter().any(|a| a == "-v" || a == "--privileged" || a == "--network=host"));
         assert!(args.windows(2).any(|w| w[0] == "--network" && w[1] == format!("myassistant-net-{ID}")));
     }
@@ -1008,6 +1057,9 @@ mod tests {
         assert_eq!(out.code, Some(0), "{}{}", out.stdout, out.stderr);
         assert!(out.stdout.contains("token=***") && !out.stdout.contains("supersecretvalue123"), "{}", out.stdout);
         assert!(out.stdout.contains("/workspace") && out.stdout.contains("hi") && out.stdout.contains("agent"));
+        // 画面で確認できるコンテナ名は myassistant-<ランダム>(エージェントの名前やIDは含まれない)
+        let name = status(id, &ctx.dir).await.container_name.expect("container name");
+        assert!(name.starts_with("myassistant-") && !name.contains(id), "{name}");
         // 2. ホームの認証情報・アプリのデータは見えない。他エージェントのナレッジも見えない
         let out = run(req("ls ~/.aws /Users 2>&1; ls /workspace; env | grep -c MY_TOKEN", ctx, root), &cancel, |_, _| {}).await.unwrap();
         assert!(!out.stdout.contains("other.txt") && !out.stdout.contains("credentials"), "{}", out.stdout);
@@ -1029,7 +1081,12 @@ mod tests {
     /// `remove_agent_blocking`は単体テストでは何もしないので、同じ処理を実Dockerで行う。
     fn remove_agent_blocking_for_test(id: &str) {
         let bin = find_docker().unwrap();
-        for args in [vec!["rm", "-f", &container_name(id)], vec!["network", "rm", &network_name(id)], vec!["volume", "rm", "-f", &volume_name(id)]] {
+        let filter = format!("label={LABEL_AGENT}={id}");
+        let ps = std::process::Command::new(&bin).args(["ps", "-aq", "--filter", &filter]).output().unwrap();
+        for container in String::from_utf8_lossy(&ps.stdout).split_whitespace() {
+            let _ = std::process::Command::new(&bin).args(["rm", "-f", container]).status();
+        }
+        for args in [vec!["network", "rm", &network_name(id)], vec!["volume", "rm", "-f", &volume_name(id)]] {
             let _ = std::process::Command::new(&bin).args(args).status();
         }
     }
