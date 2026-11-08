@@ -31,7 +31,7 @@ fn json<T: Serialize + ?Sized>(v: &T) -> String {
 }
 
 impl Frontmatter {
-    fn render(&self) -> String {
+    pub(crate) fn render(&self) -> String {
         format!(
             "---\ntitle: {}\ncategory: {}\ntags: {}\ncreated_at: {}\nupdated_at: {}\nsource_log_ids: {}\n---\n",
             json(&self.title),
@@ -108,7 +108,7 @@ pub fn parse(text: &str) -> Option<(Frontmatter, &str)> {
 }
 
 /// 一時ファイル経由で書き込み、途中失敗でファイルを壊さない。
-fn atomic_write(path: &Path, content: &str) -> Result<(), AppError> {
+pub(crate) fn atomic_write(path: &Path, content: &str) -> Result<(), AppError> {
     let tmp = path.with_extension("md.tmp");
     fs::write(&tmp, content).map_err(io)?;
     fs::rename(&tmp, path).map_err(io)
@@ -447,13 +447,46 @@ pub fn remove_capture(root: &Path, session_id: &str) -> Result<(), AppError> {
     }
 }
 
+/// 整理が済んだセッションのキャプチャをまとめて削除し、消した件数を返す。
+/// `states`は`(セッションID, 未処理ログが残っているか)`。
+/// - ファイル名にはセッションIDの先頭だけが入るので、先頭が同じセッションのどれかに未処理があれば残す。
+/// - DBにログが1件もないキャプチャ(履歴の削除済み・別の保存先など)は、整理済みと判断できないので残す。
+pub fn sweep_captures(root: &Path, states: &[(String, bool)]) -> Result<usize, AppError> {
+    // キャプチャがまだ無いなら、フォルダを作らずに終える
+    if !root.join(CAPTURE_CATEGORY).is_dir() {
+        return Ok(0);
+    }
+    let dir = ensure_dir(root, &[CAPTURE_CATEGORY.to_owned()])?;
+    // 先頭が同じセッションをまとめ、1つでも未処理があれば「未処理あり」とする
+    let mut pending: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+    for (sid, unprocessed) in states {
+        *pending.entry(short_session(sid)).or_default() |= *unprocessed;
+    }
+    let mut removed = 0;
+    for entry in fs::read_dir(&dir).map_err(io)?.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // `日付_セッションID先頭.md`
+        let Some(sid) = name.strip_suffix(".md").and_then(|n| n.split_once('_')).map(|(_, sid)| sid) else { continue };
+        if path.is_file() && pending.get(sid) == Some(&false) {
+            fs::remove_file(&path).map_err(io)?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
 /// 新しい会話の文脈復元用に、直近更新されたファイルの末尾(最新の追記)を連結して返す。
 /// `max_files`件・合計`max_chars`文字まで。該当がなければ`None`。
 pub fn recent_context(root: &Path, max_files: usize, max_chars: usize) -> Result<Option<String>, AppError> {
     let mut out = String::new();
     let mut left = max_chars;
-    // 訂正履歴は専用の枠でシステムプロンプトへ入れるため、ここでは除く
-    for f in list(root)?.into_iter().filter(|f| f.path != CORRECTIONS_PATH && f.category != CAPTURE_CATEGORY).take(max_files) {
+    // 訂正履歴と記憶は専用の枠でシステムプロンプトへ入れるため、ここでは除く
+    for f in list(root)?
+        .into_iter()
+        .filter(|f| f.path != CORRECTIONS_PATH && f.category != CAPTURE_CATEGORY && !super::memory::is_memory(&f.path))
+        .take(max_files)
+    {
         if left == 0 {
             break;
         }
@@ -897,6 +930,25 @@ mod tests {
         // 削除後の発話は新しいキャプチャになる
         append_capture(&root, "abcdef123456", "さらに", "うん", "2026-10-28T09:00:00Z").unwrap();
         assert_eq!(list(&root).unwrap()[0].path, "Captures/2026-10-28_abcdef12.md");
+    }
+
+    #[test]
+    fn sweep_removes_only_captures_of_fully_organized_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("k");
+        for sid in ["done0001xx", "busy0002xx", "none0003xx", "same0004aa", "same0004bb"] {
+            append_capture(&root, sid, "q", "a", "2026-10-27T12:00:00Z").unwrap();
+        }
+        let states = vec![
+            ("done0001xx".to_owned(), false),
+            ("busy0002xx".to_owned(), true),
+            ("same0004aa".to_owned(), false),
+            ("same0004bb".to_owned(), true), // 先頭8文字が同じ → 未処理があるので両方残す
+        ];
+        assert_eq!(sweep_captures(&root, &states).unwrap(), 1);
+        let left: Vec<String> = list(&root).unwrap().into_iter().map(|f| f.path).collect();
+        assert_eq!(left.len(), 3, "{left:?}"); // busy, none(ログなし), same
+        assert!(!left.iter().any(|p| p.contains("done0001")));
     }
 
     #[test]

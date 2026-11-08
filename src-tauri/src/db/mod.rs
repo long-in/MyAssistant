@@ -15,7 +15,7 @@ mod summaries;
 mod usage;
 
 pub use ledger::LedgerRow;
-pub use logs::{LogRow, PendingLog};
+pub use logs::{LogRow, MemoryLog, PendingLog};
 pub use schema::Role;
 pub use summaries::Summary;
 pub use usage::UsageRow;

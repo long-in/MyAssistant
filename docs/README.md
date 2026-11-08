@@ -12,6 +12,7 @@
 | [wake-standby.md](wake-standby.md) | 常時音声待機と起動ワード |
 | [knowledge.md](knowledge.md) | ナレッジの保存形式、キャプチャ、整理バッチ、入出力 |
 | [knowledge-graph.md](knowledge-graph.md) | グラフ索引と関連ノートの想起 |
+| [memory.md](memory.md) | 記憶(覚えておくこと・担当の理解)と会話の合間の更新 |
 | [global-settings.md](global-settings.md) | 全スペース共通の全体設定 |
 | [user-profile.md](user-profile.md) | パーソナルデータ |
 | [agent-file-tools.md](agent-file-tools.md) | ファイル操作・インターネット検索のツール |

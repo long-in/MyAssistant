@@ -2,7 +2,7 @@
 
 import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useState } from "react";
-import { BookOpen, Download, Eye, FileText, FolderOpen, Loader2, Pencil, RotateCcw, Save, Sparkles, Trash2, Upload } from "lucide-react";
+import { BookOpen, Brain, Download, Eye, FileText, FolderOpen, Loader2, Pencil, RotateCcw, Save, Sparkles, Trash2, Upload } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import ReactMarkdown from "react-markdown";
@@ -11,18 +11,27 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { splitFrontmatter } from "@/lib/knowledgeDoc";
+import { useWorkspace } from "@/lib/workspace";
 import KnowledgeTree, { type NodeKind } from "@/components/KnowledgeTree";
 import ModelSelector from "@/components/ModelSelector";
+import MemoryPanel from "@/components/MemoryPanel";
 import { EmptyState, PaneHeader, StatusPill } from "@/components/GlobalPanels";
 import {
+  LEADER_ID,
   type KeyStatus,
   type KnowledgeFile,
+  type MemoryView,
   type ModelInfo,
   type Route,
   getKeyStatus,
   listModels,
   loadBatchRoute,
   saveBatchRoute,
+  loadMemoryRoute,
+  saveMemoryRoute,
+  memoryView,
+  memoryConfirm,
+  memoryForget,
   knowledgeDir,
   listKnowledge,
   listKnowledgeDirs,
@@ -47,6 +56,8 @@ const isNote = (path: string) => path.endsWith(".md");
 
 export default function Knowledge() {
   const t = useT();
+  // リーダーは記憶を持たない(会話の合間の更新もしない)
+  const hasMemory = useWorkspace().active.id !== LEADER_ID;
   const [files, setFiles] = useState<KnowledgeFile[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [dirs, setDirs] = useState<string[]>([]);
@@ -60,13 +71,18 @@ export default function Knowledge() {
   const [route, setRoute] = useState<Route | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [keyStatus, setKeyStatus] = useState<Partial<KeyStatus>>({});
+  const [memory, setMemory] = useState<MemoryView>({ pins: [], understanding: "" });
+  const [memoryRoute, setMemoryRoute] = useState<Route | null>(null);
+  // 記憶の表示中(ノートを開くと閉じる)
+  const [showMemory, setShowMemory] = useState(false);
 
   const refresh = useCallback(
     () =>
-      Promise.all([listKnowledge(), listOtherKnowledge(), listKnowledgeDirs()])
-        .then(([f, o, d]) => {
+      Promise.all([listKnowledge(), listOtherKnowledge(), listKnowledgeDirs(), memoryView()])
+        .then(([f, o, d, m]) => {
           setFiles([...f, ...o]);
           setDirs(d);
+          setMemory(m);
         })
         .catch((e) => toast.error(reportError(e))),
     [],
@@ -74,11 +90,12 @@ export default function Knowledge() {
   useEffect(() => {
     refresh();
     knowledgeDir().then(setDir).catch(() => {});
-    Promise.all([listModels(), loadBatchRoute(), getKeyStatus()])
-      .then(([m, r, k]) => {
+    Promise.all([listModels(), loadBatchRoute(), getKeyStatus(), loadMemoryRoute()])
+      .then(([m, r, k, mr]) => {
         setModels(m);
         setRoute(r);
         setKeyStatus(k);
+        setMemoryRoute(mr);
       })
       .catch((e) => toast.error(reportError(e)));
   }, [refresh]);
@@ -98,6 +115,36 @@ export default function Knowledge() {
     saveBatchRoute(next).catch((e) => toast.error(reportError(e)));
   };
 
+  const changeMemoryRoute = (next: Route) => {
+    setMemoryRoute(next);
+    saveMemoryRoute(next).catch((e) => toast.error(reportError(e)));
+  };
+
+  const confirmPin = async (text: string) => {
+    try {
+      await memoryConfirm(text);
+      await refresh();
+    } catch (e) {
+      toast.error(reportError(e));
+    }
+  };
+
+  const forgetPin = async (text: string) => {
+    const ok = await ask(t("「{text}」を忘れます。この操作は元に戻せません。続行しますか?", { text }), {
+      title: t("削除の確認"),
+      kind: "warning",
+      okLabel: t("削除する"),
+      cancelLabel: t("キャンセル"),
+    });
+    if (!ok) return;
+    try {
+      await memoryForget(text);
+      await refresh();
+    } catch (e) {
+      toast.error(reportError(e));
+    }
+  };
+
   const dirty = selected !== null && draft !== content;
 
   /** 未保存の編集があれば破棄してよいか確認する。 */
@@ -111,9 +158,14 @@ export default function Knowledge() {
     }));
 
   const open = async (path: string) => {
-    if (path === selected || !(await confirmDiscard())) return;
+    if (path === selected) {
+      setShowMemory(false);
+      return;
+    }
+    if (!(await confirmDiscard())) return;
     try {
       const text = await (isNote(path) ? readKnowledge(path) : readOtherKnowledge(path));
+      setShowMemory(false);
       setSelected(path);
       setContent(text);
       setDraft(text);
@@ -205,9 +257,13 @@ export default function Knowledge() {
     setRunning(true);
     try {
       const r = await runBatch();
-      if (!r) toast.info(t("整理対象のログがないか、すでに実行中です。"));
-      else {
-        const msg = t("{processed_logs}件のログを整理し、{files_written}件のノートを更新しました。", { processed_logs: r.processed_logs, files_written: r.files_written });
+      if (!r) toast.info(t("整理するログも削除するキャプチャもないか、すでに実行中です。"));
+      else if (!r.processed_logs && !r.failed_segments) {
+        toast.success(t("整理済みの会話のキャプチャを{captures_removed}件削除しました。", { captures_removed: r.captures_removed }));
+        await refresh();
+      } else {
+        let msg = t("{processed_logs}件のログを整理し、{files_written}件のノートを更新しました。", { processed_logs: r.processed_logs, files_written: r.files_written });
+        if (r.captures_removed) msg += t("(キャプチャ{captures_removed}件を削除)", { captures_removed: r.captures_removed });
         if (r.failed_segments) toast.warning(t("{msg}({failed_segments}件は失敗。次回再試行します)", { msg, failed_segments: r.failed_segments }));
         else toast.success(msg);
         await refresh();
@@ -317,6 +373,20 @@ export default function Knowledge() {
             {running ? t("整理中…") : t("今すぐ整理")}
           </Button>
         </div>
+        {hasMemory && (
+        <div className="hud-panel mx-3 mb-3 px-4 py-3">
+          <p className="hud-label mb-2">Memory</p>
+          <p className="mb-2 text-xs text-muted-foreground">
+            {t("覚えておくこと {n}件", { n: memory.pins.length })}
+            {memory.pins.some((p) => p.inferred) && ` · ${t("推定 {n}件", { n: memory.pins.filter((p) => p.inferred).length })}`}
+          </p>
+          <p className="mb-2 text-xs text-muted-foreground">{t("記憶の更新に使うモデル")}</p>
+          <ModelSelector route={memoryRoute} models={models} keyStatus={keyStatus} onChange={changeMemoryRoute} />
+          <Button size="sm" variant={showMemory ? "default" : "outline"} className="mt-2 w-full" onClick={() => setShowMemory(true)}>
+            <Brain /> {t("記憶を見る")}
+          </Button>
+        </div>
+        )}
         <div className="flex-1 overflow-y-auto py-2">
           <KnowledgeTree
             files={files}
@@ -361,7 +431,9 @@ export default function Knowledge() {
         )}
       </aside>
       <article className="flex min-w-0 flex-1 flex-col">
-        {doc && selected ? (
+        {showMemory && hasMemory ? (
+          <MemoryPanel memory={memory} onConfirm={confirmPin} onForget={forgetPin} onEdit={open} />
+        ) : doc && selected ? (
           <>
             <div className="flex items-center justify-between gap-3 border-b px-4 py-2">
               <span className="flex min-w-0 items-center gap-2 text-sm">

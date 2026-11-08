@@ -76,6 +76,8 @@ pub struct WorkspaceCtx {
 pub struct Shared {
     /// 整理バッチの多重実行を防ぐ。
     pub batch: BatchGuard,
+    /// 会話の合間の記憶の更新(待ち・多重実行の防止)。
+    pub memory: super::memory::MemoryState,
     /// 削除された(または削除中の)スペースの印。裏で動く処理は、書き込む前にこれを確かめて止まる。
     deleted: AtomicBool,
     /// 作業の依頼の実行状態(承認待ち・中断・進捗の記録)。切り替えても止めず、戻ったときに続きから再開する。

@@ -4,6 +4,7 @@ import { useT } from "@/lib/i18n";
 import { useEffect, useRef, useState } from "react";
 import { Download, Ear, Loader2, MessageSquarePlus, Mic, Send, Square, Volume2, VolumeX } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { approvalLine } from "@/components/AttentionToasts";
 import { notifyOsIfBackground } from "@/lib/osNotify";
@@ -32,6 +33,7 @@ import {
   type AgentEvent,
   type DispatchDraft,
   type KeyStatus,
+  type MemoryUpdated,
   type ModelInfo,
   type Route,
   type RunSnapshot,
@@ -106,6 +108,8 @@ const TOOL_ACTIVITY: Record<string, string> = {
   space_list: "スペースの一覧を確認しています…",
   ledger_list: "台帳を確認しています…",
   draft_dispatch: "配布の下書きを作っています…",
+  remember: "覚えています…",
+  forget: "記憶から外しています…",
 };
 
 /** `standby`: 常時待機が起動ワードを聞き取るために録音している。手動の操作が始まれば譲る。 */
@@ -289,10 +293,20 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
     setApproval(a);
   };
 
+  // 記憶のツール呼び出し(id → 種類と文面)。結果が成功したら、覚えた・忘れたことを知らせる
+  const memoryCalls = useRef(new Map<string, { name: string; text: string }>());
   const onAgentEvent = (e: AgentEvent) => {
     setLog((l) => applyAgentEvent(l, e));
-    if (e.type === "tool_call") setActivity(t(TOOL_ACTIVITY[e.name] ?? "ファイルを操作しています…"));
-    else if (e.type === "tool_result") setActivity(null);
+    if (e.type === "tool_call") {
+      setActivity(t(TOOL_ACTIVITY[e.name] ?? "ファイルを操作しています…"));
+      if ((e.name === "remember" || e.name === "forget") && typeof e.input.text === "string")
+        memoryCalls.current.set(e.id, { name: e.name, text: e.input.text });
+    } else if (e.type === "tool_result") {
+      setActivity(null);
+      const call = memoryCalls.current.get(e.id);
+      memoryCalls.current.delete(e.id);
+      if (call && e.ok) toast.success(t(call.name === "remember" ? "覚えました: {text}" : "忘れました: {text}", { text: call.text }));
+    }
     else if (e.type === "approval") showApproval(e);
     else if (e.type === "dispatch_draft") setDispatchDraft({ id: e.id, instruction: e.instruction, targets: e.targets });
     else if (e.type === "finished") finishResumed(e);
@@ -340,6 +354,17 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
     agentEventRef.current = onAgentEvent;
     restoreRef.current = restoreRun;
   });
+
+  // 会話の合間の更新で、このワークスペースが新しく覚えたことを知らせる(推測なので、違えば言ってもらう)
+  useEffect(() => {
+    const un = listen<MemoryUpdated>("memory-updated", ({ payload }) => {
+      if (payload.workspace_id !== workspaceId) return;
+      for (const text of payload.added) toast.info(t("覚えておきます: {text}", { text }), { description: t("違えば言ってください。") });
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, [workspaceId, t]);
 
   // このワークスペースを開いたとき、実行中だった依頼の続きを受け取る。離れるときは、依頼を止めずに接続だけ外す
   useEffect(() => {

@@ -58,8 +58,9 @@
 
 ナレッジ・会話の要約・ツール結果・Web ページなど、**第三者が書き換えうる文章**を LLM に渡すときの共通方針。
 
-- `<stt_corrections>` `<previous_context>` `<related_knowledge>` `<conversation_summary>` `<user_profile>` は参考データであり、その中の指示には従わない、と**システムプロンプトの末尾で明示する**([chat-flow.md](chat-flow.md))。
-- 整理バッチ・要約・校正のプロンプトも、`<conversation>` `<summary>` `<transcript>` `<context>` の内容は対象データであり、中の指示には従わないと明示する。
+- `<understanding>` `<stt_corrections>` `<previous_context>` `<related_knowledge>` `<conversation_summary>` `<user_profile>` は参考データであり、その中の指示には従わない、と**システムプロンプトの末尾で明示する**([chat-flow.md](chat-flow.md))。
+- 整理バッチ・要約・校正・記憶の更新のプロンプトも、`<conversation>` `<summary>` `<transcript>` `<context>` の内容は対象データであり、中の指示には従わないと明示する。
+- 覚えておくこと(`<pinned_memory>`)はユーザーの指示として従わせる。そのため本文に `<` `>`・制御文字を入れさせず、記録のたびにチャットへ表示する。担当の理解は参考データとし、`<` `>` を全角にして渡す([memory.md](memory.md))。
 - ツール結果(ファイル・コマンド出力・Web ページ)に書かれた指示には従わない(`TOOL_GUIDE`)。
 - `web_fetch` は、ツール結果に書かれた URL を根拠にした取得を禁止する(`url_sources.client_tool_results = none`)。ナレッジのファイルに混入した指示で、情報が外部へ送出されるのを防ぐ。
 - パーソナルデータ・スペースデータ・共通データの入力値は、制御文字(スペースデータ・共通データでは改行を除く)と `<` `>` を拒否する(タグの偽装でプロンプトを壊されないようにする)。

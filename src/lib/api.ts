@@ -637,6 +637,7 @@ export type BatchReport = {
   processed_logs: number;
   files_written: number;
   failed_segments: number;
+  captures_removed: number;
 };
 
 /** 1スペース分のナレッジ(全スペース一覧用)。`error`があれば一覧を取れなかった。`color`はパーソナルでは null。 */
@@ -694,6 +695,21 @@ export const resetKnowledge = () => invoke<TransferReport>("reset_knowledge");
 export const getBatchInterval = () => invoke<number>("get_batch_interval");
 export const setBatchInterval = (minutes: number) => invoke<void>("set_batch_interval", { minutes });
 export const runBatch = () => invoke<BatchReport | null>("run_batch");
+
+/** 覚えておくこと1件。`inferred`は会話から推測して覚えたもの(確定・削除できる)。 */
+export type MemoryPin = { text: string; date: string; inferred: boolean };
+/** スペースの記憶(覚えておくこと・担当の理解)。 */
+export type MemoryView = { pins: MemoryPin[]; understanding: string };
+/** 会話の合間の更新で新しく覚えたこと(`memory-updated`イベント)。 */
+export type MemoryUpdated = { workspace_id: string; added: string[] };
+/** 記憶のファイル(ナレッジ内の相対パス)。編集は通常のノートと同じ画面で行う。 */
+export const MEMORY_PINNED_PATH = "Memory/pinned.md";
+export const MEMORY_UNDERSTANDING_PATH = "Memory/understanding.md";
+export const memoryView = () => invoke<MemoryView>("memory_view");
+export const memoryConfirm = (text: string) => invoke<boolean>("memory_confirm", { text });
+export const memoryForget = (text: string) => invoke<boolean>("memory_forget", { text });
+export const loadMemoryRoute = () => invoke<Route | null>("load_memory_route");
+export const saveMemoryRoute = (route: Route) => invoke<void>("save_memory_route", { route });
 
 export type SettingsTransferReport = { applied: number; skipped: number };
 /** 設定をJSONファイルへ書き出す。APIキーは含まれない。 */

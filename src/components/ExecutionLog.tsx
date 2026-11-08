@@ -40,6 +40,8 @@ const TOOL_LABELS: Record<string, string> = {
   space_list: "スペースの一覧",
   ledger_list: "台帳の参照",
   draft_dispatch: "配布の下書き",
+  remember: "記憶",
+  forget: "記憶から外す",
 };
 
 const clock = (d: Date) => d.toLocaleTimeString("ja-JP", { hour12: false });
@@ -56,7 +58,7 @@ export function applyAgentEvent(log: LogState, e: AgentEvent): LogState {
     const isCommand = e.name === "run_command";
     const title = isCommand
       ? str(e.input.command)
-      : `${tr(TOOL_LABELS[e.name] ?? e.name)} ${str(e.input.path) || str(e.input.query)}`.trim();
+      : `${tr(TOOL_LABELS[e.name] ?? e.name)} ${str(e.input.path) || str(e.input.query) || str(e.input.text)}`.trim();
     const step = typeof e.input.step === "number" ? e.input.step : undefined;
     return { ...log, entries: [...log.entries, { id: e.id, title, step, isCommand, output: "", status: "running", at: new Date() }] };
   }

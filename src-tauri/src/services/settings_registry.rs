@@ -8,7 +8,9 @@ use crate::{
     utils::error::AppError,
 };
 
-use super::{batch, debug_log, global_settings, leader, profile, proofread, space_data, stt, tuning, voicevox, wake, workspace};
+use super::{
+    batch, debug_log, global_settings, leader, memory, profile, proofread, space_data, stt, tuning, voicevox, wake, workspace,
+};
 
 /// 設定の保存先。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +69,7 @@ pub const ALL: &[Setting] = &[
     space(tuning::KEY, Some(Kind::Json)),
     space(batch::BATCH_ROUTE_KEY, Some(Kind::Json)),
     space(proofread::ROUTE_KEY, Some(Kind::Json)),
+    space(memory::ROUTE_KEY, Some(Kind::Json)),
     space(debug_log::ENABLED_KEY, Some(Kind::Flag)),
     // ---- スペースごと(対象外: 端末ごとに異なるもの、スペース固有のもの) ----
     space(batch::KNOWLEDGE_DIR_KEY, None),
@@ -76,6 +79,7 @@ pub const ALL: &[Setting] = &[
     space(space_data::KEY, None),
     space(leader::PROMPT_KEY, None),
     space(leader::LIMIT_KEY, None),
+    space(memory::CURSOR_KEY, None),
     // ---- 全体設定 ----
     global(chat::BASE_INSTRUCTIONS_KEY, Some(Kind::Text)),
     global(global_settings::OS_NOTIFICATIONS_KEY, Some(Kind::Flag)),
