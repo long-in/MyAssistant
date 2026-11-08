@@ -46,6 +46,11 @@ import {
   cancelRecording,
   downloadSttModel,
   getSttEngine,
+  getTtsEngine,
+  aquaKeyRegistered,
+  ttsKeyRegistered,
+  type SttEngine,
+  type TtsEngine,
   getKeyStatus,
   getVoiceTiming,
   getWakeConfig,
@@ -182,6 +187,8 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
   const [needModel, setNeedModel] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [ttsReady, setTtsReady] = useState(false);
+  /** 設定不足の案内に使う、読み込み済みの設定の状況。読み込むまでは案内しない。 */
+  const [setup, setSetup] = useState<{ tts: TtsEngine; stt: SttEngine; sttKey: boolean } | null>(null);
   const [voiceReply, setVoiceReply] = useState(true);
   /** Voice Linkのキーが未登録なら読み上げず、字幕だけで応答する。 */
   const speakReply = voiceReply && ttsReady;
@@ -234,9 +241,11 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
   // 対話画面へ戻るたびに、設定画面などでの変更(キー・モデル・待機設定)を読み直す
   useEffect(() => {
     if (!active) return;
-    Promise.all([listModels(), loadRouting(), getKeyStatus(), fetchTtsReady(), getWakeConfig(), getVoiceTiming()])
-      .then(([m, r, k, t, w, u]) => {
+    Promise.all([listModels(), loadRouting(), getKeyStatus(), fetchTtsReady(), getWakeConfig(), getVoiceTiming(), getTtsEngine(), getSttEngine(), ttsKeyRegistered(), aquaKeyRegistered(), sttModelReady()])
+      .then(([m, r, k, t, w, u, te, se, gk, ak, sm]) => {
         tuning.current = u;
+        setSetup({ tts: te, stt: se, sttKey: se === "google" ? gk : se === "aqua" ? ak : true });
+        setNeedModel(se === "local" && !sm);
         setModels(m);
         setRoute(r);
         setKeyStatus(k);
@@ -939,6 +948,13 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
     <div className="relative flex h-full flex-col">
       <WorkspaceBadge className="pointer-events-none absolute top-4 right-4 z-10" />
       {modelSlot && createPortal(<ModelSelector route={route} models={models} keyStatus={keyStatus} onChange={changeRoute} />, modelSlot)}
+      {setup && (
+        <div className="mx-6 mt-4 flex flex-col gap-2 empty:hidden">
+          {!Object.values(keyStatus).some(Boolean) && Object.keys(keyStatus).length > 0 && <SetupNotice text={t("APIキーが未登録のため、AIが応答できません。")} action={t("設定を開く")} onAction={() => router.push("/setup")} />}
+          {!ttsReady && voiceReply && <SetupNotice text={setup.tts === "voicevox" ? t("VOICEVOXが未取得のため、読み上げは動作しません(字幕のみ)。") : t("Google Cloudのキーが未登録のため、読み上げは動作しません(字幕のみ)。")} action={t("設定を開く")} onAction={() => router.push("/setup")} />}
+          {!setup.sttKey && <SetupNotice text={setup.stt === "aqua" ? t("Aqua Voiceのキーが未登録のため、音声入力は動作しません。") : t("Google Cloudのキーが未登録のため、音声入力は動作しません。")} action={t("設定を開く")} onAction={() => router.push("/setup")} />}
+        </div>
+      )}
       {needModel && (
         <div className="hud-panel hud-accent mx-6 mt-4 flex items-center justify-between gap-3 px-5 py-3 text-sm">
           <span>{t("音声入力にはローカル音声認識モデル(約470MB)のダウンロードが必要です。")}</span>
@@ -1089,6 +1105,18 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
           </form>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** チャット画面上部の、設定不足の案内。 */
+function SetupNotice({ text, action, onAction }: { text: string; action: string; onAction: () => void }) {
+  return (
+    <div className="hud-panel hud-accent flex items-center justify-between gap-3 px-5 py-3 text-sm" role="status">
+      <span>{text}</span>
+      <Button size="sm" variant="outline" onClick={onAction}>
+        {action}
+      </Button>
     </div>
   );
 }

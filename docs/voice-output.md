@@ -4,7 +4,7 @@
 
 ## 音声合成(`tts.rs`)
 
-エンジンは設定(`tts_engine`: `google` / `voicevox`、既定 `google`)で選ぶ。`synthesize_speech` は選んだエンジンで合成し、base64 の音声(Google は MP3、VOICEVOX は WAV)を返す。再生側は Web Audio の `decodeAudioData` で形式を自動判別するため、どちらもそのまま再生できる。
+エンジンは設定(`tts_engine`: `google` / `voicevox`、既定 `voicevox`)で選ぶ。`synthesize_speech` は選んだエンジンで合成し、base64 の音声(Google は MP3、VOICEVOX は WAV)を返す。再生側は Web Audio の `decodeAudioData` で形式を自動判別するため、どちらもそのまま再生できる。
 
 ### Google Cloud
 

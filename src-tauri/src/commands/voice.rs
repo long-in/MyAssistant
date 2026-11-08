@@ -411,10 +411,10 @@ pub const VOICEVOX_STYLE_KEY: &str = "voicevox_style";
 /// 選択できる読み上げエンジン。
 pub const TTS_ENGINES: [&str; 2] = ["google", "voicevox"];
 
-/// 読み上げエンジンの設定値。未設定・不明な値はGoogle Cloud。
+/// 読み上げエンジンの設定値。未設定・不明な値はVOICEVOX。
 fn tts_engine(db: &Db) -> Result<&'static str, AppError> {
     let saved = db.get_setting(TTS_ENGINE_KEY)?;
-    Ok(TTS_ENGINES.into_iter().find(|e| Some(*e) == saved.as_deref()).unwrap_or("google"))
+    Ok(TTS_ENGINES.into_iter().find(|e| Some(*e) == saved.as_deref()).unwrap_or("voicevox"))
 }
 
 fn voicevox_style(db: &Db) -> Result<u32, AppError> {

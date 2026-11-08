@@ -1149,7 +1149,7 @@ export default function Setup() {
   const [status, setStatus] = useState<Partial<KeyStatus>>({});
   const [ttsReady, setTtsReady] = useState(false); // Google Cloudのキー(読み上げ・Google音声認識で共通)
   const [speechReady, setSpeechReady] = useState(false); // 選んだ読み上げエンジンが使える状態か
-  const [ttsEngine, setTtsEngineState] = useState<TtsEngine>("google");
+  const [ttsEngine, setTtsEngineState] = useState<TtsEngine>("voicevox");
   const [vvInstalled, setVvInstalled] = useState(false);
   const [vvStyle, setVvStyle] = useState(3);
   const [aquaReady, setAquaReady] = useState(false);

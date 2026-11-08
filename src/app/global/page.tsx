@@ -40,7 +40,7 @@ import { useT } from "@/lib/i18n";
 export default function GlobalSettings() {
   const t = useT();
   const [speechReady, setSpeechReady] = useState(false);
-  const [ttsEngine, setTtsEngine] = useState<TtsEngine>("google");
+  const [ttsEngine, setTtsEngine] = useState<TtsEngine>("voicevox");
   const [sttEngine, setSttEngine] = useState<SttEngine>("local");
   const [tab, setTab] = useState("ai");
   const [hasLeader, setHasLeader] = useState(false);

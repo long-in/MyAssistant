@@ -67,7 +67,7 @@ erDiagram
 | `shell_access` | `0` / `1` | 有効 | Command Tasks |
 | `stt_engine` | `local` / `google` / `aqua` | `local` | Voice Link |
 | `stt_language` | `auto` / `ja` / `en` / `zh` / `ko` | `auto` | Voice Link |
-| `tts_engine` | `google` / `voicevox` | `google` | Voice Link |
+| `tts_engine` | `google` / `voicevox` | `voicevox` | Voice Link |
 | `voicevox_style` | VOICEVOX のスタイル ID(数値の文字列) | `3`(ずんだもん ノーマル) | Voice Link |
 | `whisper_revision` | Hugging Face のリビジョン(ブランチ・タグ・コミット) | `main` | Voice Link(取得バージョン) |
 | `voicevox_versions` | 取得する配布物のバージョン(JSON: `core` / `onnxruntime` / `models` / `dict_release` / `dict`。未指定の項目は既定値) | CORE `0.17.1`、ONNX Runtime `1.23.2`、音声モデル `0.17.0`、辞書 `v1.11.1` / `1.11` | Voice Link(取得バージョン) |
