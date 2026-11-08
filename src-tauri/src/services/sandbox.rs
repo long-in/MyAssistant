@@ -432,7 +432,7 @@ pub async fn build_image(
     ws_dir: &Path,
     force: bool,
     cancel: &CancelToken,
-    on_line: &mut dyn FnMut(&str),
+    on_line: &mut impl FnMut(&str),
 ) -> Result<String, String> {
     if !is_agent(id) {
         return Err("サンドボックスを使えるのはエージェントだけです。".into());
@@ -975,5 +975,62 @@ mod tests {
         vars.insert("AWS_REGION".to_owned(), "ap-northeast-1".to_owned());
         vars.insert("AWS_SECRET_ACCESS_KEY".to_owned(), "abcdefghijkl".to_owned());
         assert_eq!(secret_values(&vars), vec!["abcdefghijkl".to_owned()]);
+    }
+
+    /// 実Dockerでの通し確認。Dockerの起動とネットワーク(イメージの取得)が必要で、初回は数分かかる。
+    /// `cargo test -- --ignored sandbox_end_to_end`で実行する。
+    #[tokio::test]
+    #[ignore]
+    async fn sandbox_end_to_end() {
+        let id = "ffffffff-0000-4000-8000-00000000e2e1";
+        let other = "ffffffff-0000-4000-8000-00000000e2e2";
+        let tmp = tempfile::tempdir().unwrap();
+        let mk = |agent: &str| {
+            let dir = tmp.path().join(agent);
+            let ctx = WorkspaceCtx::open(agent, &dir).unwrap();
+            let root = dir.join("knowledge");
+            std::fs::create_dir_all(&root).unwrap();
+            (ctx, root)
+        };
+        let (ctx, root) = mk(id);
+        let (ctx2, root2) = mk(other);
+        std::fs::write(sandbox_env::path(&ctx.dir), "MY_TOKEN=supersecretvalue123\n").unwrap();
+        std::fs::write(root.join("hello.txt"), "hi").unwrap();
+        std::fs::write(root2.join("other.txt"), "x").unwrap();
+        let cancel = CancelToken::default();
+        let req = |c: &'static str, ctx: &'static WorkspaceCtx, root: &'static Path| Request { ctx, root, command: c, cwd: "/workspace", timeout: Duration::from_secs(60) };
+        // テストの間だけ生きるよう、リークさせて'staticにする
+        let (ctx, ctx2): (&'static WorkspaceCtx, &'static WorkspaceCtx) = (Box::leak(Box::new(ctx)), Box::leak(Box::new(ctx2)));
+        let (root, root2): (&'static Path, &'static Path) = (Box::leak(root.into_boxed_path()), Box::leak(root2.into_boxed_path()));
+
+        // 1. 実行できて、環境変数の値は伏せられ、ナレッジが見える
+        let out = run(req("echo token=$MY_TOKEN; pwd; cat hello.txt; id -un", ctx, root), &cancel, |_, _| {}).await.unwrap();
+        assert_eq!(out.code, Some(0), "{}{}", out.stdout, out.stderr);
+        assert!(out.stdout.contains("token=***") && !out.stdout.contains("supersecretvalue123"), "{}", out.stdout);
+        assert!(out.stdout.contains("/workspace") && out.stdout.contains("hi") && out.stdout.contains("agent"));
+        // 2. ホームの認証情報・アプリのデータは見えない。他エージェントのナレッジも見えない
+        let out = run(req("ls ~/.aws /Users 2>&1; ls /workspace; env | grep -c MY_TOKEN", ctx, root), &cancel, |_, _| {}).await.unwrap();
+        assert!(!out.stdout.contains("other.txt") && !out.stdout.contains("credentials"), "{}", out.stdout);
+        let out2 = run(req("ls /workspace; echo [$MY_TOKEN]", ctx2, root2), &cancel, |_, _| {}).await.unwrap();
+        assert!(out2.stdout.contains("other.txt") && !out2.stdout.contains("hello.txt") && out2.stdout.contains("[]"), "{}", out2.stdout);
+        // 3. 時間切れでコンテナ内のプロセスも止まる
+        let started = Instant::now();
+        let mut r = req("sleep 300", ctx, root);
+        r.timeout = Duration::from_secs(2);
+        let out = run(r, &cancel, |_, _| {}).await.unwrap();
+        assert!(out.timed_out && started.elapsed() < Duration::from_secs(30));
+        let out = run(req("ps -eo args | grep -c '[s]leep 300'", ctx, root), &cancel, |_, _| {}).await.unwrap();
+        assert_eq!(out.stdout.trim(), "0", "sleepが残っています");
+        // 4. 後始末
+        remove_agent_blocking_for_test(id);
+        remove_agent_blocking_for_test(other);
+    }
+
+    /// `remove_agent_blocking`は単体テストでは何もしないので、同じ処理を実Dockerで行う。
+    fn remove_agent_blocking_for_test(id: &str) {
+        let bin = find_docker().unwrap();
+        for args in [vec!["rm", "-f", &container_name(id)], vec!["network", "rm", &network_name(id)], vec!["volume", "rm", "-f", &volume_name(id)]] {
+            let _ = std::process::Command::new(&bin).args(args).status();
+        }
     }
 }

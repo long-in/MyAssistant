@@ -62,6 +62,7 @@ pub const ALL: &[Setting] = &[
     agent(chat::ROUTE_KEY, Some(Kind::Json)),
     agent(chat::WEB_ACCESS_KEY, Some(Kind::Flag)),
     agent(chat::SHELL_ACCESS_KEY, Some(Kind::Flag)),
+    agent(chat::SANDBOX_ENABLED_KEY, Some(Kind::Flag)),
     agent(voice::STT_ENGINE_KEY, Some(Kind::OneOf(&["local", "google", "aqua"]))),
     agent(voice::STT_LANGUAGE_KEY, Some(Kind::Text)),
     agent(voice::TTS_ENGINE_KEY, Some(Kind::OneOf(&["google", "voicevox"]))),

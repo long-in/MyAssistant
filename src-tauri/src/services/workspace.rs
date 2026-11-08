@@ -586,6 +586,8 @@ impl Workspaces {
             shared.task.abort();
         }
         self.loaded.write().unwrap_or_else(|p| p.into_inner()).remove(id);
+        // サンドボックスのコンテナ・ボリューム・ネットワーク・イメージを消す(失敗しても削除は続ける)
+        super::sandbox::remove_agent(id);
         // `id`は一覧にあったもの(生成したUUID)だけなので、`workspaces/`配下の1フォルダに限られる
         if let Err(e) = std::fs::remove_dir_all(self.agent_dir(id))
             && e.kind() != std::io::ErrorKind::NotFound

@@ -135,6 +135,9 @@ pub enum AppError {
     /// ワークの中に実行中・承認待ちの依頼があり、無効にできない。
     #[error("work is busy")]
     WorkBusy,
+    /// サンドボックス(Docker)の不備。メッセージは利用者に見せる文面。
+    #[error("{0}")]
+    Sandbox(String),
 }
 
 impl AppError {
@@ -200,6 +203,7 @@ impl AppError {
             Self::LeaderExists => "leader_exists",
             Self::WorkDisabled => "work_disabled",
             Self::WorkBusy => "work_busy",
+            Self::Sandbox(_) => "sandbox_error",
             Self::ProviderRejected(_) => "provider_rejected",
             Self::ApiDisabled => "api_disabled",
             Self::KeyRestricted => "key_restricted",

@@ -9,7 +9,7 @@ use crate::{
         task_run::RunSnapshot,
         attention::{self, AttentionKind},
         cancel::CancelToken,
-        leader, llm_client,
+        leader, llm_client, sandbox,
         secrets::Provider,
         skills::Access as SkillAccess,
         workspace::{Ctx, WorkspaceCtx, Workspaces},
@@ -49,7 +49,7 @@ async fn wait_for_answer(
 /// 音声対話の1ターンをファイル操作ツール付きで実行する(Claude専用。Anthropic直接またはBedrock)。
 /// `history`は直前までの会話(`user`/`assistant`のテキスト)で、今回の発話は`user_text`で渡す。
 /// `web_access`が有効なときは、インターネット検索・ページ取得(サーバーツール)も渡す。Bedrockでは使えない。
-/// `shell_access`が有効なときは、作業計画の提示とシェルコマンドの実行も渡す。
+/// `shell_access`が有効なときは、作業計画の提示とシェルコマンドの実行も渡す。`sandbox`が有効なら、コマンドはそのエージェントのDockerコンテナで実行する。
 /// `skills`の範囲だけ、スキル用のツール(手順の読み込み・作成・更新・削除)とその使い方も渡す。リーダーにも渡す。
 /// 進捗(ツール呼び出し・承認要求・コマンド出力)は`on_event`へ流す。実行中は`task_cancel`で中断できる。
 /// `is_foreground`は、このワークスペースを選んでいるかどうか。承認待ちの時間切れを数えるかどうかを決める。
@@ -61,6 +61,7 @@ pub async fn run_with_tools(
     system: &str,
     web_access: Option<(u32, u32)>,
     shell_access: bool,
+    sandbox: bool,
     host: Option<tool_loop::ToolHost<'_>>,
     skills: SkillAccess,
     mut history: Vec<Value>,
@@ -78,8 +79,10 @@ pub async fn run_with_tools(
         (format!("{system}\n\n{}", tool_loop::TOOL_GUIDE), tool_loop::tool_definitions(shell_access))
     };
     let (shell_access, web_access) = if leader { (false, None) } else { (shell_access, web_access) };
+    let sandbox = sandbox && shell_access && !leader && sandbox::is_agent(&ctx.id);
     if shell_access {
-        system.push_str(&format!("\n\n{}", tool_loop::shell_guide()));
+        let guide = if sandbox { tool_loop::SANDBOX_GUIDE.to_owned() } else { tool_loop::shell_guide() };
+        system.push_str(&format!("\n\n{guide}"));
     }
     // 検索・ページ取得はAnthropicのサーバーツールで、Bedrockには無い
     if let Some((search_max, fetch_max)) = web_access.filter(|_| provider == Provider::Anthropic) {
@@ -93,7 +96,7 @@ pub async fn run_with_tools(
     let (system, tools) = (&system, &tools);
     let cancel = CancelToken::default();
     state.set_cancel(cancel.clone());
-    let env = Env::new(root).with_cancel(cancel.clone()).with_shell(shell_access).with_host(host).with_skills(skills);
+    let env = Env::new(root).with_cancel(cancel.clone()).with_shell(shell_access).with_host(host).with_skills(skills).with_sandbox(sandbox.then_some(ctx));
     let is_foreground = &is_foreground;
     let result = tool_loop::run(
         &env,

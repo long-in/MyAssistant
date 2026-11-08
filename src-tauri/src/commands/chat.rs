@@ -20,7 +20,7 @@ use crate::{
         knowledge, leader,
         llm_router::{self, ModelInfo, Route},
         memory,
-        profile,
+        profile, sandbox,
         secrets::Provider,
         skills,
         agent_data, tuning,
@@ -33,6 +33,8 @@ pub const ROUTE_KEY: &str = "routing";
 pub const BASE_INSTRUCTIONS_KEY: &str = "base_instructions";
 pub const WEB_ACCESS_KEY: &str = "web_access";
 pub const SHELL_ACCESS_KEY: &str = "shell_access";
+/// コマンドをエージェント専用のDockerコンテナで実行するか(エージェントだけ。既定は無効)。
+pub const SANDBOX_ENABLED_KEY: &str = "sandbox_enabled";
 /// 発話から想起する関連ノートの上限(件数・合計文字数)。本文は渡さず要約だけにしてトークン圧迫を避ける。
 const RELATED_NODES: usize = 5;
 const RELATED_CHARS: usize = 1_500;
@@ -78,6 +80,11 @@ fn web_access(db: &Db) -> Result<bool, AppError> {
 /// シェルコマンドによる作業の可否。未設定なら有効。
 fn shell_access(db: &Db) -> Result<bool, AppError> {
     Ok(db.get_setting(SHELL_ACCESS_KEY)?.as_deref() != Some("0"))
+}
+
+/// サンドボックスの可否。未設定なら無効。パーソナルとリーダーでは常に無効。
+pub fn sandbox_enabled(ctx: &WorkspaceCtx) -> Result<bool, AppError> {
+    Ok(sandbox::is_agent(&ctx.id) && ctx.db.get_setting(SANDBOX_ENABLED_KEY)?.as_deref() == Some("1"))
 }
 
 #[tauri::command]
@@ -379,6 +386,7 @@ async fn send_chat_inner(
         system,
         web_access(&ctx.db)?.then_some((tuning.web_search_max, tuning.web_fetch_max)),
         shell_access(&ctx.db)?,
+        sandbox_enabled(ctx)?,
         host,
         prepared.access,
         prior,

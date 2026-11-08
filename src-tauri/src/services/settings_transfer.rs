@@ -302,6 +302,20 @@ mod tests {
     }
 
     #[test]
+    fn sandbox_flag_is_transferred_and_validated() {
+        let (_da, a) = mem();
+        a.set_setting(chat::SANDBOX_ENABLED_KEY, "1").unwrap();
+        let text = serde_json::to_string(&collect(&a, Policy::defaults(), "t".into()).unwrap()).unwrap();
+        let (_db, b) = mem();
+        apply(&b, &parse(&text).unwrap()).unwrap();
+        assert_eq!(b.get_setting(chat::SANDBOX_ENABLED_KEY).unwrap().as_deref(), Some("1"));
+        // 不正な値は何も変えずに拒否する
+        let (_dc, c) = mem();
+        assert!(apply(&c, &file(&[(chat::SANDBOX_ENABLED_KEY, "yes")])).is_err());
+        assert_eq!(c.get_setting(chat::SANDBOX_ENABLED_KEY).unwrap(), None);
+    }
+
+    #[test]
     fn agent_export_excludes_global_items() {
         let (_da, a) = mem();
         for key in [profile::KEY, chat::BASE_INSTRUCTIONS_KEY, wake::WORDS_KEY, batch::BATCH_INTERVAL_KEY] {

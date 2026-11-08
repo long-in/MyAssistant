@@ -18,8 +18,10 @@ use super::{
     command_policy::{self, Verdict},
     llm_client::{ToolCall, ToolTurn},
     memory::{self, Forgot, Remembered},
+    sandbox,
     shell::{self, Stream},
     skills::{self, Access as SkillAccess},
+    workspace::WorkspaceCtx,
 };
 use crate::utils::{
     error::AppError,
@@ -79,6 +81,18 @@ pub fn shell_guide() -> String {
 - 最終回答は、何をしてどうなったかを短く伝える。"
     )
 }
+
+/// サンドボックスを有効にしたときに、`shell_guide`の代わりに渡す実行環境の説明。
+pub const SANDBOX_GUIDE: &str = "\
+作業実行ツール(サンドボックス)\n\
+- コマンドはこのエージェント専用のLinuxコンテナ(Debian)の中で、/bin/shで実行される。macOSのコマンド(brew、open、osascriptなど)とホームのファイルは使えない。\n\
+- ナレッジはコンテナ内の/workspaceにある。cwdの既定は/workspaceで、cwdには/workspace配下かナレッジ配下のパスだけを指定できる。パスの引数は/workspaceからの相対パスで書く。\n\
+- awsコマンド、git、jq、python3、nodeなどが入っている。認証情報は環境変数としてすでに渡されているので、読み取ったり出力したりしない。\n\
+- 状態を変える作業は、先にpropose_planで手順を示して承認を得る。承認済みの手順はrun_commandのstepに番号を指定すれば都度の承認なしで実行でき、計画外や破壊的なコマンドには都度承認が入る。\n\
+- 読み取り系(ls、cat、grepなど)は承認なしで実行できる。rm・sudoは拒否される。拒否されたら理由を伝えて別の方法を相談する。\n\
+- 作業の依頼は進行中の会話の続きとして扱う。ユーザーが作業を依頼したときだけ使い、まず読み取り系で状況を確かめ、推測で進めない。\n\
+- 失敗したら出力から原因を直して再試行する。同じ失敗を繰り返さず、行き詰まったら状況を伝える。\n\
+- 最終回答は、何をしてどうなったかを短く伝える。";
 
 /// インターネット検索を有効にしたときに、`TOOL_GUIDE`へ続けて渡す使い方。
 pub const WEB_GUIDE: &str = "\
@@ -567,12 +581,14 @@ pub struct Env<'a> {
     host: Option<ToolHost<'a>>,
     /// 実行を許すスキル用ツール。リーダーでも`use_skill`は`host`より先に処理する。
     skills: SkillAccess,
+    /// 指定すると、コマンドをこのエージェントのDockerコンテナの中で実行する(ホストでは実行しない)。
+    sandbox: Option<&'a WorkspaceCtx>,
 }
 
 impl<'a> Env<'a> {
     /// ファイル操作だけの環境。コマンド実行は`with_shell`で有効にする。
     pub fn new(root: &'a Path) -> Self {
-        Self { root, cancel: CancelToken::default(), shell: false, host: None, skills: SkillAccess::default() }
+        Self { root, cancel: CancelToken::default(), shell: false, host: None, skills: SkillAccess::default(), sandbox: None }
     }
 
     pub fn with_cancel(mut self, cancel: CancelToken) -> Self {
@@ -592,6 +608,11 @@ impl<'a> Env<'a> {
 
     pub fn with_skills(mut self, skills: SkillAccess) -> Self {
         self.skills = skills;
+        self
+    }
+
+    pub fn with_sandbox(mut self, ctx: Option<&'a WorkspaceCtx>) -> Self {
+        self.sandbox = ctx;
         self
     }
 
@@ -918,7 +939,13 @@ where
     if command.chars().count() > COMMAND_MAX_CHARS {
         return Err(format!("コマンドが長すぎます(上限{COMMAND_MAX_CHARS}文字)。"));
     }
-    let cwd = resolve_cwd(str_arg(input, "cwd"))?;
+    // サンドボックスでは作業ディレクトリをナレッジ配下に限り、コンテナ内のパスへ変換する
+    let (cwd, inner_cwd) = if env.sandbox.is_some() {
+        let (host, inner) = sandbox::map_cwd(env.root, str_arg(input, "cwd"))?;
+        (host, Some(inner))
+    } else {
+        (resolve_cwd(str_arg(input, "cwd"))?, None)
+    };
     let secs = input.get("timeout_secs").and_then(Value::as_u64).unwrap_or(COMMAND_TIMEOUT_SECS);
     let timeout = Duration::from_secs(secs.clamp(1, COMMAND_TIMEOUT_MAX_SECS));
     let step = input.get("step").and_then(Value::as_u64);
@@ -970,10 +997,16 @@ where
         command_policy::add_allow(env.root, &allowed).map_err(|e| format!("許可リストを更新できません: {e}"))?;
     }
 
-    let out = shell::run(command, &cwd, timeout, &env.cancel, |stream, text| {
+    let mut on_chunk = |stream: Stream, text: &str| {
         emit(TaskEvent::CommandOutput { id: call.id.clone(), stream, text: text.to_owned() });
-    })
-    .await?;
+    };
+    let out = match (env.sandbox, inner_cwd.as_deref()) {
+        (Some(ctx), Some(inner)) => {
+            let req = sandbox::Request { ctx, root: env.root, command, cwd: inner, timeout };
+            sandbox::run(req, &env.cancel, &mut on_chunk).await?
+        }
+        _ => shell::run(command, &cwd, timeout, &env.cancel, &mut on_chunk).await?,
+    };
     let body = shell::format_output(&out);
     if out.code == Some(0) && !out.timed_out && !out.cancelled { Ok(body) } else { Err(body) }
 }
