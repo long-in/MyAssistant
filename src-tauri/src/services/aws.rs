@@ -502,6 +502,22 @@ async fn credentials(ctx: &WorkspaceCtx) -> Result<(Keys, String), AppError> {
     Ok((keys, region))
 }
 
+/// サンドボックスのコマンドへ渡す、選択中のプロファイルの認証情報(環境変数の名前と値)。
+/// ロールを引き受けるプロファイルは、通常のBedrock呼び出しと同じ流れ(MFA入力・メモリ上のキャッシュ)で一時キーを得る。
+pub async fn env_pairs(ctx: &WorkspaceCtx) -> Result<Vec<(String, String)>, AppError> {
+    let (keys, region) = credentials(ctx).await?;
+    let mut pairs = vec![
+        ("AWS_ACCESS_KEY_ID".to_owned(), keys.access_key_id),
+        ("AWS_SECRET_ACCESS_KEY".to_owned(), keys.secret_access_key),
+    ];
+    if let Some(token) = keys.session_token {
+        pairs.push(("AWS_SESSION_TOKEN".to_owned(), token));
+    }
+    pairs.push(("AWS_REGION".to_owned(), region.clone()));
+    pairs.push(("AWS_DEFAULT_REGION".to_owned(), region));
+    Ok(pairs)
+}
+
 /// 初期候補にするClaudeのモデルID(`global.`付きの推論プロファイルID)。
 /// 他のモデルや`jp.`などの接頭辞は、画面の「取得」ボタンか手入力で追加する。
 const SUGGESTED_MODELS: &[&str] = &[
