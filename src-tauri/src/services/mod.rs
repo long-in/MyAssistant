@@ -17,6 +17,7 @@ pub mod secrets;
 pub mod settings_registry;
 pub mod settings_transfer;
 pub mod shell;
+pub mod skills;
 pub mod agent_data;
 pub mod knowledge;
 pub mod leader;

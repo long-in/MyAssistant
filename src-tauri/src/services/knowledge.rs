@@ -203,6 +203,10 @@ fn walk(root: &Path, dir: &Path, depth: u8, out: &mut Vec<KnowledgeFile>) -> Res
     }
     for entry in fs::read_dir(dir).map_err(io)? {
         let entry = entry.map_err(io)?;
+        // `.`始まり(`.my-assistant`のスキル・コマンド権限、Obsidianの設定など)はノートではない
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
         let ft = entry.file_type().map_err(io)?;
         let path: PathBuf = entry.path();
         if ft.is_dir() {
@@ -747,6 +751,19 @@ mod tests {
         assert!(read_other(&root, "../x.txt").is_err());
         assert!(write(&root, "debug-logs/2026-01-01.jsonl", "x").is_err());
         assert!(delete(&root, "debug-logs/2026-01-01.jsonl").is_err());
+    }
+
+    #[test]
+    fn dot_folders_are_not_notes_and_survive_reset() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("knowledge");
+        create_file(&root, "Dev/a.md", "2026-10-29T00:00:00Z").unwrap();
+        fs::create_dir_all(root.join(".my-assistant/skills")).unwrap();
+        fs::write(root.join(".my-assistant/skills/daily.md"), "---\ndescription: \"d\"\n---\n手順").unwrap();
+        let paths: Vec<_> = list(&root).unwrap().into_iter().map(|f| f.path).collect();
+        assert_eq!(paths, ["Dev/a.md"], "スキルはノートの一覧に出ない");
+        reset(&root).unwrap();
+        assert!(root.join(".my-assistant/skills/daily.md").is_file(), "初期化はスキルを消さない");
     }
 
     #[test]

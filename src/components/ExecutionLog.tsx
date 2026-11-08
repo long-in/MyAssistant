@@ -42,6 +42,10 @@ const TOOL_LABELS: Record<string, string> = {
   draft_dispatch: "配布の下書き",
   remember: "記憶",
   forget: "記憶から外す",
+  use_skill: "スキルの読み込み",
+  create_skill: "スキルの作成",
+  update_skill: "スキルの更新",
+  delete_skill: "スキルの削除",
 };
 
 const clock = (d: Date) => d.toLocaleTimeString("ja-JP", { hour12: false });
@@ -58,7 +62,7 @@ export function applyTaskEvent(log: LogState, e: TaskEvent): LogState {
     const isCommand = e.name === "run_command";
     const title = isCommand
       ? str(e.input.command)
-      : `${tr(TOOL_LABELS[e.name] ?? e.name)} ${str(e.input.path) || str(e.input.query) || str(e.input.text)}`.trim();
+      : `${tr(TOOL_LABELS[e.name] ?? e.name)} ${str(e.input.path) || str(e.input.query) || str(e.input.text) || str(e.input.name)}`.trim();
     const step = typeof e.input.step === "number" ? e.input.step : undefined;
     return { ...log, entries: [...log.entries, { id: e.id, title, step, isCommand, output: "", status: "running", at: new Date() }] };
   }

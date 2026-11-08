@@ -11,6 +11,7 @@ pub mod leader;
 pub mod profile;
 pub mod settings;
 pub mod settings_transfer;
+pub mod skills;
 pub mod agent_data;
 pub mod voice;
 pub mod workspace;

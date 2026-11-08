@@ -11,7 +11,7 @@
 | `shared/kept-knowledge/` | エージェント削除時に残したナレッジ |
 | `ws/<id>/timeline.db` | DB のスナップショット(`VACUUM INTO`) |
 | `ws/<id>/secrets.json`, `ws/<id>/tts_dictionary.json` | API キー(平文のまま)、読み上げ辞書 |
-| `ws/<id>/knowledge/` | ナレッジ。保存先がアプリデータの外でも含める |
+| `ws/<id>/knowledge/` | ナレッジ。保存先がアプリデータの外でも含める。`.` 始まりのフォルダ(コマンド権限 `.my-assistant/command-policy.json`、スキル `.my-assistant/skills/`)も含む |
 
 `<id>` は `personal`・`leader`・エージェントの UUID。`models/`・`voicevox/`・`voice/`、`-wal`/`-shm`、`.bak-vN` は含めない。シンボリックリンクと、名前が UTF-8 でないファイルは取り込まない。
 

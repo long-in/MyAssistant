@@ -24,6 +24,10 @@ export function approvalLine(kind: TaskAttention["approval_kind"], detail: strin
       return tr("コマンドを実行: {detail}", { detail });
     case "allow_command":
       return tr("コマンドを許可: {detail}", { detail });
+    case "skill_update":
+      return tr("スキルを更新: {detail}", { detail });
+    case "skill_delete":
+      return tr("スキルを削除: {detail}", { detail });
     default:
       return undefined;
   }

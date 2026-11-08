@@ -61,6 +61,7 @@ source_log_ids: ["<会話ログID>", "…"]
 | `Memory/pinned.md`・`Memory/understanding.md` | 記憶([memory.md](memory.md))。グラフ索引・直近の文脈・整理の追記先には含めず、専用の節として渡す |
 | `Preferences/stt_corrections.md` | 聞き取りの訂正履歴([voice-input.md](voice-input.md))。グラフ索引には含めず、専用の節として渡す |
 | `.my-assistant/command-policy.json` | コマンドの権限([command-policy.md](command-policy.md))。隠しフォルダのため LLM のファイルツールから見えない |
+| `.my-assistant/skills/<名前>.md` | スキル([skills.md](skills.md))。`.` 始まりのフォルダはノートとして扱わない(一覧・エクスポート・初期化・グラフの対象外) |
 | `debug-logs/` | デバッグモードのログ([debug-log.md](debug-log.md)) |
 
 ## キャプチャ

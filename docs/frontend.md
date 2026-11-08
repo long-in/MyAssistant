@@ -9,6 +9,7 @@ Next.js 16(App Router、`output: "export"`)の静的サイト。Tauri の WebVie
 | `/` | 対話 | 音声入力・応答・字幕・実行ログ・承認 |
 | `/knowledge` | ナレッジ | ノートの閲覧、整理、入出力([knowledge.md](knowledge.md)) |
 | `/knowledge/all` | 全エージェントのナレッジ | 切り替えずに全エージェントのノートを操作、Finderで開く([knowledge.md](knowledge.md)) |
+| `/skills` | スキル | 決まった依頼への対応手順の一覧・編集、選定モデル([skills.md](skills.md)) |
 | `/setup` | 設定 | API キー、各種設定([data-and-settings.md](data-and-settings.md)) |
 | `/shortcuts` | ショートカット | 一覧。定義は `lib/shortcuts.ts` と共有 |
 | `/debug` | デバッグ | デバッグモードが有効なときだけ([debug-log.md](debug-log.md)) |

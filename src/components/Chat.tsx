@@ -107,6 +107,10 @@ const TOOL_ACTIVITY: Record<string, string> = {
   draft_dispatch: "配布の下書きを作っています…",
   remember: "覚えています…",
   forget: "記憶から外しています…",
+  use_skill: "スキルの手順を読んでいます…",
+  create_skill: "スキルを作成しています…",
+  update_skill: "スキルを更新しています…",
+  delete_skill: "スキルを削除しています…",
 };
 
 /** `standby`: 常時待機が起動ワードを聞き取るために録音している。手動の操作が始まれば譲る。 */

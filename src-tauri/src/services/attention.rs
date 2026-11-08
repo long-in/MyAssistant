@@ -36,7 +36,7 @@ pub struct Attention {
     pub workspace_name: Option<String>,
     pub workspace_color: Option<String>,
     pub kind: AttentionKind,
-    /// 承認の種類(`file` / `plan` / `command` / `allow_command`)。承認のときだけ。
+    /// 承認の種類(`file` / `plan` / `command` / `allow_command` / `skill_update` / `skill_delete`)。承認のときだけ。
     pub approval_kind: Option<&'static str>,
     /// 承認を求められている内容(ファイルは作成先、コマンドはその内容)を、1行にまとめたもの。計画では空。
     pub detail: Option<String>,
@@ -82,6 +82,8 @@ fn kind_name(kind: ApprovalKind) -> &'static str {
         ApprovalKind::Plan => "plan",
         ApprovalKind::Command => "command",
         ApprovalKind::AllowCommand => "allow_command",
+        ApprovalKind::SkillUpdate => "skill_update",
+        ApprovalKind::SkillDelete => "skill_delete",
     }
 }
 
@@ -92,6 +94,7 @@ pub fn detail_of(a: &Approval) -> String {
         ApprovalKind::Plan => String::new(),
         ApprovalKind::Command => truncate(&a.preview),
         ApprovalKind::AllowCommand => truncate(&a.steps.join(", ")),
+        ApprovalKind::SkillUpdate | ApprovalKind::SkillDelete => truncate(&a.path),
     }
 }
 
@@ -117,8 +120,18 @@ mod tests {
         assert_eq!(d(ApprovalKind::Plan, "", "overview", &["1", "2"]), "", "計画は内容を載せない");
         assert_eq!(d(ApprovalKind::Command, "", "git\n  status", &[]), "git status");
         assert_eq!(d(ApprovalKind::AllowCommand, "", "", &["git status", "ls"]), "git status, ls");
-        let names = [ApprovalKind::File, ApprovalKind::Plan, ApprovalKind::Command, ApprovalKind::AllowCommand].map(kind_name);
-        assert_eq!(names, ["file", "plan", "command", "allow_command"]);
+        assert_eq!(d(ApprovalKind::SkillUpdate, "daily", "全文", &[]), "daily");
+        assert_eq!(d(ApprovalKind::SkillDelete, "daily", "全文", &[]), "daily");
+        let names = [
+            ApprovalKind::File,
+            ApprovalKind::Plan,
+            ApprovalKind::Command,
+            ApprovalKind::AllowCommand,
+            ApprovalKind::SkillUpdate,
+            ApprovalKind::SkillDelete,
+        ]
+        .map(kind_name);
+        assert_eq!(names, ["file", "plan", "command", "allow_command", "skill_update", "skill_delete"]);
     }
 
     #[test]

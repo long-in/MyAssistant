@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Bug, BookOpen, Library, ClipboardList, Globe, Keyboard, MessageSquare, PanelLeftClose, PanelLeftOpen, Settings, User } from "lucide-react";
+import { Bug, BookOpen, Library, ClipboardList, Globe, Keyboard, MessageSquare, PanelLeftClose, PanelLeftOpen, ScrollText, Settings, User } from "lucide-react";
 import Chat from "@/components/Chat";
 import AttentionToasts from "@/components/AttentionToasts";
 import MfaModal from "@/components/MfaModal";
@@ -21,6 +21,7 @@ import { startWorkspaceSync, useWorkspace } from "@/lib/workspace";
 const MAIN_NAV = [
   { href: "/", label: "Chat", icon: MessageSquare },
   { href: "/knowledge", label: "Knowledge base", icon: BookOpen },
+  { href: "/skills", label: "Skills", icon: ScrollText },
   { href: "/setup", label: "Settings", icon: Settings },
 ] as const;
 

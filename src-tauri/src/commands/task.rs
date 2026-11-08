@@ -11,6 +11,7 @@ use crate::{
         cancel::CancelToken,
         leader, llm_client,
         secrets::Provider,
+        skills::Access as SkillAccess,
         workspace::{Ctx, WorkspaceCtx, Workspaces},
     },
     utils::error::AppError,
@@ -49,6 +50,7 @@ async fn wait_for_answer(
 /// `history`は直前までの会話(`user`/`assistant`のテキスト)で、今回の発話は`user_text`で渡す。
 /// `web_access`が有効なときは、インターネット検索・ページ取得(サーバーツール)も渡す。Bedrockでは使えない。
 /// `shell_access`が有効なときは、作業計画の提示とシェルコマンドの実行も渡す。
+/// `skills`の範囲だけ、スキル用のツール(手順の読み込み・作成・更新・削除)とその使い方も渡す。リーダーにも渡す。
 /// 進捗(ツール呼び出し・承認要求・コマンド出力)は`on_event`へ流す。実行中は`task_cancel`で中断できる。
 /// `is_foreground`は、このワークスペースを選んでいるかどうか。承認待ちの時間切れを数えるかどうかを決める。
 pub async fn run_with_tools(
@@ -60,6 +62,7 @@ pub async fn run_with_tools(
     web_access: Option<(u32, u32)>,
     shell_access: bool,
     host: Option<tool_loop::ToolHost<'_>>,
+    skills: SkillAccess,
     mut history: Vec<Value>,
     user_text: &str,
     on_event: &(impl Fn(TaskEvent) + Sync),
@@ -83,10 +86,14 @@ pub async fn run_with_tools(
         system.push_str(&format!("\n\n{}", tool_loop::WEB_GUIDE));
         tools.extend(tool_loop::web_tool_definitions(search_max, fetch_max));
     }
+    if skills.any() {
+        system.push_str(&format!("\n\n{}", tool_loop::SKILL_GUIDE));
+        tools.extend(tool_loop::skill_tool_definitions(skills));
+    }
     let (system, tools) = (&system, &tools);
     let cancel = CancelToken::default();
     state.set_cancel(cancel.clone());
-    let env = Env::new(root).with_cancel(cancel.clone()).with_shell(shell_access).with_host(host);
+    let env = Env::new(root).with_cancel(cancel.clone()).with_shell(shell_access).with_host(host).with_skills(skills);
     let is_foreground = &is_foreground;
     let result = tool_loop::run(
         &env,
