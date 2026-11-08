@@ -487,6 +487,8 @@ export function playErrorSound() {
 let audioCtx: AudioContext | null = null;
 let currentSource: AudioBufferSourceNode | null = null;
 let outputAnalyser: AnalyserNode | null = null;
+/** AudioContextが使えないときのフォールバック再生。 */
+let currentAudio: HTMLAudioElement | null = null;
 let speaking = false;
 /** 再生中の読み上げの情報。字幕を再生位置に合わせるために使う。`text`は読み上げている本文。 */
 let playback: { text: string; startedAt: number; duration: number } | null = null;
@@ -496,8 +498,10 @@ export const isSpeaking = () => speaking;
 
 /** `text`を読み上げ中なら、再生の進行度(0〜1)。それ以外はnull。 */
 export function speechProgress(text: string): number | null {
-  if (!speaking || !playback || !audioCtx || playback.text !== text) return null;
-  return Math.min(1, Math.max(0, (audioCtx.currentTime - playback.startedAt) / playback.duration));
+  if (!speaking || !playback || playback.text !== text) return null;
+  const now = currentAudio ? currentAudio.currentTime : audioCtx?.currentTime;
+  if (now === undefined || !(playback.duration > 0)) return null;
+  return Math.min(1, Math.max(0, (now - playback.startedAt) / playback.duration));
 }
 
 /** 再生中の読み上げが終わるまで待つ(上限`maxMs`)。長い返答の途中でマイクが開かないよう、上限は十分長くしてある。 */
@@ -523,11 +527,29 @@ export function getOutputAnalyser(): AnalyserNode | null {
  */
 export function unlockAudio() {
   try {
+    installAudioRecovery();
     audioCtx ??= new AudioContext();
-    if (audioCtx.state === "suspended") void audioCtx.resume();
+    if (audioCtx.state !== "running") void audioCtx.resume().catch(() => {});
   } catch {
     // 非対応環境ではHTMLAudioへフォールバックする
   }
+}
+
+let recoveryInstalled = false;
+
+/**
+ * 放置やスリープで中断されたAudioContextを、アプリが前面に戻ったときに復旧する。
+ * 中断(suspended/interrupted)のまま放置されると、次の応答が無音になるため。
+ */
+function installAudioRecovery() {
+  if (recoveryInstalled || typeof window === "undefined") return;
+  recoveryInstalled = true;
+  const recover = () => {
+    if (document.visibilityState === "hidden" || !audioCtx || audioCtx.state === "running" || audioCtx.state === "closed") return;
+    void audioCtx.resume().catch(() => {});
+  };
+  document.addEventListener("visibilitychange", recover);
+  window.addEventListener("focus", recover);
 }
 
 /** 再生終了通知が来なかった場合に再生中扱いを解除するまでの余裕(ms)。 */
@@ -575,9 +597,43 @@ export function stopSpeech(): void {
   } catch {
     // すでに停止済み
   }
+  if (currentAudio) {
+    const audio = currentAudio;
+    currentAudio = null;
+    audio.pause();
+  }
   clearSpeakingTimer();
   speaking = false;
   playback = null;
+}
+
+/** AudioContextを使えないときに、HTMLAudioで再生する。 */
+async function playWithHtmlAudio(bytes: Uint8Array, text?: string): Promise<void> {
+  const riff = bytes[0] === 0x52 && bytes[1] === 0x49; // VOICEVOXのWAVは"RIFF"で始まる
+  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: riff ? "audio/wav" : "audio/mpeg" }));
+  const audio = new Audio(url);
+  const finish = () => {
+    URL.revokeObjectURL(url);
+    if (currentAudio !== audio) return;
+    currentAudio = null;
+    clearSpeakingTimer();
+    speaking = false;
+    playback = null;
+  };
+  audio.onended = finish;
+  audio.onerror = finish;
+  currentAudio = audio;
+  try {
+    await audio.play();
+  } catch (e) {
+    finish();
+    throw e;
+  }
+  if (currentAudio !== audio) return; // 再生を始める間に止められた
+  speaking = true;
+  const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+  playback = text ? { text, startedAt: 0, duration } : null;
+  if (duration > 0) speakingTimer = setTimeout(finish, duration * 1000 + SPEAKING_GRACE_MS);
 }
 
 /**
@@ -587,9 +643,16 @@ export function stopSpeech(): void {
 export async function playBase64Mp3(b64: string, text?: string): Promise<void> {
   stopSpeech();
   try {
-    // 操作なしで再生を始めると(常時待機の応答など)中断状態のままになり、終了通知が来ず再生中扱いが残るため、再生できなければ失敗にする
-    const ctx = await runningAudioContext();
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    // 操作なしで再生を始めると(常時待機の応答など)中断状態のままになり、終了通知が来ず再生中扱いが残る。
+    // 復旧できなければHTMLAudioで再生し、それも駄目なら失敗にする
+    let ctx: AudioContext;
+    try {
+      ctx = await runningAudioContext();
+    } catch {
+      await playWithHtmlAudio(bytes, text);
+      return;
+    }
     const buffer = await ctx.decodeAudioData(bytes.buffer);
     const source = ctx.createBufferSource();
     source.buffer = buffer;
