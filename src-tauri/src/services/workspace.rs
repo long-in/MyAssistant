@@ -378,6 +378,19 @@ impl Workspaces {
         Ok(ctx)
     }
 
+    /// 切り替えずにナレッジを操作するために開く。パーソナルは常に、ほかはワークが有効なときだけ。
+    /// 未読み込みのスペースは一時的に開くだけで、読み込んだままにしない(終了時のバッチの対象を変えない)。
+    pub fn open_for_knowledge(&self, id: &str) -> Result<Arc<WorkspaceCtx>, AppError> {
+        let _op = self.op();
+        if id == PERSONAL_ID {
+            return Ok(self.personal());
+        }
+        if !self.work_enabled() {
+            return Err(AppError::WorkDisabled);
+        }
+        self.open_transient_locked(id)
+    }
+
     /// 整理バッチなど、選択していないワークスペースの処理のために開く。未読み込みのスペースは一時的に開くだけで、読み込んだままにしない。
     pub fn open_for_batch(&self, id: &str) -> Result<Arc<WorkspaceCtx>, AppError> {
         let _op = self.op();

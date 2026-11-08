@@ -13,6 +13,7 @@ import { useWorkspace } from "@/lib/workspace";
 const REASON_LABEL: Record<DispatchReason, string> = {
   not_found: "スペースが見つかりません",
   active: "開いているため配布できません",
+  limit: "同時に指示できるスペース数の上限に達しています",
   busy: "別の依頼の最中です",
   no_provider: "APIキーが未登録です",
   error: "配布に失敗しました",

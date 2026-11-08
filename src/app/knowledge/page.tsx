@@ -10,6 +10,7 @@ import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { splitFrontmatter } from "@/lib/knowledgeDoc";
 import KnowledgeTree, { type NodeKind } from "@/components/KnowledgeTree";
 import ModelSelector from "@/components/ModelSelector";
 import { EmptyState, PaneHeader, StatusPill } from "@/components/GlobalPanels";
@@ -40,20 +41,6 @@ import {
   runBatch,
   setKnowledgeDir,
 } from "@/lib/api";
-
-/** 先頭のYAML Frontmatterを本文から分離し、タグだけ取り出す。 */
-function splitFrontmatter(text: string): { tags: string[]; body: string } {
-  const m = text.match(/^---\n([\s\S]*?)\n---\n/);
-  if (!m) return { tags: [], body: text };
-  let tags: string[] = [];
-  const line = m[1].split("\n").find((l) => l.startsWith("tags: "));
-  try {
-    if (line) tags = JSON.parse(line.slice(6));
-  } catch {
-    // 手編集で壊れていてもタグ表示を省くだけ
-  }
-  return { tags, body: text.slice(m[0].length) };
-}
 
 /** 編集できるのはMarkdownのみ。それ以外は閲覧専用。 */
 const isNote = (path: string) => path.endsWith(".md");

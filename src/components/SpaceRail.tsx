@@ -7,7 +7,17 @@ import { toast } from "sonner";
 import CreateSpaceDialog from "./CreateSpaceDialog";
 import { LEADER_COLOR, LEADER_ID, PERSONAL_ID, errorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/i18n";
+import { useSpaceRuns } from "@/lib/spaceRuns";
 import { switchTo, useWorkspace } from "@/lib/workspace";
+
+/** 状態の印の色と読み上げ用の名前。待機(`idle`)は印なし。 */
+const RUN_MARK: Record<string, { dot: string; label: string }> = {
+  running: { dot: "bg-sky-500", label: "実行中" },
+  awaiting_approval: { dot: "bg-amber-500 animate-pulse", label: "承認待ち" },
+  done: { dot: "bg-emerald-500", label: "完了" },
+  failed: { dot: "bg-red-500", label: "失敗" },
+};
 
 /** スペース名の頭文字(絵文字などのサロゲートペアも1文字として扱う)。 */
 const initial = (name: string) => Array.from(name.trim())[0]?.toUpperCase() ?? "?";
@@ -18,7 +28,9 @@ const initial = (name: string) => Array.from(name.trim())[0]?.toUpperCase() ?? "
  */
 export default function SpaceRail() {
   const router = useRouter();
+  const t = useT();
   const { active, spaces, hasLeader, workOn } = useWorkspace();
+  const runs = useSpaceRuns(workOn);
   const onLeader = active.id === LEADER_ID;
   const [creating, setCreating] = useState(false);
 
@@ -29,13 +41,16 @@ export default function SpaceRail() {
 
   const item = (id: string, label: string, color: string | null, child: React.ReactNode) => {
     const on = active.id === id;
+    const run = runs.status[id] ?? "idle";
+    const mark = RUN_MARK[run];
+    const working = run === "running" || run === "awaiting_approval";
     return (
       <button
         key={id}
         type="button"
         onClick={() => go(id)}
-        title={label}
-        aria-label={label}
+        title={mark ? `${label} (${t(mark.label)})` : label}
+        aria-label={mark ? `${label} (${t(mark.label)})` : label}
         aria-current={on ? "true" : undefined}
         className="group relative flex w-full items-center justify-center py-0.5"
       >
@@ -46,13 +61,18 @@ export default function SpaceRail() {
         />
         <span
           className={cn(
-            "flex size-9 items-center justify-center text-sm font-semibold text-white transition-all",
+            "relative flex size-9 items-center justify-center text-sm font-semibold text-white transition-all",
             color ? "rounded-full" : "rounded-lg bg-muted text-foreground",
-            on ? "ring-2 ring-offset-2 ring-offset-sidebar" : "opacity-80 group-hover:opacity-100",
+            on ? "ring-2 ring-offset-2 ring-offset-sidebar" : working || mark ? "opacity-100" : "opacity-60 group-hover:opacity-100",
           )}
           style={color ? { backgroundColor: color, ["--tw-ring-color" as string]: color } : on ? { ["--tw-ring-color" as string]: "var(--primary)" } : undefined}
         >
           {child}
+          {/* 動いているスペースは、周りを回るリングで示す(閉じている=待機のスペースは、淡く表示する) */}
+          {run === "running" && !on && (
+            <span aria-hidden className="pointer-events-none absolute -inset-1 animate-spin rounded-full border-2 border-transparent" style={{ borderTopColor: color ?? "var(--primary)" }} />
+          )}
+          {mark && <span aria-hidden className={cn("absolute -right-1 -bottom-1 size-3 rounded-full ring-2 ring-sidebar", mark.dot)} />}
         </span>
       </button>
     );
@@ -78,6 +98,16 @@ export default function SpaceRail() {
       )}
       {workOn && <>
       <div className="px-1 text-[9px] font-semibold tracking-wider text-muted-foreground">WORK</div>
+      {/* リーダーが配布して動いているスペース数 / 同時に指示できる上限。上限に達したら琥珀色 */}
+      {runs.limit > 0 && (
+        <div
+          title={t("リーダーが配布して動いているスペース数 / 同時に指示できる上限")}
+          aria-label={t("実行中 {active}/{limit}", { active: runs.active, limit: runs.limit })}
+          className={cn("-mt-1 text-[9px] font-semibold tabular-nums", runs.active >= runs.limit ? "text-amber-500" : "text-muted-foreground")}
+        >
+          {runs.active}/{runs.limit}
+        </div>
+      )}
       {/* ワーク: リーダーと各スペースを、ひとつの枠にまとめて包含関係を示す */}
       <div className="flex min-h-0 w-12 flex-col items-center gap-1 rounded-xl bg-muted/50 py-2" aria-label="Work">
       {/* リーダー: スペースと同じように切り替えて、チャットを開く */}

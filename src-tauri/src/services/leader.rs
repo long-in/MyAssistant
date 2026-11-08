@@ -20,6 +20,10 @@ use crate::{db::{Db, LedgerRow}, utils::error::AppError};
 
 /// リーダープロンプト(行動原理・役割)を保存する設定のキー。
 pub const PROMPT_KEY: &str = "leader_prompt";
+/// 同時に指示できるスペース数の上限を保存する設定のキー。
+pub const LIMIT_KEY: &str = "leader_max_active";
+/// 同時に指示できるスペース数の既定値。
+pub const DEFAULT_MAX_ACTIVE: usize = 3;
 /// 台帳に表示する件数の上限。
 pub const LEDGER_LIMIT: u32 = 200;
 /// 宛先の提案に渡す履歴の件数の上限。
@@ -62,6 +66,33 @@ pub fn save_prompt(db: &Db, note: &Note) -> Result<Note, AppError> {
     let note = note.normalized()?;
     db.set_setting(PROMPT_KEY, &serde_json::to_string(&note).map_err(|e| AppError::Db(e.to_string()))?)?;
     Ok(note)
+}
+
+/// 同時に指示できるスペース数の上限。未保存・読めない場合は既定値。範囲(1〜スペースの上限)に収める。
+pub fn load_limit(db: &Db) -> Result<usize, AppError> {
+    let v = db.get_setting(LIMIT_KEY)?.and_then(|v| v.parse::<usize>().ok()).unwrap_or(DEFAULT_MAX_ACTIVE);
+    Ok(v.clamp(1, MAX_TARGETS))
+}
+
+/// 上限を範囲(1〜スペースの上限)に収めて保存し、実際に保存した値を返す。
+pub fn save_limit(db: &Db, n: usize) -> Result<usize, AppError> {
+    let n = n.clamp(1, MAX_TARGETS);
+    db.set_setting(LIMIT_KEY, &n.to_string())?;
+    Ok(n)
+}
+
+/// リーダーが配布した依頼のうち、いま実行中・承認待ちのスペースの数(同じスペースは1と数える)。
+/// 利用者が直接始めた依頼は数えない。台帳の行ごとに、同じ依頼(セッションが一致)がいまも動いているかで判定する。
+pub fn count_active(rows: &[LedgerRow], live: impl Fn(&str) -> (RunStatus, String)) -> usize {
+    let mut ids: Vec<&str> = Vec::new();
+    for row in rows.iter().filter(|r| r.status == STATUS_RUNNING) {
+        let (status, session) = live(&row.space_id);
+        let now = resolve_status(row, status, &session);
+        if matches!(now, STATUS_RUNNING | "awaiting_approval") && !ids.contains(&row.space_id.as_str()) {
+            ids.push(&row.space_id);
+        }
+    }
+    ids.len()
 }
 
 /// 配布する指示を整える。空は拒否し、上限と文字種はスペースデータと同じ。
@@ -377,6 +408,34 @@ mod tests {
             confirmed: false,
             created_at: "2026-01-01T00:00:00Z".into(),
         }
+    }
+
+    #[test]
+    fn active_count_counts_leader_runs_per_space() {
+        let rows = vec![
+            row("1", "b", "営業", "s1", STATUS_RUNNING),
+            row("2", "b", "営業", "s0", STATUS_RUNNING), // 同じスペースの古い依頼(置き換わった)
+            row("3", "b", "経理", "s2", STATUS_RUNNING),
+            row("4", "b", "人事", "s3", STATUS_DONE),
+            row("5", "b", "法務", "s4", STATUS_RUNNING), // 記録が消えた(再起動)
+        ];
+        let live = |id: &str| match id {
+            "id-営業" => (RunStatus::Running, "s1".to_owned()),
+            "id-経理" => (RunStatus::AwaitingApproval, "s2".to_owned()),
+            "id-人事" => (RunStatus::Running, "s3".to_owned()), // 直接の指示。台帳では完了なので数えない
+            _ => (RunStatus::Idle, String::new()),
+        };
+        assert_eq!(count_active(&rows, live), 2);
+    }
+
+    #[test]
+    fn limit_is_clamped() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&dir.path().join("t.db")).unwrap();
+        assert_eq!(load_limit(&db).unwrap(), DEFAULT_MAX_ACTIVE);
+        assert_eq!(save_limit(&db, 0).unwrap(), 1);
+        assert_eq!(save_limit(&db, 999).unwrap(), MAX_TARGETS);
+        assert_eq!(load_limit(&db).unwrap(), MAX_TARGETS);
     }
 
     #[test]

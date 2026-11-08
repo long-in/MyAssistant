@@ -636,6 +636,33 @@ export type BatchReport = {
   failed_segments: number;
 };
 
+/** 1スペース分のナレッジ(全スペース一覧用)。`error`があれば一覧を取れなかった。`color`はパーソナルでは null。 */
+export type SpaceKnowledge = {
+  id: string;
+  name: string;
+  color: string | null;
+  root: string;
+  files: KnowledgeFile[];
+  dirs: string[];
+  error: string | null;
+};
+/** パーソナル・リーダー・全スペースのナレッジ(切り替えずに操作できる)。 */
+export const listAllKnowledge = () => invoke<SpaceKnowledge[]>("list_all_knowledge");
+export const readKnowledgeIn = (spaceId: string, path: string) => invoke<string>("read_knowledge_in", { spaceId, path });
+export const writeKnowledgeIn = (spaceId: string, path: string, content: string) =>
+  invoke<void>("write_knowledge_in", { spaceId, path, content });
+export const createKnowledgeFileIn = (spaceId: string, path: string) =>
+  invoke<string>("create_knowledge_file_in", { spaceId, path });
+export const createKnowledgeDirIn = (spaceId: string, path: string) =>
+  invoke<void>("create_knowledge_dir_in", { spaceId, path });
+export const renameKnowledgeIn = (spaceId: string, from: string, to: string) =>
+  invoke<void>("rename_knowledge_in", { spaceId, from, to });
+export const deleteKnowledgeIn = (spaceId: string, path: string) =>
+  invoke<void>("delete_knowledge_in", { spaceId, path });
+/** Finderで開く。`path`ありならそれを選択した状態で、なしならナレッジフォルダを開く。 */
+export const revealKnowledgeInFinder = (spaceId: string, path?: string) =>
+  invoke<void>("reveal_knowledge_in_finder", { spaceId, path: path ?? null });
+
 /** ナレッジ(Markdown)の保存先フォルダ。Obsidianのvaultとして開ける。 */
 export const knowledgeDir = () => invoke<string>("knowledge_dir");
 /** 保存先を変更する(nullで既定に戻す)。既存ファイルは移動されない。変更後のパスを返す。 */
@@ -751,9 +778,12 @@ export type LeaderTask = {
 };
 /** 各スペースのいまの依頼の状態(`idle`=動いていない)。直接の指示によるものも含む。 */
 export type SpaceRun = { id: string; name: string; color: string; status: "idle" | "running" | "awaiting_approval" | "done" | "failed" };
-export type LeaderOverview = { tasks: LeaderTask[]; spaces: SpaceRun[] };
-/** 配布できなかった理由。`active`=選択中のスペース、`busy`=依頼の最中。 */
-export type DispatchReason = "not_found" | "active" | "busy" | "no_provider" | "error";
+/** `limit`=同時に指示できるスペース数の上限、`active`=リーダーが配布していま動いている(実行中・承認待ち)スペースの数。 */
+export type LeaderOverview = { tasks: LeaderTask[]; spaces: SpaceRun[]; limit: number; active: number };
+/** スペース数の上限(バックエンドの`MAX_SPACES`と同じ)。同時に指示できる数の上限の最大値。 */
+export const LEADER_LIMIT_MAX = 30;
+/** 配布できなかった理由。`active`=選択中のスペース、`limit`=同時に指示できる数の上限、`busy`=依頼の最中。 */
+export type DispatchReason = "not_found" | "active" | "limit" | "busy" | "no_provider" | "error";
 export type DispatchResult = { space_id: string; started: boolean; reason: DispatchReason | null };
 
 export const leaderExists = () => invoke<boolean>("leader_exists");
@@ -766,6 +796,8 @@ export const createLeader = () => invoke<void>("create_leader");
 export const leaderGetPrompt = () => invoke<SpaceNote>("leader_get_prompt");
 export const leaderSetPrompt = (note: SpaceNote) => invoke<SpaceNote>("leader_set_prompt", { note });
 /** リーダーのAPIキーの登録有無のみ(生値は返らない)。 */
+export const leaderGetLimit = () => invoke<number>("leader_get_limit");
+export const leaderSetLimit = (limit: number) => invoke<number>("leader_set_limit", { limit });
 export const leaderKeyStatus = () => invoke<KeyStatus>("leader_key_status");
 export const leaderSaveApiKey = (provider: Provider, key: string) => invoke<void>("leader_save_api_key", { provider, key });
 export const leaderDeleteApiKey = (provider: Provider) => invoke<void>("leader_delete_api_key", { provider });

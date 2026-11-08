@@ -46,6 +46,18 @@ pub fn leader_set_prompt(ws: State<'_, Workspaces>, note: Note) -> Result<Note, 
     leader::save_prompt(&ws.ensure_leader()?.db, &note)
 }
 
+/// 同時に指示できるスペース数の上限。未保存なら既定値。
+#[tauri::command]
+pub fn leader_get_limit(ws: State<'_, Workspaces>) -> Result<usize, AppError> {
+    leader::load_limit(&ws.ensure_leader()?.db)
+}
+
+/// 上限を範囲(1〜スペースの上限)に収めて保存し、保存した値を返す。次の配布から反映する。
+#[tauri::command]
+pub fn leader_set_limit(ws: State<'_, Workspaces>, limit: usize) -> Result<usize, AppError> {
+    leader::save_limit(&ws.ensure_leader()?.db, limit)
+}
+
 /// リーダーのキーの登録有無のみを返す(生値は返さない)。
 #[tauri::command]
 pub fn leader_key_status(ws: State<'_, Workspaces>) -> Result<BTreeMap<&'static str, bool>, AppError> {
@@ -97,7 +109,7 @@ pub struct DispatchResult {
     pub space_id: String,
     /// 依頼を始めたか。
     pub started: bool,
-    /// 始めなかった理由: `not_found` / `active` / `busy` / `no_provider` / `error`。
+    /// 始めなかった理由: `not_found` / `active` / `limit` / `busy` / `no_provider` / `error`。
     pub reason: Option<&'static str>,
 }
 
@@ -107,6 +119,8 @@ fn not_started(space_id: &str, reason: &'static str) -> DispatchResult {
 
 /// 指示を、選んだスペースへ配布する。宛先は必ず利用者が選ぶ。
 /// - 台帳に記録し、各スペースで依頼を始める(画面は介さない。進捗は台帳の状態で見る)。
+/// - 同時に指示できるスペース数(リーダーの設定)を超える宛先へは配布しない(`limit`。順番待ちにはしない)。
+///   数えるのは、リーダーが配布した実行中・承認待ちのスペースだけ。
 /// - 選択中のスペースへは配布しない(開いている画面が進捗を受け取れないため)。依頼の最中のスペースにも配布しない。
 /// - 承認が必要になったら、そのスペースで答える(リーダーからは代行しない)。
 #[tauri::command]
@@ -123,6 +137,10 @@ pub fn leader_dispatch(app: AppHandle, ws: State<'_, Workspaces>, text: String, 
         return Err(AppError::InvalidSpace("targets".into()));
     }
     let spaces = ws.list();
+    // 空き枠: 上限 − リーダーが配布して、いま動いている(実行中・承認待ち)スペースの数
+    let limit = leader::load_limit(&leader.db)?;
+    let running = leader::count_active(&leader.db.ledger_list(leader::LEDGER_LIMIT)?, |id| (ws.run_status(id), ws.run_session(id)));
+    let mut slots = limit.saturating_sub(running);
     let batch_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let mut results = Vec::new();
@@ -135,8 +153,15 @@ pub fn leader_dispatch(app: AppHandle, ws: State<'_, Workspaces>, text: String, 
             results.push(not_started(&id, "active"));
             continue;
         }
+        if slots == 0 {
+            results.push(not_started(&id, "limit"));
+            continue;
+        }
         match start_dispatch(&app, &ws, &leader, space, &text, &batch_id, &now) {
-            Ok(None) => results.push(DispatchResult { space_id: id, started: true, reason: None }),
+            Ok(None) => {
+                slots -= 1;
+                results.push(DispatchResult { space_id: id, started: true, reason: None });
+            }
             Ok(Some(reason)) => results.push(not_started(&id, reason)),
             Err(e) => {
                 log::warn!("dispatch to {} failed: {e}", space.name);
@@ -204,6 +229,9 @@ pub struct SpaceStatus {
 pub struct Overview {
     pub tasks: Vec<TaskView>,
     pub spaces: Vec<SpaceStatus>,
+    /// 同時に指示できるスペース数の上限と、リーダーが配布していま動いているスペースの数。
+    pub limit: usize,
+    pub active: usize,
 }
 
 #[tauri::command]
@@ -215,7 +243,8 @@ pub fn leader_overview(ws: State<'_, Workspaces>) -> Result<Overview, AppError> 
         .into_iter()
         .map(|s| SpaceStatus { status: ws.run_status(&s.id), id: s.id, name: s.name, color: s.color })
         .collect();
-    Ok(Overview { tasks, spaces })
+    let active = leader::count_active(&leader.db.ledger_list(leader::LEDGER_LIMIT)?, |id| (ws.run_status(id), ws.run_session(id)));
+    Ok(Overview { tasks, spaces, limit: leader::load_limit(&leader.db)?, active })
 }
 
 /// 台帳の行に「確認済み」の区切りを付ける/外す(利用者の手動の区切り)。

@@ -18,7 +18,7 @@ import NotePanel from "@/components/NotePanel";
 import CopySettingsCard from "@/components/CopySettingsCard";
 import CopyConfirmModal from "@/components/CopyConfirmModal";
 import { copyTargets, type CopyRequest } from "@/lib/copyTargets";
-import { DEFAULT_TUNING, getTuning, setTuning, LEADER_ID, PERSONAL_ID, getSpaceData, saveSpaceData, errorMessage, updateSpace, SPACE_NAME_MAX, leaderCopyApiKey, leaderGetPrompt, leaderSetPrompt, type DeleteReport } from "@/lib/api";
+import { DEFAULT_TUNING, getTuning, setTuning, LEADER_ID, PERSONAL_ID, getSpaceData, saveSpaceData, errorMessage, updateSpace, SPACE_NAME_MAX, leaderCopyApiKey, leaderGetPrompt, leaderSetPrompt, leaderGetLimit, leaderSetLimit, LEADER_LIMIT_MAX, type DeleteReport } from "@/lib/api";
 import { bumpSettingsVersion, refreshWorkspace, useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
 import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, aquaKeyRegistered, deleteAquaKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, setCommandPolicy, type CommandPolicy, getShellAccess, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, saveAquaKey, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setShellAccess, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
@@ -568,6 +568,54 @@ function LeaderPrompt() {
         </ul>
       </Heading>
       <NotePanel load={leaderGetPrompt} save={leaderSetPrompt} label={t("リーダープロンプト")} placeholder={t("例: 宛先は、過去の履歴で同じ種類の指示を担当したスペースを優先してください。")} />
+    </section>
+  );
+}
+
+/** 同時に指示できるスペース数の上限。PCの性能に合わせて、リーダーが裏で動かすスペースの数を制限する。コピーの対象外。 */
+function LeaderLimit() {
+  const t = useT();
+  const [saved, setSaved] = useState<number | null>(null);
+  const [value, setValue] = useState("");
+  useEffect(() => {
+    leaderGetLimit().then((n) => { setSaved(n); setValue(String(n)); }).catch((e) => toast.error(errorMessage(e)));
+  }, []);
+  if (saved === null) return null;
+  const commit = async () => {
+    const n = Math.round(Number(value));
+    if (!Number.isFinite(n)) return setValue(String(saved));
+    try {
+      const next = await leaderSetLimit(n); // 範囲外は1〜上限に収まる
+      setSaved(next);
+      setValue(String(next));
+    } catch (e) {
+      toast.error(errorMessage(e));
+      setValue(String(saved));
+    }
+  };
+  return (
+    <section className="hud-panel hud-accent px-5 py-4">
+      <Heading title="Active Spaces" help={t("同時に指示できるスペース数")}>
+        <p>{t("リーダーが一度に指示を出せる(実行中・承認待ちにできる)スペースの数です。PCの性能に合わせて決めてください。")}</p>
+        <ul>
+          <li>{t("上限に達すると、超えた分のスペースへは配布されません(順番待ちにはなりません)。空いてから、もう一度配布してください。")}</li>
+          <li>{t("数えるのは、リーダーが配布して動いているスペースだけです。スペースを直接開いて始めた依頼は数えず、制限もしません。")}</li>
+        </ul>
+      </Heading>
+      <div className="flex items-center gap-3">
+        <Input
+          type="number"
+          min={1}
+          max={LEADER_LIMIT_MAX}
+          className="w-24"
+          value={value}
+          aria-label={t("同時に指示できるスペース数")}
+          onChange={(e) => setValue(e.target.value)}
+          onBlur={() => void commit()}
+          onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+        />
+        <span className="text-sm text-muted-foreground">/ {LEADER_LIMIT_MAX}</span>
+      </div>
     </section>
   );
 }
@@ -1409,7 +1457,7 @@ export default function Setup() {
           </TabsContent>
 
           <TabsContent value="behavior" className="flex flex-col gap-6">
-          {active.id === LEADER_ID ? <LeaderPrompt /> : active.id !== PERSONAL_ID && <SpaceData />}
+          {active.id === LEADER_ID ? <><LeaderPrompt /><LeaderLimit /></> : active.id !== PERSONAL_ID && <SpaceData />}
           {active.id !== LEADER_ID && <TuningPanel
             title="Limits"
             help={t("検索回数などの上限")}
