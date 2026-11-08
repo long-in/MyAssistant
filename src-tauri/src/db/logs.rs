@@ -172,7 +172,7 @@ mod tests {
     use super::*;
 
     fn mem() -> Db {
-        Db::open_in_memory(Role::Space)
+        Db::open_in_memory(Role::Agent)
     }
 
     #[test]

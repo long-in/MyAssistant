@@ -27,7 +27,7 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, AppError> + S
     tauri::async_runtime::spawn_blocking(f).await.map_err(|e| AppError::Io(e.to_string()))?
 }
 
-/// アプリ全体(全スペースのDB・ナレッジ・APIキーを含む)を`dest`のzipへ書き出す。`password`があればAES-256で暗号化する。
+/// アプリ全体(全エージェントのDB・ナレッジ・APIキーを含む)を`dest`のzipへ書き出す。`password`があればAES-256で暗号化する。
 #[tauri::command]
 pub async fn backup_create(app: AppHandle, dest: String, password: Option<String>) -> Result<Summary, AppError> {
     let dest = zip_path(&dest)?;

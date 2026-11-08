@@ -37,7 +37,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useT } from "@/lib/i18n";
 
-/** 全体設定。全スペース(パーソナルを含む)で共通の項目を管理する。各スペースからは上書きできない。 */
+/** 全体設定。全エージェント(パーソナルを含む)で共通の項目を管理する。各エージェントからは上書きできない。 */
 export default function GlobalSettings() {
   const t = useT();
   const [speechReady, setSpeechReady] = useState(false);
@@ -71,7 +71,7 @@ export default function GlobalSettings() {
     return () => window.removeEventListener("hashchange", sync);
   }, []);
 
-  // 起動ワードの確認は、いま開いているスペースのAPIキー・音声の状態を使う
+  // 起動ワードの確認は、いま開いているエージェントのAPIキー・音声の状態を使う
   useEffect(() => {
     Promise.all([fetchTtsReady(), getTtsEngine(), getSttEngine()])
       .then(([ready, te, se]) => {
@@ -88,7 +88,7 @@ export default function GlobalSettings() {
         <PageHeader
           label="// Global config"
           title={t("全体設定")}
-          description={t("すべてのスペース(パーソナルを含む)で共通の設定です。各スペースの設定からは変更できません。")}
+          description={t("すべてのエージェント(パーソナルを含む)で共通の設定です。各エージェントの設定からは変更できません。")}
           chips={
             <>
               <StatusPill on={workOn}>{t("ワーク")}: {!hasLeader ? t("未作成") : workOn ? t("有効") : t("無効")}</StatusPill>

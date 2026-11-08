@@ -1,5 +1,5 @@
 //! 設定ページから変更できる数値の調整項目。範囲外の値は保存時に範囲内へ丸める。
-//! 検索回数などの上限(`Tuning`)はスペースごと、音声入力の待ち時間(`VoiceTiming`)は全体設定。
+//! 検索回数などの上限(`Tuning`)はエージェントごと、音声入力の待ち時間(`VoiceTiming`)は全体設定。
 use serde::{Deserialize, Serialize};
 
 use super::global_settings::SettingsStore;
@@ -11,7 +11,7 @@ pub const VOICE_KEY: &str = "voice_timing";
 /// `VoiceTiming`の項目名。旧`tuning`から取り込むときに使う。
 pub const VOICE_FIELDS: [&str; 3] = ["voice_idle_secs", "utterance_silence_secs", "release_tail_secs"];
 
-/// スペースごとの上限。未保存・欠けた項目は既定値になる。
+/// エージェントごとの上限。未保存・欠けた項目は既定値になる。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Tuning {
@@ -56,7 +56,7 @@ pub fn save(db: &Db, tuning: Tuning) -> Result<Tuning, AppError> {
     Ok(tuning)
 }
 
-/// 音声入力の待ち時間。全スペース共通(全体設定)。未保存・欠けた項目は既定値になる。
+/// 音声入力の待ち時間。全エージェント共通(全体設定)。未保存・欠けた項目は既定値になる。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoiceTiming {
@@ -64,7 +64,7 @@ pub struct VoiceTiming {
     pub voice_idle_secs: f32,
     /// 話し終わりとみなす無音の長さ(秒)。
     pub utterance_silence_secs: f32,
-    /// スペースを離してから録音を止めるまでの猶予(秒)。
+    /// エージェントを離してから録音を止めるまでの猶予(秒)。
     pub release_tail_secs: f32,
 }
 

@@ -8,8 +8,8 @@ import { Bug, BookOpen, Library, ClipboardList, Globe, Keyboard, MessageSquare, 
 import Chat from "@/components/Chat";
 import AttentionToasts from "@/components/AttentionToasts";
 import MfaModal from "@/components/MfaModal";
-import SpacePalette from "@/components/SpacePalette";
-import SpaceRail from "@/components/SpaceRail";
+import AgentPalette from "@/components/AgentPalette";
+import AgentRail from "@/components/AgentRail";
 import { DEBUG_MODE_EVENT, LEADER_COLOR, LEADER_ID, LEADER_NAME, PERSONAL_ID, getDebugMode, getKeyStatus } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
 import { syncGlobalPrefs } from "@/lib/globalSync";
@@ -25,7 +25,7 @@ const MAIN_NAV = [
 ] as const;
 
 /** 補助的な項目(メニューの下側にまとめる)。 */
-/** 全スペースのナレッジ。スペースに依存しないので補助の側に置く。 */
+/** 全エージェントのナレッジ。エージェントに依存しないので補助の側に置く。 */
 const ALL_KNOWLEDGE_NAV = { href: "/knowledge/all", label: "All Knowledge bases", icon: Library } as const;
 const GLOBAL_NAV = { href: "/global", label: "Global Settings", icon: Globe } as const;
 const HELP_NAV = { href: "/shortcuts", label: "Shortcuts", icon: Keyboard } as const;
@@ -55,7 +55,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const workspaceId = active.id;
   const personal = workspaceId === PERSONAL_ID;
   const leader = workspaceId === LEADER_ID;
-  const accent = leader ? LEADER_COLOR : active.space?.color;
+  const accent = leader ? LEADER_COLOR : active.agent?.color;
   const prevWorkspace = useRef(workspaceId);
 
   useEffect(() => {
@@ -71,7 +71,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     setChatReady(false);
   }, [workspaceId]);
 
-  // スペースのイメージカラーを、画面全体で参照できるようにする
+  // エージェントのイメージカラーを、画面全体で参照できるようにする
   useEffect(() => {
     const root = document.documentElement;
     if (accent) root.style.setProperty("--workspace-color", accent);
@@ -167,18 +167,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="relative flex h-full">
       {accent && <div className="pointer-events-none absolute inset-x-0 top-0 z-50 h-0.5" style={{ backgroundColor: accent }} />}
-      <SpaceRail />
+      <AgentRail />
       <nav
         className={cn(
           "flex w-14 shrink-0 flex-col items-center gap-1 border-r bg-sidebar/70 py-3 backdrop-blur",
           !collapsed && "md:w-48 md:items-stretch md:px-3",
         )}
       >
-        {/* いまどこにいるか(パーソナルか、どのスペースか) */}
+        {/* いまどこにいるか(パーソナルか、どのエージェントか) */}
         <div
           className={cn("mb-3 flex w-full items-center justify-center rounded-md border px-2 py-2", !collapsed && "md:justify-start md:gap-2")}
           style={accent ? { borderColor: accent, backgroundColor: `${accent}14` } : undefined}
-          title={personal ? "Personal" : `Work / ${leader ? LEADER_NAME : (active.space?.name ?? "")}`}
+          title={personal ? "Personal" : `Work / ${leader ? LEADER_NAME : (active.agent?.name ?? "")}`}
         >
           {personal ? (
             <User className="size-4 shrink-0 text-muted-foreground" />
@@ -189,7 +189,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           )}
           <span className={cn("hidden min-w-0 flex-col leading-tight", !collapsed && "md:flex")}>
             <span className="hud-label text-[0.65rem] text-muted-foreground">{personal ? "PERSONAL" : "WORK"}</span>
-            <span className="truncate text-sm font-semibold">{personal ? "Personal" : leader ? LEADER_NAME : (active.space?.name ?? "")}</span>
+            <span className="truncate text-sm font-semibold">{personal ? "Personal" : leader ? LEADER_NAME : (active.agent?.name ?? "")}</span>
           </span>
         </div>
         {[...MAIN_NAV, ...(debug ? [DEBUG_NAV] : [])].map((n) => navLink(n))}
@@ -218,7 +218,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         )}
         {!onChat && <div key={`${workspaceId}:${settingsVersion}`} className="h-full">{children}</div>}
       </main>
-      {paletteOpen && <SpacePalette onClose={() => setPaletteOpen(false)} />}
+      {paletteOpen && <AgentPalette onClose={() => setPaletteOpen(false)} />}
       <MfaModal />
       <AttentionToasts />
     </div>

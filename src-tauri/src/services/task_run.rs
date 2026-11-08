@@ -14,7 +14,7 @@ use tauri::ipc::Channel;
 use tokio::sync::oneshot;
 
 use super::{
-    agent::{AgentEvent, Approval},
+    tool_loop::{TaskEvent, Approval},
     cancel::CancelToken,
 };
 
@@ -23,7 +23,7 @@ const MAX_RECORDED_EVENTS: usize = 500;
 
 /// 画面へイベントを流す接続。`resumed`は、切り替えから戻った画面が接続し直したもの。
 struct Sink {
-    channel: Channel<AgentEvent>,
+    channel: Channel<TaskEvent>,
     resumed: bool,
 }
 
@@ -57,7 +57,7 @@ struct Inner {
     outcome: Option<RunStatus>,
     session_id: String,
     user_text: String,
-    events: Vec<AgentEvent>,
+    events: Vec<TaskEvent>,
     /// 回答待ちの承認(あれば1件)。
     pending: Option<Approval>,
     finished: Option<Finished>,
@@ -70,14 +70,14 @@ pub struct RunSnapshot {
     pub running: bool,
     pub session_id: String,
     pub user_text: String,
-    pub events: Vec<AgentEvent>,
+    pub events: Vec<TaskEvent>,
     pub pending: Option<Approval>,
     pub finished: Option<Finished>,
 }
 
 /// 承認の応答口、実行中の依頼の中断トークン、依頼の記録。
 #[derive(Default)]
-pub struct AgentState {
+pub struct TaskState {
     /// 承認要求の`id`ごとに、画面からの応答を待つ。
     approvals: Mutex<HashMap<String, oneshot::Sender<bool>>>,
     /// 実行中の依頼。同時には1つだけ。
@@ -89,7 +89,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-impl AgentState {
+impl TaskState {
     // ---- 承認 ----
 
     /// 承認の応答を待つ口を作る。
@@ -137,7 +137,7 @@ impl AgentState {
         }
     }
 
-    /// 依頼を中断し、承認待ちも拒否にする(スペースの削除時)。
+    /// 依頼を中断し、承認待ちも拒否にする(エージェントの削除時)。
     pub fn abort(&self) {
         self.cancel();
         lock(&self.approvals).clear(); // 送り口を捨てると、待っている側は拒否として扱う
@@ -147,7 +147,7 @@ impl AgentState {
     // ---- 記録 ----
 
     /// 依頼の開始。前回の記録は捨て、`channel`(始めた画面)へ進捗を流す。
-    pub fn begin(&self, session_id: &str, user_text: &str, channel: Channel<AgentEvent>) {
+    pub fn begin(&self, session_id: &str, user_text: &str, channel: Channel<TaskEvent>) {
         *lock(&self.inner) = Inner {
             running: true,
             session_id: session_id.to_owned(),
@@ -158,7 +158,7 @@ impl AgentState {
     }
 
     /// 画面を介さない依頼(リーダーからの配布)の開始。実行中なら始めずに`false`を返す(確認と開始は同じロックの中)。
-    /// 接続先が無いので、終わった結果は取っておかれ、そのスペースを開いたときに受け取れる。
+    /// 接続先が無いので、終わった結果は取っておかれ、そのエージェントを開いたときに受け取れる。
     pub fn try_begin_detached(&self, session_id: &str, user_text: &str) -> bool {
         let mut inner = lock(&self.inner);
         if inner.running {
@@ -191,9 +191,9 @@ impl AgentState {
     }
 
     /// 進捗を記録し、画面が接続していれば流す。
-    pub fn emit(&self, event: AgentEvent) {
+    pub fn emit(&self, event: TaskEvent) {
         let mut inner = lock(&self.inner);
-        if let AgentEvent::Approval(a) = &event {
+        if let TaskEvent::Approval(a) = &event {
             inner.pending = Some(a.clone());
         }
         if inner.events.len() >= MAX_RECORDED_EVENTS {
@@ -220,7 +220,7 @@ impl AgentState {
         inner.outcome = Some(if finished.error.is_some() { RunStatus::Failed } else { RunStatus::Done });
         match inner.sink.take() {
             Some(Sink { resumed: true, channel }) => {
-                let _ = channel.send(AgentEvent::Finished { reply: finished.reply, error: finished.error });
+                let _ = channel.send(TaskEvent::Finished { reply: finished.reply, error: finished.error });
             }
             Some(_) => {}
             None => inner.finished = Some(finished),
@@ -239,7 +239,7 @@ impl AgentState {
 
     /// 戻ってきた画面へ、依頼の状況を渡して接続し直す。実行中なら、以降の進捗とその結果をこの接続へ流す。
     /// 取っておいた結果は、渡したら捨てる。
-    pub fn snapshot_and_attach(&self, channel: Channel<AgentEvent>) -> RunSnapshot {
+    pub fn snapshot_and_attach(&self, channel: Channel<TaskEvent>) -> RunSnapshot {
         let mut inner = lock(&self.inner);
         let snapshot = RunSnapshot {
             running: inner.running,
@@ -264,11 +264,11 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
 
-    use crate::services::agent::ApprovalKind;
+    use crate::services::tool_loop::ApprovalKind;
 
     #[test]
     fn status_follows_the_run_without_consuming_it() {
-        let a = AgentState::default();
+        let a = TaskState::default();
         assert_eq!(a.status(), RunStatus::Idle);
         assert!(a.try_begin_detached("s1", "調べて"));
         assert!(!a.try_begin_detached("s2", "別件"), "実行中は二重に始めない");
@@ -285,7 +285,7 @@ mod tests {
     }
 
     /// 受け取ったメッセージを数えるチャンネル。
-    fn counting_channel() -> (Channel<AgentEvent>, Arc<AtomicUsize>) {
+    fn counting_channel() -> (Channel<TaskEvent>, Arc<AtomicUsize>) {
         let n = Arc::new(AtomicUsize::new(0));
         let count = n.clone();
         let channel = Channel::new(move |_| {
@@ -299,13 +299,13 @@ mod tests {
         Approval { id: id.into(), kind: ApprovalKind::Command, path: String::new(), preview: "ls".into(), steps: vec![], reason: String::new() }
     }
 
-    fn text(t: &str) -> AgentEvent {
-        AgentEvent::Text { text: t.into() }
+    fn text(t: &str) -> TaskEvent {
+        TaskEvent::Text { text: t.into() }
     }
 
     #[test]
     fn a_run_finished_while_detached_is_handed_over_once() {
-        let state = AgentState::default();
+        let state = TaskState::default();
         let (channel, seen) = counting_channel();
         state.begin("s1", "ファイルを作って", channel);
         state.emit(text("a"));
@@ -313,7 +313,7 @@ mod tests {
         // ワークスペースを切り替えた: 以降は記録だけ
         state.detach();
         state.emit(text("b"));
-        state.emit(AgentEvent::Approval(approval("t1")));
+        state.emit(TaskEvent::Approval(approval("t1")));
         assert_eq!(seen.load(Ordering::SeqCst), 1);
         // 承認待ちのまま、戻ってきた
         let (channel, resumed) = counting_channel();
@@ -334,7 +334,7 @@ mod tests {
 
     #[test]
     fn a_result_nobody_watched_is_kept_until_the_workspace_is_reopened() {
-        let state = AgentState::default();
+        let state = TaskState::default();
         state.begin("s1", "x", counting_channel().0);
         state.detach();
         state.finish(Err(serde_json::json!({ "code": "timeout" })));
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn the_original_screen_receives_its_result_from_the_command_not_the_record() {
-        let state = AgentState::default();
+        let state = TaskState::default();
         let (channel, seen) = counting_channel();
         state.begin("s1", "x", channel);
         state.finish(Ok(serde_json::json!({ "content": "done" })));
@@ -356,14 +356,14 @@ mod tests {
 
     #[test]
     fn recorded_events_are_capped_and_a_new_run_starts_clean() {
-        let state = AgentState::default();
+        let state = TaskState::default();
         state.begin("s1", "x", counting_channel().0);
         for i in 0..(MAX_RECORDED_EVENTS + 50) {
             state.emit(text(&i.to_string()));
         }
         let snap = state.snapshot_and_attach(counting_channel().0);
         assert_eq!(snap.events.len(), MAX_RECORDED_EVENTS);
-        assert!(matches!(snap.events.last(), Some(AgentEvent::Text { text }) if text == &(MAX_RECORDED_EVENTS + 49).to_string()), "新しい側を残す");
+        assert!(matches!(snap.events.last(), Some(TaskEvent::Text { text }) if text == &(MAX_RECORDED_EVENTS + 49).to_string()), "新しい側を残す");
         state.begin("s2", "y", counting_channel().0);
         let snap = state.snapshot_and_attach(counting_channel().0);
         assert!(snap.events.is_empty() && snap.session_id == "s2");
@@ -371,11 +371,11 @@ mod tests {
 
     #[tokio::test]
     async fn abort_cancels_the_run_and_denies_waiting_approvals() {
-        let state = AgentState::default();
+        let state = TaskState::default();
         let token = CancelToken::default();
         state.set_cancel(token.clone());
         state.begin("s1", "x", counting_channel().0);
-        state.emit(AgentEvent::Approval(approval("t1")));
+        state.emit(TaskEvent::Approval(approval("t1")));
         let rx = state.register_approval("t1");
         state.abort();
         assert!(rx.await.is_err(), "承認待ちは、答えのないまま閉じる(=拒否として扱われる)");
@@ -385,9 +385,9 @@ mod tests {
 
     #[tokio::test]
     async fn answering_resolves_the_waiting_side_and_clears_the_pending_approval() {
-        let state = AgentState::default();
+        let state = TaskState::default();
         state.begin("s1", "x", counting_channel().0);
-        state.emit(AgentEvent::Approval(approval("t1")));
+        state.emit(TaskEvent::Approval(approval("t1")));
         let rx = state.register_approval("t1");
         state.answer("t1", true);
         assert!(rx.await.unwrap());

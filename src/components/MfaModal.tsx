@@ -68,7 +68,7 @@ export default function MfaModal() {
         </h2>
         <p className="mt-2 flex items-center gap-2 text-xs font-medium" style={{ color: prompt.workspace_color ?? undefined }}>
           {prompt.workspace_color && <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: prompt.workspace_color }} />}
-          {t("スペース: {name}", { name: prompt.workspace_name ?? t("パーソナル") })}
+          {t("エージェント: {name}", { name: prompt.workspace_name ?? t("パーソナル") })}
         </p>
         <p className="mt-2 text-xs text-muted-foreground">
           {t("AWSプロファイル「{profile}」のスイッチロールにMFAが必要です。", { profile: prompt.profile })}

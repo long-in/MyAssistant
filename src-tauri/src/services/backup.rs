@@ -1,7 +1,7 @@
 //! アプリ全体のバックアップとリストア。
 //!
 //! - バックアップは1つのzipにまとめる。パスワードを指定すると、すべてのファイル(manifestを含む)をAES-256で暗号化する(ファイル名は見える)。中身は`manifest.json`(ファイルごとのSHA-256つき)と、次の3種類。
-//!   - `shared/`: スペース一覧・全体設定・削除済みスペースから残したナレッジ
+//!   - `shared/`: エージェント一覧・全体設定・削除済みエージェントから残したナレッジ
 //!   - `ws/<id>/timeline.db`: `VACUUM INTO`で取った一貫したスナップショット(稼働中のDBを生コピーしない)
 //!   - `ws/<id>/`のそのほか: `secrets.json`(APIキー。平文のまま)・読み上げ辞書・ナレッジ(保存先がアプリデータの外でも含める)
 //! - Whisper・VOICEVOX・固定音声などの再取得できるものは含めない。
@@ -104,7 +104,7 @@ fn workspace_dir(root: &Path, id: &str) -> PathBuf {
 /// ディスク上のワークスペースのID(DBを持つもの)。パーソナルが先頭。
 fn discover(root: &Path) -> Vec<String> {
     let mut ids = vec![PERSONAL_ID.to_owned()];
-    let mut spaces: Vec<String> = std::fs::read_dir(root.join(WORKSPACES_DIR_NAME))
+    let mut agents: Vec<String> = std::fs::read_dir(root.join(WORKSPACES_DIR_NAME))
         .into_iter()
         .flatten()
         .flatten()
@@ -112,8 +112,8 @@ fn discover(root: &Path) -> Vec<String> {
         .filter_map(|e| e.file_name().into_string().ok())
         .filter(|n| valid_id(n) && n != KEPT_DIR_NAME && n != PERSONAL_ID && workspace_dir(root, n).join(DB_FILE).is_file())
         .collect();
-    spaces.sort();
-    ids.extend(spaces);
+    agents.sort();
+    ids.extend(agents);
     ids
 }
 
@@ -565,7 +565,7 @@ mod tests {
     use super::*;
     use crate::db::Db;
 
-    /// 実データに近い構成を作る: パーソナル(外部ナレッジ)とスペース1つ。
+    /// 実データに近い構成を作る: パーソナル(外部ナレッジ)とエージェント1つ。
     fn sample(root: &Path, external: &Path, marker: &str) {
         std::fs::create_dir_all(external.join("Dev")).unwrap();
         std::fs::write(external.join("Dev/メモ 1.md"), marker).unwrap();
@@ -574,10 +574,10 @@ mod tests {
         db.set_setting("marker", marker).unwrap();
         drop(db);
         std::fs::write(root.join(SECRETS_FILE), format!("{{\"k\":\"{marker}\"}}")).unwrap();
-        let space = root.join(WORKSPACES_DIR_NAME).join("space-a");
-        std::fs::create_dir_all(space.join(KNOWLEDGE_DIR)).unwrap();
-        std::fs::write(space.join(KNOWLEDGE_DIR).join("a.md"), marker).unwrap();
-        let sdb = Db::open(&space.join(DB_FILE)).unwrap();
+        let agent = root.join(WORKSPACES_DIR_NAME).join("agent-a");
+        std::fs::create_dir_all(agent.join(KNOWLEDGE_DIR)).unwrap();
+        std::fs::write(agent.join(KNOWLEDGE_DIR).join("a.md"), marker).unwrap();
+        let sdb = Db::open(&agent.join(DB_FILE)).unwrap();
         sdb.set_setting("marker", marker).unwrap();
         drop(sdb);
         std::fs::write(root.join(WORKSPACES_DIR_NAME).join(REGISTRY_FILE), format!("[\"{marker}\"]")).unwrap();
@@ -611,13 +611,13 @@ mod tests {
         assert!(apply_pending(&dst).unwrap());
 
         assert_eq!(marker_of(&dst, PERSONAL_ID).as_deref(), Some("new"));
-        assert_eq!(marker_of(&dst, "space-a").as_deref(), Some("new"));
+        assert_eq!(marker_of(&dst, "agent-a").as_deref(), Some("new"));
         // 外部のナレッジは標準の位置へ戻り、保存先の設定は解除される
         assert_eq!(std::fs::read_to_string(dst.join("knowledge/Dev/メモ 1.md")).unwrap(), "new");
         let db = Db::open(&dst.join(DB_FILE)).unwrap();
         assert_eq!(db.get_setting(KNOWLEDGE_DIR_KEY).unwrap(), None);
         assert_eq!(std::fs::read_to_string(dst.join(SECRETS_FILE)).unwrap(), "{\"k\":\"new\"}");
-        assert_eq!(std::fs::read_to_string(dst.join("workspaces/space-a/knowledge/a.md")).unwrap(), "new");
+        assert_eq!(std::fs::read_to_string(dst.join("workspaces/agent-a/knowledge/a.md")).unwrap(), "new");
         assert_eq!(std::fs::read_to_string(dst.join(WORKSPACES_DIR_NAME).join(REGISTRY_FILE)).unwrap(), "[\"new\"]");
         // モデルは触らない。展開先と予約は片付く
         assert!(dst.join("models/keep.bin").is_file());
@@ -625,7 +625,7 @@ mod tests {
         // 古いデータは退避に残る
         let old = std::fs::read_dir(&dst).unwrap().flatten().find(|e| e.file_name().to_string_lossy().starts_with("restore-backup-")).unwrap();
         assert_eq!(std::fs::read_to_string(old.path().join(SECRETS_FILE)).unwrap(), "{\"k\":\"old\"}");
-        assert!(old.path().join("workspaces/space-a/timeline.db").is_file());
+        assert!(old.path().join("workspaces/agent-a/timeline.db").is_file());
         // 取り込まれたのはモデル以外
         let names: Vec<_> = ZipArchive::new(File::open(&zip).unwrap()).unwrap().file_names().map(str::to_owned).collect();
         assert!(names.iter().all(|n| !n.contains("models")));
@@ -702,7 +702,7 @@ mod tests {
         schedule(&root).unwrap();
         assert!(apply_pending(&root).is_err());
         assert_eq!(marker_of(&root, PERSONAL_ID).as_deref(), Some("old"));
-        assert_eq!(marker_of(&root, "space-a").as_deref(), Some("old"));
+        assert_eq!(marker_of(&root, "agent-a").as_deref(), Some("old"));
         assert_eq!(std::fs::read_to_string(root.join(SECRETS_FILE)).unwrap(), "{\"k\":\"old\"}");
         assert!(!root.join(MARKER).exists());
     }

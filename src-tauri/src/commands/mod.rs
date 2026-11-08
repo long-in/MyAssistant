@@ -1,4 +1,4 @@
-pub mod agent;
+pub mod task;
 pub mod aws;
 pub mod backup;
 pub mod chat;
@@ -11,6 +11,6 @@ pub mod leader;
 pub mod profile;
 pub mod settings;
 pub mod settings_transfer;
-pub mod space_data;
+pub mod agent_data;
 pub mod voice;
 pub mod workspace;

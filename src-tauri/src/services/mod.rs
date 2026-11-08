@@ -1,5 +1,5 @@
-pub mod agent;
-pub mod agent_run;
+pub mod tool_loop;
+pub mod task_run;
 pub mod attention;
 pub mod audio;
 pub mod backup;
@@ -17,7 +17,7 @@ pub mod secrets;
 pub mod settings_registry;
 pub mod settings_transfer;
 pub mod shell;
-pub mod space_data;
+pub mod agent_data;
 pub mod knowledge;
 pub mod leader;
 pub mod llm_client;

@@ -465,7 +465,7 @@ pub struct Approval {
 /// フロントエンドへ流す進捗。
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum AgentEvent {
+pub enum TaskEvent {
     /// ツール呼び出しの途中で出た説明テキスト。
     Text { text: String },
     ToolCall { id: String, name: String, input: Value },
@@ -479,7 +479,7 @@ pub enum AgentEvent {
     Finished { reply: Option<Value>, error: Option<Value> },
 }
 
-/// 配布の下書きの宛先(スペース)。
+/// 配布の下書きの宛先(エージェント)。
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct DraftTarget {
     pub id: String,
@@ -489,10 +489,10 @@ pub struct DraftTarget {
 
 /// ファイル操作に代わる、独自のツールの実行役(リーダーの台帳の参照・配布の下書き)。
 /// 引数は`tool_use`のid・ツール名・入力。実行結果と、画面へ流すイベント(あれば)を返す。
-pub type ToolHost<'a> = &'a (dyn Fn(&str, &str, &Value) -> (Result<String, String>, Option<AgentEvent>) + Sync);
+pub type ToolHost<'a> = &'a (dyn Fn(&str, &str, &Value) -> (Result<String, String>, Option<TaskEvent>) + Sync);
 
 #[derive(Debug)]
-pub struct AgentOutcome {
+pub struct TaskOutcome {
     pub text: String,
 }
 
@@ -542,13 +542,13 @@ pub async fn run<L, LF, A, AF, E>(
     mut llm: L,
     mut approve: A,
     mut emit: E,
-) -> Result<AgentOutcome, AppError>
+) -> Result<TaskOutcome, AppError>
 where
     L: FnMut(Vec<Value>) -> LF,
     LF: Future<Output = Result<ToolTurn, AppError>>,
     A: FnMut(Approval) -> AF,
     AF: Future<Output = bool>,
-    E: FnMut(AgentEvent),
+    E: FnMut(TaskEvent),
 {
     let start = history.len();
     history.push(json!({ "role": "user", "content": user_text }));
@@ -558,7 +558,7 @@ where
         history.truncate(start);
     }
     if cancelled {
-        return Ok(AgentOutcome { text: CANCELLED_TEXT.into() });
+        return Ok(TaskOutcome { text: CANCELLED_TEXT.into() });
     }
     result
 }
@@ -569,16 +569,16 @@ async fn run_steps<L, LF, A, AF, E>(
     llm: &mut L,
     approve: &mut A,
     emit: &mut E,
-) -> Result<AgentOutcome, AppError>
+) -> Result<TaskOutcome, AppError>
 where
     L: FnMut(Vec<Value>) -> LF,
     LF: Future<Output = Result<ToolTurn, AppError>>,
     A: FnMut(Approval) -> AF,
     AF: Future<Output = bool>,
-    E: FnMut(AgentEvent),
+    E: FnMut(TaskEvent),
 {
     // 中断時の本文は`run`が差し替える
-    let cancelled = || Ok(AgentOutcome { text: String::new() });
+    let cancelled = || Ok(TaskOutcome { text: String::new() });
     // 承認された作業計画の手順。依頼ごとに持ち、次の依頼には引き継がない
     let mut plan: Option<Vec<String>> = None;
     for _ in 0..env.max_steps() {
@@ -603,10 +603,10 @@ where
             if text.trim().is_empty() {
                 text = "回答を生成できませんでした。もう一度お試しください。".into();
             }
-            return Ok(AgentOutcome { text });
+            return Ok(TaskOutcome { text });
         }
         if !text.trim().is_empty() {
-            emit(AgentEvent::Text { text });
+            emit(TaskEvent::Text { text });
         }
         let mut results = Vec::new();
         for call in calls {
@@ -618,7 +618,7 @@ where
         history.push(json!({ "role": "user", "content": results }));
     }
     let text = format!("ツールの実行回数が上限({}回)に達したため中断しました。", env.max_steps());
-    Ok(AgentOutcome { text })
+    Ok(TaskOutcome { text })
 }
 
 /// 承認を求めて、応答を待つ。
@@ -626,11 +626,11 @@ async fn ask<A, AF, E>(approve: &mut A, emit: &mut E, approval: Approval) -> boo
 where
     A: FnMut(Approval) -> AF,
     AF: Future<Output = bool>,
-    E: FnMut(AgentEvent),
+    E: FnMut(TaskEvent),
 {
     // 応答口の登録をイベント送信より先に済ませる
     let answer = approve(approval.clone());
-    emit(AgentEvent::Approval(approval));
+    emit(TaskEvent::Approval(approval));
     answer.await
 }
 
@@ -644,9 +644,9 @@ async fn run_call<A, AF, E>(
 where
     A: FnMut(Approval) -> AF,
     AF: Future<Output = bool>,
-    E: FnMut(AgentEvent),
+    E: FnMut(TaskEvent),
 {
-    emit(AgentEvent::ToolCall { id: call.id.clone(), name: call.name.clone(), input: call.input.clone() });
+    emit(TaskEvent::ToolCall { id: call.id.clone(), name: call.name.clone(), input: call.input.clone() });
     let outcome = match call.name.as_str() {
         _ if env.host.is_some() => {
             let (result, event) = (env.host.expect("checked"))(&call.id, &call.name, &call.input);
@@ -664,7 +664,7 @@ where
         Ok(s) => (true, s),
         Err(s) => (false, s),
     };
-    emit(AgentEvent::ToolResult { id: call.id.clone(), ok, preview: truncate_chars(&body, RESULT_PREVIEW_CHARS) });
+    emit(TaskEvent::ToolResult { id: call.id.clone(), ok, preview: truncate_chars(&body, RESULT_PREVIEW_CHARS) });
     let mut block = json!({ "type": "tool_result", "tool_use_id": call.id, "content": body });
     if !ok {
         block["is_error"] = json!(true);
@@ -681,7 +681,7 @@ async fn create_with_approval<A, AF, E>(
 where
     A: FnMut(Approval) -> AF,
     AF: Future<Output = bool>,
-    E: FnMut(AgentEvent),
+    E: FnMut(TaskEvent),
 {
     // 入力が不正なら承認を求めずに失敗として返す
     let (path, content) = validate_create(&call.input)?;
@@ -731,7 +731,7 @@ async fn propose_plan<A, AF, E>(
 where
     A: FnMut(Approval) -> AF,
     AF: Future<Output = bool>,
-    E: FnMut(AgentEvent),
+    E: FnMut(TaskEvent),
 {
     let (summary, steps) = validate_plan(&call.input)?;
     // 新しい計画を出したら、承認済みだった前の計画は失効させる
@@ -780,7 +780,7 @@ async fn run_command<A, AF, E>(
 where
     A: FnMut(Approval) -> AF,
     AF: Future<Output = bool>,
-    E: FnMut(AgentEvent),
+    E: FnMut(TaskEvent),
 {
     let input = &call.input;
     let command = str_arg(input, "command").map(str::trim).filter(|c| !c.is_empty()).ok_or("commandが必要です。")?;
@@ -840,7 +840,7 @@ where
     }
 
     let out = shell::run(command, &cwd, timeout, &env.cancel, |stream, text| {
-        emit(AgentEvent::CommandOutput { id: call.id.clone(), stream, text: text.to_owned() });
+        emit(TaskEvent::CommandOutput { id: call.id.clone(), stream, text: text.to_owned() });
     })
     .await?;
     let body = shell::format_output(&out);
@@ -962,8 +962,8 @@ mod tests {
         assert_eq!(*seen.borrow(), [1, 3]);
         assert_eq!(history[2]["content"][0]["content"], "hello");
         let events = events.borrow();
-        assert!(matches!(&events[0], AgentEvent::Text { text } if text == "確認します"));
-        assert!(matches!(&events[2], AgentEvent::ToolResult { ok: true, .. }));
+        assert!(matches!(&events[0], TaskEvent::Text { text } if text == "確認します"));
+        assert!(matches!(&events[2], TaskEvent::ToolResult { ok: true, .. }));
     }
 
     async fn create_with_approval(approved: bool) -> (tempfile::TempDir, PathBuf, Vec<Value>) {
@@ -1119,7 +1119,7 @@ mod tests {
         script: Vec<ToolTurn>,
         env: &Env<'_>,
         answer: impl Fn(&Approval) -> bool,
-    ) -> (Vec<Value>, Vec<ApprovalKind>, Vec<AgentEvent>) {
+    ) -> (Vec<Value>, Vec<ApprovalKind>, Vec<TaskEvent>) {
         let mut script = VecDeque::from(script);
         let kinds = RefCell::new(Vec::new());
         let events = RefCell::new(Vec::new());
@@ -1183,7 +1183,7 @@ mod tests {
         assert!(work.join("made.txt").exists());
         assert!(!result_of(&history, 2).1 && !result_of(&history, 4).1);
         assert!(result_of(&history, 6).0.contains("made.txt"));
-        assert!(events.iter().any(|e| matches!(e, AgentEvent::CommandOutput { text, .. } if text.contains("made.txt"))));
+        assert!(events.iter().any(|e| matches!(e, TaskEvent::CommandOutput { text, .. } if text.contains("made.txt"))));
     }
 
     #[tokio::test]
@@ -1222,7 +1222,7 @@ mod tests {
         let reasons: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
-                AgentEvent::Approval(a) if a.kind == ApprovalKind::Command => Some(a.reason.clone()),
+                TaskEvent::Approval(a) if a.kind == ApprovalKind::Command => Some(a.reason.clone()),
                 _ => None,
             })
             .collect();

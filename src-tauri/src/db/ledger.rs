@@ -6,15 +6,15 @@ use super::Db;
 use crate::utils::error::AppError;
 
 /// リーダーの台帳の1行(1回の配布の、1つの宛先)。
-/// 宛先の名称は、スペースが削除されても残せるよう控えておく。結果の本文は持たない。
+/// 宛先の名称は、エージェントが削除されても残せるよう控えておく。結果の本文は持たない。
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LedgerRow {
     pub id: String,
     /// 同じ配布(同時に複数の宛先へ送ったもの)をまとめるID。
     pub batch_id: String,
     pub instruction: String,
-    pub space_id: String,
-    pub space_name: String,
+    pub agent_id: String,
+    pub agent_name: String,
     pub session_id: String,
     /// 最後に分かった状態(`running` / `done` / `failed` / `interrupted`)。承認待ちは実行中の一時状態なので保存しない。
     pub status: String,
@@ -26,9 +26,9 @@ pub struct LedgerRow {
 impl Db {
     pub fn ledger_insert(&self, row: &LedgerRow) -> Result<(), AppError> {
         self.conn().execute(
-            "INSERT INTO leader_tasks (id, batch_id, instruction, space_id, space_name, session_id, status, confirmed, created_at)
+            "INSERT INTO leader_tasks (id, batch_id, instruction, agent_id, agent_name, session_id, status, confirmed, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![row.id, row.batch_id, row.instruction, row.space_id, row.space_name, row.session_id, row.status, row.confirmed, row.created_at],
+            params![row.id, row.batch_id, row.instruction, row.agent_id, row.agent_name, row.session_id, row.status, row.confirmed, row.created_at],
         )?;
         Ok(())
     }
@@ -42,7 +42,7 @@ impl Db {
     pub fn ledger_list(&self, limit: u32) -> Result<Vec<LedgerRow>, AppError> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT id, batch_id, instruction, space_id, space_name, session_id, status, confirmed, created_at
+            "SELECT id, batch_id, instruction, agent_id, agent_name, session_id, status, confirmed, created_at
              FROM leader_tasks ORDER BY created_at DESC, rowid DESC LIMIT ?1",
         )?;
         let rows = stmt
@@ -51,8 +51,8 @@ impl Db {
                     id: r.get(0)?,
                     batch_id: r.get(1)?,
                     instruction: r.get(2)?,
-                    space_id: r.get(3)?,
-                    space_name: r.get(4)?,
+                    agent_id: r.get(3)?,
+                    agent_name: r.get(4)?,
                     session_id: r.get(5)?,
                     status: r.get(6)?,
                     confirmed: r.get(7)?,
@@ -90,8 +90,8 @@ mod tests {
             id: id.into(),
             batch_id: "b".into(),
             instruction: "調べて".into(),
-            space_id: "s1".into(),
-            space_name: "調査".into(),
+            agent_id: "s1".into(),
+            agent_name: "調査".into(),
             session_id: session.into(),
             status: "running".into(),
             confirmed: false,
@@ -116,8 +116,8 @@ mod tests {
     }
 
     #[test]
-    fn space_database_has_no_ledger() {
-        let db = Db::open_in_memory(Role::Space);
+    fn agent_database_has_no_ledger() {
+        let db = Db::open_in_memory(Role::Agent);
         assert!(db.ledger_list(10).is_err());
     }
 }

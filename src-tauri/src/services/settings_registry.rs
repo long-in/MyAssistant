@@ -1,7 +1,7 @@
-//! 設定キーの一覧。各キーの保存先(スペースのDBか、全体設定か)と、書き出し・コピーでの扱いを1か所で決める。
+//! 設定キーの一覧。各キーの保存先(エージェントのDBか、全体設定か)と、書き出し・コピーでの扱いを1か所で決める。
 //!
 //! - キーの名前そのものは、従来どおり各モジュールの定数に置く(この一覧はそれを参照する)。
-//! - 保存先の取り違えを防ぐため、DBは全体設定のキーを、全体設定はスペースのキーを書き込みで拒否する(`check_db_write` / `check_global_write`)。
+//! - 保存先の取り違えを防ぐため、DBは全体設定のキーを、全体設定はエージェントのキーを書き込みで拒否する(`check_db_write` / `check_global_write`)。
 //! - 一覧に無いキーはどちらにも書ける(テスト用の仮のキーなど)。新しい設定を足すときは、ここにも登録する。
 use crate::{
     commands::{chat, voice},
@@ -9,15 +9,15 @@ use crate::{
 };
 
 use super::{
-    batch, debug_log, global_settings, leader, memory, profile, proofread, space_data, stt, tuning, voicevox, wake, workspace,
+    batch, debug_log, global_settings, leader, memory, profile, proofread, agent_data, stt, tuning, voicevox, wake, workspace,
 };
 
 /// 設定の保存先。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
-    /// ワークスペース(パーソナル・スペース・リーダー)ごとのDB(`app_settings`)。
-    Space,
-    /// 全スペース共通の全体設定(`workspaces/global_settings.json`)。
+    /// ワークスペース(パーソナル・エージェント・リーダー)ごとのDB(`app_settings`)。
+    Agent,
+    /// 全エージェント共通の全体設定(`workspaces/global_settings.json`)。
     Global,
 }
 
@@ -43,13 +43,13 @@ pub enum Kind {
 pub struct Setting {
     pub key: &'static str,
     pub scope: Scope,
-    /// 書き出し・取り込み(とスペース間のコピー)の対象なら、その検証方法。`None`は対象外。
-    /// 全体設定は全体設定のバックアップだけが扱い、スペースの書き出しには入らない。
+    /// 書き出し・取り込み(とエージェント間のコピー)の対象なら、その検証方法。`None`は対象外。
+    /// 全体設定は全体設定のバックアップだけが扱い、エージェントの書き出しには入らない。
     pub transfer: Option<Kind>,
 }
 
-const fn space(key: &'static str, transfer: Option<Kind>) -> Setting {
-    Setting { key, scope: Scope::Space, transfer }
+const fn agent(key: &'static str, transfer: Option<Kind>) -> Setting {
+    Setting { key, scope: Scope::Agent, transfer }
 }
 
 const fn global(key: &'static str, transfer: Option<Kind>) -> Setting {
@@ -58,28 +58,28 @@ const fn global(key: &'static str, transfer: Option<Kind>) -> Setting {
 
 /// すべての設定キー。書き出しの項目の並びは、この順に従う。
 pub const ALL: &[Setting] = &[
-    // ---- スペースごと(書き出し・コピーの対象) ----
-    space(chat::ROUTE_KEY, Some(Kind::Json)),
-    space(chat::WEB_ACCESS_KEY, Some(Kind::Flag)),
-    space(chat::SHELL_ACCESS_KEY, Some(Kind::Flag)),
-    space(voice::STT_ENGINE_KEY, Some(Kind::OneOf(&["local", "google", "aqua"]))),
-    space(voice::STT_LANGUAGE_KEY, Some(Kind::Text)),
-    space(voice::TTS_ENGINE_KEY, Some(Kind::OneOf(&["google", "voicevox"]))),
-    space(voice::VOICEVOX_STYLE_KEY, Some(Kind::Text)),
-    space(tuning::KEY, Some(Kind::Json)),
-    space(batch::BATCH_ROUTE_KEY, Some(Kind::Json)),
-    space(proofread::ROUTE_KEY, Some(Kind::Json)),
-    space(memory::ROUTE_KEY, Some(Kind::Json)),
-    space(debug_log::ENABLED_KEY, Some(Kind::Flag)),
-    // ---- スペースごと(対象外: 端末ごとに異なるもの、スペース固有のもの) ----
-    space(batch::KNOWLEDGE_DIR_KEY, None),
-    space(debug_log::DIR_KEY, None),
-    space(stt::REVISION_KEY, None),
-    space(voicevox::VERSIONS_KEY, None),
-    space(space_data::KEY, None),
-    space(leader::PROMPT_KEY, None),
-    space(leader::LIMIT_KEY, None),
-    space(memory::CURSOR_KEY, None),
+    // ---- エージェントごと(書き出し・コピーの対象) ----
+    agent(chat::ROUTE_KEY, Some(Kind::Json)),
+    agent(chat::WEB_ACCESS_KEY, Some(Kind::Flag)),
+    agent(chat::SHELL_ACCESS_KEY, Some(Kind::Flag)),
+    agent(voice::STT_ENGINE_KEY, Some(Kind::OneOf(&["local", "google", "aqua"]))),
+    agent(voice::STT_LANGUAGE_KEY, Some(Kind::Text)),
+    agent(voice::TTS_ENGINE_KEY, Some(Kind::OneOf(&["google", "voicevox"]))),
+    agent(voice::VOICEVOX_STYLE_KEY, Some(Kind::Text)),
+    agent(tuning::KEY, Some(Kind::Json)),
+    agent(batch::BATCH_ROUTE_KEY, Some(Kind::Json)),
+    agent(proofread::ROUTE_KEY, Some(Kind::Json)),
+    agent(memory::ROUTE_KEY, Some(Kind::Json)),
+    agent(debug_log::ENABLED_KEY, Some(Kind::Flag)),
+    // ---- エージェントごと(対象外: 端末ごとに異なるもの、エージェント固有のもの) ----
+    agent(batch::KNOWLEDGE_DIR_KEY, None),
+    agent(debug_log::DIR_KEY, None),
+    agent(stt::REVISION_KEY, None),
+    agent(voicevox::VERSIONS_KEY, None),
+    agent(agent_data::KEY, None),
+    agent(leader::PROMPT_KEY, None),
+    agent(leader::LIMIT_KEY, None),
+    agent(memory::CURSOR_KEY, None),
     // ---- 全体設定 ----
     global(chat::BASE_INSTRUCTIONS_KEY, Some(Kind::Text)),
     global(global_settings::OS_NOTIFICATIONS_KEY, Some(Kind::Flag)),
@@ -119,9 +119,9 @@ pub fn check_db_write(key: &str) -> Result<(), AppError> {
     check(key, Scope::Global)
 }
 
-/// 全体設定への書き込みを確かめる(スペースごとのキーは書かせない)。
+/// 全体設定への書き込みを確かめる(エージェントごとのキーは書かせない)。
 pub fn check_global_write(key: &str) -> Result<(), AppError> {
-    check(key, Scope::Space)
+    check(key, Scope::Agent)
 }
 
 #[cfg(test)]

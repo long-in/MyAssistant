@@ -1,19 +1,19 @@
 # アプリ全体のバックアップとリストア
 
-全スペースの会話・設定・ナレッジ・API キーを 1 つの zip に書き出し、復元する。パスワードは任意(`services/backup.rs`、コマンドは `commands/backup.rs`)。画面は全体設定の「アプリ」タブ(App Backup)。設定だけの書き出しは [data-and-settings.md](data-and-settings.md) と [global-settings.md](global-settings.md) を参照。
+全エージェントの会話・設定・ナレッジ・API キーを 1 つの zip に書き出し、復元する。パスワードは任意(`services/backup.rs`、コマンドは `commands/backup.rs`)。画面は全体設定の「アプリ」タブ(App Backup)。設定だけの書き出しは [data-and-settings.md](data-and-settings.md) と [global-settings.md](global-settings.md) を参照。
 
 ## アーカイブの中身
 
 | パス | 内容 |
 | --- | --- |
 | `manifest.json` | アプリ名・形式の版(`FORMAT_VERSION`)・作成日時・DB の最新の版・ワークスペース一覧・ファイルごとの SHA-256 |
-| `shared/registry.json`, `shared/global_settings.json` | スペース一覧、全体設定 |
-| `shared/kept-knowledge/` | スペース削除時に残したナレッジ |
+| `shared/registry.json`, `shared/global_settings.json` | エージェント一覧、全体設定 |
+| `shared/kept-knowledge/` | エージェント削除時に残したナレッジ |
 | `ws/<id>/timeline.db` | DB のスナップショット(`VACUUM INTO`) |
 | `ws/<id>/secrets.json`, `ws/<id>/tts_dictionary.json` | API キー(平文のまま)、読み上げ辞書 |
 | `ws/<id>/knowledge/` | ナレッジ。保存先がアプリデータの外でも含める |
 
-`<id>` は `personal`・`leader`・スペースの UUID。`models/`・`voicevox/`・`voice/`、`-wal`/`-shm`、`.bak-vN` は含めない。シンボリックリンクと、名前が UTF-8 でないファイルは取り込まない。
+`<id>` は `personal`・`leader`・エージェントの UUID。`models/`・`voicevox/`・`voice/`、`-wal`/`-shm`、`.bak-vN` は含めない。シンボリックリンクと、名前が UTF-8 でないファイルは取り込まない。
 
 ## バックアップ
 

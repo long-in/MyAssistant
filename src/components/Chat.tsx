@@ -21,7 +21,7 @@ import AbortButton from "./AbortButton";
 import SwitchConfirm from "./SwitchConfirm";
 import DispatchDraftCard from "./DispatchDraftCard";
 import LeaderLedger from "./LeaderLedger";
-import ExecutionLog, { applyAgentEvent, emptyLog, type LogState } from "./ExecutionLog";
+import ExecutionLog, { applyTaskEvent, emptyLog, type LogState } from "./ExecutionLog";
 import { type Turn } from "./Reply";
 import OrbReadout, { type Phase } from "./OrbReadout";
 import { cn } from "@/lib/utils";
@@ -30,7 +30,7 @@ import { judgeAnswer } from "@/lib/voiceApproval";
 import { detectSwitch } from "@/lib/voiceCommands";
 import {
   LEADER_ID,
-  type AgentEvent,
+  type TaskEvent,
   type DispatchDraft,
   type KeyStatus,
   type MemoryUpdated,
@@ -41,10 +41,10 @@ import {
   DEFAULT_VOICE_TIMING,
   type VoiceTiming,
   type WakeConfig,
-  agentApprove,
-  agentDetach,
-  agentResume,
-  agentCancel,
+  taskApprove,
+  taskDetach,
+  taskResume,
+  taskCancel,
   cancelRecording,
   downloadSttModel,
   getSttEngine,
@@ -79,7 +79,7 @@ import {
   waitForSpeechEnd,
 } from "@/lib/api";
 
-// 録音の待ち時間(スペースを離したあとの猶予・声が入らず終える時間・話し終わりの無音)は、全体設定で変えられる(`voice_timing`)。
+// 録音の待ち時間(エージェントを離したあとの猶予・声が入らず終える時間・話し終わりの無音)は、全体設定で変えられる(`voice_timing`)。
 
 /** 話し始めを待つ時間(ms)。超えたら録り直す。 */
 const ANSWER_WAIT_MS = 12000;
@@ -105,7 +105,7 @@ const TOOL_ACTIVITY: Record<string, string> = {
   read_file: "ファイルを読んでいます…",
   search_files: "ファイルを検索しています…",
   create_file: "ファイルを作成しています…",
-  space_list: "スペースの一覧を確認しています…",
+  agent_list: "エージェントの一覧を確認しています…",
   ledger_list: "台帳を確認しています…",
   draft_dispatch: "配布の下書きを作っています…",
   remember: "覚えています…",
@@ -153,7 +153,7 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
   const router = useRouter();
 
   // 承認のダイアログは対話画面にある。設定などの別の画面を見ている間に承認が必要になったら、トーストで知らせる(「開く」で対話画面へ)。
-  // 承認に答えた・対話画面へ戻ったら、トーストを消す。ほかのスペースの通知(AttentionToasts)と、同じ識別子で重ならないようにする
+  // 承認に答えた・対話画面へ戻ったら、トーストを消す。ほかのエージェントの通知(AttentionToasts)と、同じ識別子で重ならないようにする
   useEffect(() => {
     const id = `attention:${workspaceId}:approval`;
     if (!approval || active) {
@@ -225,7 +225,7 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
   const switchResolve = useRef<((yes: boolean) => void) | null>(null);
   const [switchListening, setSwitchListening] = useState<Listening>("idle");
   const standbyOn = wake.enabled && wake.words.length > 0;
-  /** スペースを離してから録音を止めるまでの待ちタイマー。語尾が切れないよう少し録り続ける。 */
+  /** エージェントを離してから録音を止めるまでの待ちタイマー。語尾が切れないよう少し録り続ける。 */
   const tailTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toggleRef = useRef<() => Promise<void>>(async () => {});
   const clearTail = () => {
@@ -295,8 +295,8 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
 
   // 記憶のツール呼び出し(id → 種類と文面)。結果が成功したら、覚えた・忘れたことを知らせる
   const memoryCalls = useRef(new Map<string, { name: string; text: string }>());
-  const onAgentEvent = (e: AgentEvent) => {
-    setLog((l) => applyAgentEvent(l, e));
+  const onTaskEvent = (e: TaskEvent) => {
+    setLog((l) => applyTaskEvent(l, e));
     if (e.type === "tool_call") {
       setActivity(t(TOOL_ACTIVITY[e.name] ?? "ファイルを操作しています…"));
       if ((e.name === "remember" || e.name === "forget") && typeof e.input.text === "string")
@@ -313,7 +313,7 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
   };
 
   /** 切り替えから戻って続きを受けていた依頼が終わった。結果をやり取りに加える(読み上げはしない)。 */
-  const finishResumed = (e: Extract<AgentEvent, { type: "finished" }>) => {
+  const finishResumed = (e: Extract<TaskEvent, { type: "finished" }>) => {
     setBusy(false);
     setActivity(null);
     showApproval(null);
@@ -342,16 +342,16 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
     }
     setBusy(true);
     setTurns([turn]);
-    setLog(snap.events.reduce(applyAgentEvent, emptyLog));
+    setLog(snap.events.reduce(applyTaskEvent, emptyLog));
     const lastDraft = [...snap.events].reverse().find((x) => x.type === "dispatch_draft");
     if (lastDraft?.type === "dispatch_draft") setDispatchDraft({ id: lastDraft.id, instruction: lastDraft.instruction, targets: lastDraft.targets });
     // 離れている間に求められた承認は、回答を待っている。戻ったので、ここで答えられる
     if (snap.pending) showApproval({ type: "approval", ...snap.pending });
   };
-  const agentEventRef = useRef(onAgentEvent);
+  const taskEventRef = useRef(onTaskEvent);
   const restoreRef = useRef(restoreRun);
   useEffect(() => {
-    agentEventRef.current = onAgentEvent;
+    taskEventRef.current = onTaskEvent;
     restoreRef.current = restoreRun;
   });
 
@@ -369,12 +369,12 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
   // このワークスペースを開いたとき、実行中だった依頼の続きを受け取る。離れるときは、依頼を止めずに接続だけ外す
   useEffect(() => {
     let live = true;
-    agentResume(workspaceId, (e) => live && agentEventRef.current(e))
+    taskResume(workspaceId, (e) => live && taskEventRef.current(e))
       .then((snap) => live && restoreRef.current(snap))
       .catch(() => {});
     return () => {
       live = false;
-      agentDetach(workspaceId).catch(() => {});
+      taskDetach(workspaceId).catch(() => {});
     };
   }, [workspaceId]);
 
@@ -382,7 +382,7 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
     const a = approvalRef.current;
     if (!a) return;
     showApproval(null);
-    agentApprove(a.id, approved).catch(fail);
+    taskApprove(a.id, approved).catch(fail);
   };
 
   /** 承認待ちへの音声の返答。肯定とはっきり分かるときだけ進め、聞き取れなければ待ち続ける。 */
@@ -396,7 +396,7 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
   /** 実行中の依頼を中断する。動いているコマンドは止まり、承認待ちは拒否になる。 */
   const cancelTask = () => {
     showApproval(null);
-    agentCancel().catch(fail);
+    taskCancel().catch(fail);
   };
 
   /** 新しい会話を始める。これまでの文脈は引き継がず、実行中の処理と読み上げは止める。 */
@@ -453,7 +453,7 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
     let result: "spoke" | "replied" | "none" = "none";
     try {
       if (!route) throw new Error(t("使えるモデルがありません。設定でAPIキーを登録してください。"));
-      const r = await sendChat(sessionId, text, route, onAgentEvent);
+      const r = await sendChat(sessionId, text, route, onTaskEvent);
       refreshUsage();
       if (aborted()) return "none"; // 待っている間に新しい会話へ切り替わった、または中断された
       const replied = { user: text, userAt, reply: r.content, replyAt: new Date(), via: r.model };
@@ -500,7 +500,7 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
     void submit(text);
   };
 
-  /** `hold`: スペース長押しでの開始。開始処理中にキーが離されていたら、録音できた時点でそのまま停止する。 */
+  /** `hold`: エージェント長押しでの開始。開始処理中にキーが離されていたら、録音できた時点でそのまま停止する。 */
   const toggleMic = async (hold = false) => {
     // 開始・停止処理の最中の再入力(キーのリピートや連打)は無視し、録音を勝手に止めない
     const state = micNow.current;
@@ -904,7 +904,7 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!activeRef.current) return; // 他の画面ではSpaceを通常の入力に使う
+      if (!activeRef.current) return; // 他の画面ではAgentを通常の入力に使う
       const id = matchShortcut(e);
       if (id === "mic") {
         e.preventDefault();
@@ -914,7 +914,7 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
         abortRef.current();
       }
     };
-    // ボタンにフォーカスがあるとスペースのkeyupでクリックが発火し、二重に切り替わるため止める
+    // ボタンにフォーカスがあるとエージェントのkeyupでクリックが発火し、二重に切り替わるため止める
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code !== "Space") return;
       if (!activeRef.current) return;
@@ -938,7 +938,7 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
     };
   }, []);
 
-  const micHint = "Space";
+  const micHint = "Agent";
 
   const download = async () => {
     setDownloading(true);

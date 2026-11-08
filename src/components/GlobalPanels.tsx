@@ -33,13 +33,13 @@ const HEADING_ICONS: Record<string, LucideIcon> = {
   Work: Briefcase,
   "OS Notifications": Bell,
   "Leader Prompt": ClipboardList,
-  "Space Data": FolderKanban,
+  "Agent Data": FolderKanban,
   "AI Link": Link2,
-  "New Space": Plus,
+  "New Agent": Plus,
   "Copy Settings": Copy,
-  "Edit Space": Pencil,
+  "Edit Agent": Pencil,
   "Shared Data": Share2,
-  Spaces: FolderKanban,
+  Agents: FolderKanban,
   Shortcuts: Keyboard,
   "Voice Guide": BookOpen,
   "Voice Output": Volume2,
@@ -212,7 +212,7 @@ export function TuningPanel<T extends Record<string, number>>({
 export const VOICE_FIELDS: TuningField<VoiceTiming>[] = [
   { key: "voice_idle_secs", label: "無音で入力を終える時間", hint: "声が入らないとき、音声入力を終えるまでの時間。", unit: "秒", min: 1, max: 30, step: 0.5 },
   { key: "utterance_silence_secs", label: "話し終わりの無音", hint: "会話の続きの待ち受けで、この無音が続くと話し終えたとみなす。", unit: "秒", min: 0.5, max: 5, step: 0.1 },
-  { key: "release_tail_secs", label: "スペースを離したあとの保持", hint: "キーを離してから録音を止めるまで。語尾が切れるなら長くする。", unit: "秒", min: 0, max: 3, step: 0.5 },
+  { key: "release_tail_secs", label: "エージェントを離したあとの保持", hint: "キーを離してから録音を止めるまで。語尾が切れるなら長くする。", unit: "秒", min: 0, max: 3, step: 0.5 },
 ];
 
 const BATCH_INTERVALS = [5, 15, 30, 60, 180, 360, 720, 1440];
@@ -271,7 +271,7 @@ export function BatchInterval() {
   );
 }
 
-/** 表示言語。全体設定として保存され、全スペースに反映される(この端末にも写しを残す)。 */
+/** 表示言語。全体設定として保存され、全エージェントに反映される(この端末にも写しを残す)。 */
 export function LanguageSetting() {
   const t = useT();
   const lang = useLang();
@@ -304,7 +304,7 @@ export function LanguageSetting() {
   );
 }
 
-/** アプリが見えていない間に、ほかのスペースで対応が必要になったとき、macOSの通知も出すか。全体設定。 */
+/** アプリが見えていない間に、ほかのエージェントで対応が必要になったとき、macOSの通知も出すか。全体設定。 */
 export function OsNotifications() {
   const t = useT();
   const [on, setOn] = useState(true);
@@ -328,11 +328,11 @@ export function OsNotifications() {
   return (
     <section className="hud-panel hud-accent px-5 py-4">
       <Heading title="OS Notifications" help={t("OSの通知")} status={<StatusPill on={on}>{on ? t("オン") : t("オフ")}</StatusPill>}>
-        <p>{t("アプリが背面にあるときや、ウィンドウを閉じているときに、ほかのスペースの承認待ち・完了・失敗を、macOSの通知でも知らせます。")}</p>
+        <p>{t("アプリが背面にあるときや、ウィンドウを閉じているときに、ほかのエージェントの承認待ち・完了・失敗を、macOSの通知でも知らせます。")}</p>
       </Heading>
       <label className="flex items-center justify-between gap-4 text-sm">
         <span className="text-xs text-muted-foreground">
-          {t("アプリが背面にあるときや、ウィンドウを閉じているときに、ほかのスペースの承認待ち・完了・失敗を、macOSの通知でも知らせます。")}
+          {t("アプリが背面にあるときや、ウィンドウを閉じているときに、ほかのエージェントの承認待ち・完了・失敗を、macOSの通知でも知らせます。")}
         </span>
         <Switch checked={on} onCheckedChange={(v) => void change(v)} />
       </label>
@@ -804,7 +804,7 @@ export function WakeWords({ ttsReady, engine, cloudStt }: { ttsReady: boolean; e
 }
 
 
-/** アプリ全体(全スペースのDB・ナレッジ・APIキー)のバックアップとリストア。 */
+/** アプリ全体(全エージェントのDB・ナレッジ・APIキー)のバックアップとリストア。 */
 export function AppBackup() {
   const t = useT();
   const [busy, setBusy] = useState(false);
@@ -823,7 +823,7 @@ export function AppBackup() {
     setBusy(true);
     try {
       const r = await backupCreate(dest, password);
-      toast.success(t("{n}スペース・{files}ファイルを書き出しました。", { n: r.workspaces, files: r.files }));
+      toast.success(t("{n}エージェント・{files}ファイルを書き出しました。", { n: r.workspaces, files: r.files }));
     } catch (e) {
       toast.error(reportError(e));
     } finally {
@@ -838,7 +838,7 @@ export function AppBackup() {
     try {
       const p = await restorePrepare(src, password);
       const ok = await ask(
-        t("{date} のバックアップ({n}スペース)で、現在のデータを置き換えます。アプリは再起動します。現在のデータはアプリデータ内の restore-backup-日時 フォルダに退避されます。続けますか?", {
+        t("{date} のバックアップ({n}エージェント)で、現在のデータを置き換えます。アプリは再起動します。現在のデータはアプリデータ内の restore-backup-日時 フォルダに退避されます。続けますか?", {
           date: p.created_at,
           n: p.workspaces,
         }),
@@ -874,7 +874,7 @@ export function AppBackup() {
   return (
     <section className="hud-panel hud-accent px-5 py-4">
       <Heading title="App Backup" help={t("アプリ全体のバックアップ")}>
-        <p>{t("全スペースの会話・設定・ナレッジ・APIキーを1つのzipに書き出し、あとで復元できます。")}</p>
+        <p>{t("全エージェントの会話・設定・ナレッジ・APIキーを1つのzipに書き出し、あとで復元できます。")}</p>
         <ul>
           <li>{t("APIキーは、そのまま含まれます。パスワードを設定するとzip全体をAES-256で暗号化できます(任意。忘れると復元できません)。")}</li>
           <li>{t("暗号化したzipは、macOS標準のアーカイブユーティリティでは開けません。7-Zip・Kekaなどを使ってください。アプリでの復元には影響しません。")}</li>
@@ -903,7 +903,7 @@ export function AppBackup() {
   );
 }
 
-/** 全体設定だけのバックアップ。スペースごとの設定のバックアップ(設定画面の Backup)とは別に書き出す。 */
+/** 全体設定だけのバックアップ。エージェントごとの設定のバックアップ(設定画面の Backup)とは別に書き出す。 */
 export function GlobalBackup() {
   const t = useT();
   const [busy, setBusy] = useState(false);
@@ -952,8 +952,8 @@ export function GlobalBackup() {
       <Heading title="Backup" help={t("全体設定の移行")}>
         <p>{t("全体設定をJSONファイルで書き出し・読み込みできます。")}</p>
         <ul>
-          <li>{t("スペースごとの設定、APIキー、ナレッジは含まれません。それらは各スペースの設定のバックアップを使ってください。")}</li>
-          <li>{t("読み込むと、ファイルにある項目が現在の全体設定を上書きし、すべてのスペースに反映されます。")}</li>
+          <li>{t("エージェントごとの設定、APIキー、ナレッジは含まれません。それらは各エージェントの設定のバックアップを使ってください。")}</li>
+          <li>{t("読み込むと、ファイルにある項目が現在の全体設定を上書きし、すべてのエージェントに反映されます。")}</li>
         </ul>
       </Heading>
       <div className="mt-3 flex gap-2">
@@ -971,16 +971,16 @@ export function GlobalBackup() {
 /**
  * ワークの有効化・無効化。
  * - 未作成: ワークの説明(何か・できること・ルール)を示し、承諾したらリーダーを作成して使えるようにする(承諾までは何も作らない)。
- * - 有効: 「ワークを無効にする」で、画面から選べなくする。リーダー・スペースのデータ(会話・ナレッジ・設定・APIキー・台帳)は残る。
+ * - 有効: 「ワークを無効にする」で、画面から選べなくする。リーダー・エージェントのデータ(会話・ナレッジ・設定・APIキー・台帳)は残る。
  * - 無効: 「ワークを有効にする」で、承諾し直さずに元へ戻す。
  */
-/** 共通データ。全スペースで共通して、AIへ毎回渡す自由記述の指示(パーソナルには渡さない)。 */
+/** 共通データ。全エージェントで共通して、AIへ毎回渡す自由記述の指示(パーソナルには渡さない)。 */
 export function SharedData() {
   const t = useT();
   return (
     <section className="hud-panel hud-accent px-5 py-4">
       <Heading title="Shared Data" help={t("共通データ")}>
-        <p>{t("すべてのスペースで共通して、AIへ毎回渡す指示です(パーソナルには渡しません)。口調や守ってほしいルールなどを書きます。スペースごとの内容は、各スペースの設定の「スペースデータ」に書きます。次の送信から反映されます。")}</p>
+        <p>{t("すべてのエージェントで共通して、AIへ毎回渡す指示です(パーソナルには渡しません)。口調や守ってほしいルールなどを書きます。エージェントごとの内容は、各エージェントの設定の「エージェントデータ」に書きます。次の送信から反映されます。")}</p>
       </Heading>
       <NotePanel load={getSharedData} save={saveSharedData} label={t("共通データ")} placeholder={t("例: 回答は敬語で、結論から先に述べてください。")} />
     </section>
@@ -1049,15 +1049,15 @@ export function WorkEnable() {
       <Heading title="Work" help={t("ワーク")} status={exists === null ? undefined : <StatusPill on={exists && enabled}>{!exists ? t("未作成") : enabled ? t("有効") : t("無効")}</StatusPill>}>
         <p>{t("ワークは、承諾するとリーダーを作成して使えるようになります。承諾するまでは、何も作られません。")}</p>
         <ul>
-          <li>{t("無効にしても、リーダーとスペースのデータは消えません。画面から選べなくなり、リーダーの配布と、スペースのバックグラウンド処理(ナレッジ整理)が止まります。")}</li>
+          <li>{t("無効にしても、リーダーとエージェントのデータは消えません。画面から選べなくなり、リーダーの配布と、エージェントのバックグラウンド処理(ナレッジ整理)が止まります。")}</li>
         </ul>
       </Heading>
       {exists === null ? null : exists && enabled ? (
         <div className="flex flex-col gap-3">
-          <p className="text-sm text-muted-foreground">{t("ワークは有効です。リーダーとスペースは、左端のレールの「WORK」の枠から開きます。")}</p>
+          <p className="text-sm text-muted-foreground">{t("ワークは有効です。リーダーとエージェントは、左端のレールの「WORK」の枠から開きます。")}</p>
           {confirmOff ? (
             <div className="flex flex-col gap-2 rounded-lg border p-3 text-sm">
-              <p>{t("ワークを無効にしますか?リーダーとスペースのデータ(会話・ナレッジ・設定・APIキー・台帳)は残り、画面から選べなくなります。開いていれば、パーソナルへ戻ります。実行中の依頼があるときは、完了してから無効にしてください。")}</p>
+              <p>{t("ワークを無効にしますか?リーダーとエージェントのデータ(会話・ナレッジ・設定・APIキー・台帳)は残り、画面から選べなくなります。開いていれば、パーソナルへ戻ります。実行中の依頼があるときは、完了してから無効にしてください。")}</p>
               <div className="flex gap-2">
                 <Button variant="destructive" disabled={busy} onClick={() => void turnOff()}>
                   {t("無効にする")}
@@ -1077,7 +1077,7 @@ export function WorkEnable() {
         </div>
       ) : exists ? (
         <div className="flex flex-col gap-3">
-          <p className="text-sm text-muted-foreground">{t("ワークは無効です。リーダーとスペースのデータは残っています。有効にすると、元のとおり使えます。")}</p>
+          <p className="text-sm text-muted-foreground">{t("ワークは無効です。リーダーとエージェントのデータは残っています。有効にすると、元のとおり使えます。")}</p>
           <div>
             <Button disabled={busy} onClick={() => void turnOn()}>
               {t("ワークを有効にする")}
@@ -1088,13 +1088,13 @@ export function WorkEnable() {
         <div className="flex flex-col gap-6">
           {/* 見出し: ワークが何かを一文で */}
           <div className="pt-1">
-            <h3 className="text-xl font-semibold tracking-tight">{t("仕事ごとに、専属のエージェントを持つ")}</h3>
+            <h3 className="text-xl font-semibold tracking-tight">{t("仕事ごとに、専属のワーキングエージェントを持つ")}</h3>
             <p className="mt-2 text-sm text-muted-foreground">
-              {t("リーダーが指示を配り、進捗をひとつにまとめます。スペースは案件ごとに独立して動きます。パーソナルは、ワークなしでも使えます。")}
+              {t("リーダーが指示を配り、進捗をひとつにまとめます。エージェントは案件ごとに独立して動きます。パーソナルは、ワークなしでも使えます。")}
             </p>
           </div>
 
-          {/* 図解: リーダーと、その下のスペース */}
+          {/* 図解: リーダーと、その下のエージェント */}
           <div className="flex flex-col items-center rounded-xl border bg-muted/30 px-4 py-5" aria-hidden="true">
             <div
               className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold"
@@ -1121,7 +1121,7 @@ export function WorkEnable() {
                 </div>
               ))}
             </div>
-            <p className="mt-3 text-xs text-muted-foreground">{t("スペースは、仕事の種類や案件ごとに作る、独立したエージェントです(例)")}</p>
+            <p className="mt-3 text-xs text-muted-foreground">{t("ワーキングエージェントは、仕事の種類や案件ごとに作る、独立したエージェントです(例)")}</p>
           </div>
 
           {/* 3枚のカード */}
@@ -1133,25 +1133,25 @@ export function WorkEnable() {
                 items: [
                   "リーダーと話して、配る指示の下書きと宛先の案を作れます。",
                   "配布ごとの進捗(実行中・承認待ち・完了・失敗)を、台帳で一か所に確認できます。",
-                  "スペースごとに、会話・ナレッジ・設定・APIキーを分けて使えます。",
+                  "エージェントごとに、会話・ナレッジ・設定・APIキーを分けて使えます。",
                 ],
               },
               {
                 icon: ShieldCheck,
                 title: "守られること",
                 items: [
-                  "リーダーは専用のAPIキーを持ち、スペースの会話・ナレッジ・結果の本文を読みません。",
+                  "リーダーは専用のAPIキーを持ち、エージェントの会話・ナレッジ・結果の本文を読みません。",
                   "配布は、内容と宛先を確かめて「配布」を押したときだけ。AIが勝手に配ることはありません。",
-                  "会話・ナレッジ・APIキーは、スペース同士でも、パーソナルとも共有されません。",
+                  "会話・ナレッジ・APIキーは、エージェント同士でも、パーソナルとも共有されません。",
                 ],
               },
               {
                 icon: ListOrdered,
                 title: "始める前に",
                 items: [
-                  "最初にリーダーを作成します(承諾すると作成されます)。作らないと、スペースは作れません。",
+                  "最初にリーダーを作成します(承諾すると作成されます)。作らないと、エージェントは作れません。",
                   "リーダーのAPIキーを登録します。",
-                  "スペースを作ります。最大30件で、名称と色は重複できません。「パーソナル」「ワーク」「リーダー」は予約名です。",
+                  "エージェントを作ります。最大30件で、名称と色は重複できません。「パーソナル」「ワーク」「リーダー」は予約名です。",
                 ],
                 numbered: true,
               },

@@ -1,5 +1,5 @@
 //! リーダーのコマンド。選択中のワークスペース(`Ctx`)には依存せず、リーダーのコンテキストを明示的に使う。
-//! キーの生値は返さない(登録の有無のみ)。スペースの会話・ナレッジ・結果の本文は読まない。
+//! キーの生値は返さない(登録の有無のみ)。エージェントの会話・ナレッジ・結果の本文は読まない。
 use std::{collections::BTreeMap, str::FromStr};
 
 use serde::Serialize;
@@ -14,8 +14,8 @@ use crate::{
         leader::{self, MAX_TARGETS, STATUS_RUNNING, TaskView},
         llm_router::{self, Route},
         secrets::{self, Provider},
-        space_data::Note,
-        workspace::{PERSONAL_ID, Space, Workspaces},
+        agent_data::Note,
+        workspace::{PERSONAL_ID, Agent, Workspaces},
     },
     utils::error::AppError,
 };
@@ -26,7 +26,7 @@ pub fn leader_exists(ws: State<'_, Workspaces>) -> bool {
     ws.leader().is_some()
 }
 
-/// リーダーを作る(1つだけ)。スペースを作る前に必要。
+/// リーダーを作る(1つだけ)。エージェントを作る前に必要。
 #[tauri::command]
 pub fn create_leader(app: AppHandle, ws: State<'_, Workspaces>) -> Result<(), AppError> {
     ws.create_leader()?;
@@ -46,13 +46,13 @@ pub fn leader_set_prompt(ws: State<'_, Workspaces>, note: Note) -> Result<Note, 
     leader::save_prompt(&ws.ensure_leader()?.db, &note)
 }
 
-/// 同時に指示できるスペース数の上限。未保存なら既定値。
+/// 同時に指示できるエージェント数の上限。未保存なら既定値。
 #[tauri::command]
 pub fn leader_get_limit(ws: State<'_, Workspaces>) -> Result<usize, AppError> {
     leader::load_limit(&ws.ensure_leader()?.db)
 }
 
-/// 上限を範囲(1〜スペースの上限)に収めて保存し、保存した値を返す。次の配布から反映する。
+/// 上限を範囲(1〜エージェントの上限)に収めて保存し、保存した値を返す。次の配布から反映する。
 #[tauri::command]
 pub fn leader_set_limit(ws: State<'_, Workspaces>, limit: usize) -> Result<usize, AppError> {
     leader::save_limit(&ws.ensure_leader()?.db, limit)
@@ -87,7 +87,7 @@ pub fn leader_delete_api_key(ws: State<'_, Workspaces>, provider: String) -> Res
     }
 }
 
-/// 別のワークスペース(パーソナルまたはスペース)のAPIキーを、リーダーへコピーする(Anthropicのみ。上書き)。
+/// 別のワークスペース(パーソナルまたはエージェント)のAPIキーを、リーダーへコピーする(Anthropicのみ。上書き)。
 /// 生値は画面へ返さず、コピーできたかだけを返す。コピー元は変更しない。
 #[tauri::command]
 pub fn leader_copy_api_key(ws: State<'_, Workspaces>, from: String) -> Result<bool, AppError> {
@@ -96,7 +96,7 @@ pub fn leader_copy_api_key(ws: State<'_, Workspaces>, from: String) -> Result<bo
     leader.secrets.copy_api_key_from(&src.secrets, Provider::Anthropic)
 }
 
-/// 宛先の提案。過去に配布した指示と宛先の履歴だけを根拠にする。根拠が無ければ空。スペースIDを返す。
+/// 宛先の提案。過去に配布した指示と宛先の履歴だけを根拠にする。根拠が無ければ空。エージェントIDを返す。
 #[tauri::command]
 pub async fn leader_suggest(ws: State<'_, Workspaces>, text: String) -> Result<Vec<String>, AppError> {
     let leader = ws.ensure_leader()?;
@@ -106,38 +106,38 @@ pub async fn leader_suggest(ws: State<'_, Workspaces>, text: String) -> Result<V
 /// 配布の宛先ごとの結果。
 #[derive(Serialize)]
 pub struct DispatchResult {
-    pub space_id: String,
+    pub agent_id: String,
     /// 依頼を始めたか。
     pub started: bool,
     /// 始めなかった理由: `not_found` / `active` / `limit` / `busy` / `no_provider` / `error`。
     pub reason: Option<&'static str>,
 }
 
-fn not_started(space_id: &str, reason: &'static str) -> DispatchResult {
-    DispatchResult { space_id: space_id.to_owned(), started: false, reason: Some(reason) }
+fn not_started(agent_id: &str, reason: &'static str) -> DispatchResult {
+    DispatchResult { agent_id: agent_id.to_owned(), started: false, reason: Some(reason) }
 }
 
-/// 指示を、選んだスペースへ配布する。宛先は必ず利用者が選ぶ。
-/// - 台帳に記録し、各スペースで依頼を始める(画面は介さない。進捗は台帳の状態で見る)。
-/// - 同時に指示できるスペース数(リーダーの設定)を超える宛先へは配布しない(`limit`。順番待ちにはしない)。
-///   数えるのは、リーダーが配布した実行中・承認待ちのスペースだけ。
-/// - 選択中のスペースへは配布しない(開いている画面が進捗を受け取れないため)。依頼の最中のスペースにも配布しない。
-/// - 承認が必要になったら、そのスペースで答える(リーダーからは代行しない)。
+/// 指示を、選んだエージェントへ配布する。宛先は必ず利用者が選ぶ。
+/// - 台帳に記録し、各エージェントで依頼を始める(画面は介さない。進捗は台帳の状態で見る)。
+/// - 同時に指示できるエージェント数(リーダーの設定)を超える宛先へは配布しない(`limit`。順番待ちにはしない)。
+///   数えるのは、リーダーが配布した実行中・承認待ちのエージェントだけ。
+/// - 選択中のエージェントへは配布しない(開いている画面が進捗を受け取れないため)。依頼の最中のエージェントにも配布しない。
+/// - 承認が必要になったら、そのエージェントで答える(リーダーからは代行しない)。
 #[tauri::command]
-pub fn leader_dispatch(app: AppHandle, ws: State<'_, Workspaces>, text: String, space_ids: Vec<String>) -> Result<Vec<DispatchResult>, AppError> {
+pub fn leader_dispatch(app: AppHandle, ws: State<'_, Workspaces>, text: String, agent_ids: Vec<String>) -> Result<Vec<DispatchResult>, AppError> {
     let leader = ws.ensure_leader()?;
     let text = leader::clean_instruction(&text)?;
     let mut ids: Vec<String> = Vec::new();
-    for id in space_ids {
+    for id in agent_ids {
         if !ids.contains(&id) {
             ids.push(id);
         }
     }
     if ids.is_empty() || ids.len() > MAX_TARGETS {
-        return Err(AppError::InvalidSpace("targets".into()));
+        return Err(AppError::InvalidAgent("targets".into()));
     }
-    let spaces = ws.list();
-    // 空き枠: 上限 − リーダーが配布して、いま動いている(実行中・承認待ち)スペースの数
+    let agents = ws.list();
+    // 空き枠: 上限 − リーダーが配布して、いま動いている(実行中・承認待ち)エージェントの数
     let limit = leader::load_limit(&leader.db)?;
     let running = leader::count_active(&leader.db.ledger_list(leader::LEDGER_LIMIT)?, |id| (ws.run_status(id), ws.run_session(id)));
     let mut slots = limit.saturating_sub(running);
@@ -145,11 +145,11 @@ pub fn leader_dispatch(app: AppHandle, ws: State<'_, Workspaces>, text: String, 
     let now = crate::db::now();
     let mut results = Vec::new();
     for id in ids {
-        let Some(space) = spaces.iter().find(|s| s.id == id).filter(|_| id != PERSONAL_ID) else {
+        let Some(agent) = agents.iter().find(|s| s.id == id).filter(|_| id != PERSONAL_ID) else {
             results.push(not_started(&id, "not_found"));
             continue;
         };
-        if ws.active().id == space.id {
+        if ws.active().id == agent.id {
             results.push(not_started(&id, "active"));
             continue;
         }
@@ -157,14 +157,14 @@ pub fn leader_dispatch(app: AppHandle, ws: State<'_, Workspaces>, text: String, 
             results.push(not_started(&id, "limit"));
             continue;
         }
-        match start_dispatch(&app, &ws, &leader, space, &text, &batch_id, &now) {
+        match start_dispatch(&app, &ws, &leader, agent, &text, &batch_id, &now) {
             Ok(None) => {
                 slots -= 1;
-                results.push(DispatchResult { space_id: id, started: true, reason: None });
+                results.push(DispatchResult { agent_id: id, started: true, reason: None });
             }
             Ok(Some(reason)) => results.push(not_started(&id, reason)),
             Err(e) => {
-                log::warn!("dispatch to {} failed: {e}", space.name);
+                log::warn!("dispatch to {} failed: {e}", agent.name);
                 results.push(not_started(&id, "error"));
             }
         }
@@ -177,12 +177,12 @@ fn start_dispatch(
     app: &AppHandle,
     ws: &Workspaces,
     leader: &crate::services::workspace::WorkspaceCtx,
-    space: &Space,
+    agent: &Agent,
     text: &str,
     batch_id: &str,
     now: &str,
 ) -> Result<Option<&'static str>, AppError> {
-    let ctx = ws.resolve(&space.id)?;
+    let ctx = ws.resolve(&agent.id)?;
     let available = batch::available_providers(&ctx.secrets);
     let saved: Option<Route> = ctx.db.get_setting(ROUTE_KEY)?.and_then(|v| serde_json::from_str(&v).ok());
     let Some(route) = llm_router::effective(&ctx, saved, &available) else { return Ok(Some("no_provider")) };
@@ -192,15 +192,15 @@ fn start_dispatch(
         id: uuid::Uuid::new_v4().to_string(),
         batch_id: batch_id.to_owned(),
         instruction: text.to_owned(),
-        space_id: space.id.clone(),
-        space_name: space.name.clone(),
+        agent_id: agent.id.clone(),
+        agent_name: agent.name.clone(),
         session_id: session_id.clone(),
         status: STATUS_RUNNING.to_owned(),
         confirmed: false,
         created_at: now.to_owned(),
     };
     leader.db.ledger_insert(&row)?;
-    if !ctx.shared.agent.try_begin_detached(&session_id, text) {
+    if !ctx.shared.task.try_begin_detached(&session_id, text) {
         leader.db.ledger_delete(&row.id)?;
         return Ok(Some("busy"));
     }
@@ -215,21 +215,21 @@ fn start_dispatch(
     Ok(None)
 }
 
-/// 宛先にできるスペースの、いまの依頼の状態(直接の指示によるものを含む)。
+/// 宛先にできるエージェントの、いまの依頼の状態(直接の指示によるものを含む)。
 #[derive(Serialize)]
-pub struct SpaceStatus {
+pub struct AgentStatus {
     pub id: String,
     pub name: String,
     pub color: String,
-    pub status: crate::services::agent_run::RunStatus,
+    pub status: crate::services::task_run::RunStatus,
 }
 
-/// 台帳(新しい順)と、各スペースのいまの状態。依頼の記録から読むだけで、スペースのLLMは呼ばない。
+/// 台帳(新しい順)と、各エージェントのいまの状態。依頼の記録から読むだけで、エージェントのLLMは呼ばない。
 #[derive(Serialize)]
 pub struct Overview {
     pub tasks: Vec<TaskView>,
-    pub spaces: Vec<SpaceStatus>,
-    /// 同時に指示できるスペース数の上限と、リーダーが配布していま動いているスペースの数。
+    pub agents: Vec<AgentStatus>,
+    /// 同時に指示できるエージェント数の上限と、リーダーが配布していま動いているエージェントの数。
     pub limit: usize,
     pub active: usize,
 }
@@ -237,14 +237,14 @@ pub struct Overview {
 #[tauri::command]
 pub fn leader_overview(ws: State<'_, Workspaces>) -> Result<Overview, AppError> {
     let leader = ws.ensure_leader()?;
-    let spaces = ws.list();
-    let tasks = leader::overview(&leader, &spaces, |id| (ws.run_status(id), ws.run_session(id)))?;
-    let spaces = spaces
+    let agents = ws.list();
+    let tasks = leader::overview(&leader, &agents, |id| (ws.run_status(id), ws.run_session(id)))?;
+    let agents = agents
         .into_iter()
-        .map(|s| SpaceStatus { status: ws.run_status(&s.id), id: s.id, name: s.name, color: s.color })
+        .map(|s| AgentStatus { status: ws.run_status(&s.id), id: s.id, name: s.name, color: s.color })
         .collect();
     let active = leader::count_active(&leader.db.ledger_list(leader::LEDGER_LIMIT)?, |id| (ws.run_status(id), ws.run_session(id)));
-    Ok(Overview { tasks, spaces, limit: leader::load_limit(&leader.db)?, active })
+    Ok(Overview { tasks, agents, limit: leader::load_limit(&leader.db)?, active })
 }
 
 /// 台帳の行に「確認済み」の区切りを付ける/外す(利用者の手動の区切り)。

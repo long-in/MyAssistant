@@ -1,9 +1,9 @@
-//! 全体設定。すべてのスペース(パーソナルを含む)で共通の設定を1か所に持つ。
+//! 全体設定。すべてのエージェント(パーソナルを含む)で共通の設定を1か所に持つ。
 //!
-//! - 保存先はアプリデータの`workspaces/global_settings.json`(キーと文字列値の対応)。スペースを削除しても残る。
-//! - 項目は`settings_registry`で保存先が全体設定(`Scope::Global`)のキー。スペースごとのキーは書き込みで拒否する。
+//! - 保存先はアプリデータの`workspaces/global_settings.json`(キーと文字列値の対応)。エージェントを削除しても残る。
+//! - 項目は`settings_registry`で保存先が全体設定(`Scope::Global`)のキー。エージェントごとのキーは書き込みで拒否する。
 //! - 初回(ファイルが無いとき)だけ、パーソナルのDBの現在値を初期値として取り込む(`migrate_from`)。
-//! - 取り込んだあと(ファイルがあるとき)は、各スペースのDBに残る同名の古い値を消す(`purge_legacy`)。ファイルが無いうちは消さない。
+//! - 取り込んだあと(ファイルがあるとき)は、各エージェントのDBに残る同名の古い値を消す(`purge_legacy`)。ファイルが無いうちは消さない。
 //!
 //! 項目の読み書きは`SettingsStore`を通すので、DBの設定と同じ形で扱える。
 use std::{
@@ -183,7 +183,7 @@ mod tests {
         let voice: Value = serde_json::from_str(&g.get_setting("voice_timing").unwrap().unwrap()).unwrap();
         assert_eq!(voice["voice_idle_secs"], 7.0);
         assert!(voice.get("web_search_max").is_none());
-        // 取り込んだら、パーソナルのDBに残る古い値は消す(スペースごとの設定は残す)
+        // 取り込んだら、パーソナルのDBに残る古い値は消す(エージェントごとの設定は残す)
         assert_eq!(db.get_setting("base_instructions").unwrap(), None);
         assert_eq!(db.get_setting("web_access").unwrap().as_deref(), Some("0"));
         assert!(db.get_setting("tuning").unwrap().is_some());
@@ -206,18 +206,18 @@ mod tests {
         assert_eq!(personal.db.get_setting("base_instructions").unwrap().as_deref(), Some("敬語で"));
         personal.global.migrate_from(&personal.db).unwrap();
         assert_eq!(personal.global.get_setting("base_instructions").unwrap().as_deref(), Some("敬語で"));
-        // 取り込んだあとに開いたスペースは、開いたときに消す
-        let space = d.path().join("space");
-        std::fs::create_dir_all(&space).unwrap();
-        let old = Db::open(&space.join("timeline.db")).unwrap();
+        // 取り込んだあとに開いたエージェントは、開いたときに消す
+        let agent = d.path().join("agent");
+        std::fs::create_dir_all(&agent).unwrap();
+        let old = Db::open(&agent.join("timeline.db")).unwrap();
         old.set_legacy_setting("wake_words", r#"["旧"]"#);
         drop(old);
-        let s = WorkspaceCtx::open_shared("s", &space, Default::default(), personal.global.clone()).unwrap();
+        let s = WorkspaceCtx::open_shared("s", &agent, Default::default(), personal.global.clone()).unwrap();
         assert_eq!(s.db.get_setting("wake_words").unwrap(), None);
     }
 
     #[test]
-    fn space_keys_are_rejected() {
+    fn agent_keys_are_rejected() {
         let d = tempfile::tempdir().unwrap();
         let g = GlobalStore::open(d.path());
         assert!(g.set_settings(&[("base_instructions", "x"), ("routing", "{}")]).is_err());
@@ -237,17 +237,17 @@ mod tests {
     }
 
     #[test]
-    fn space_db_values_are_ignored_and_all_spaces_share_one_file() {
+    fn agent_db_values_are_ignored_and_all_agents_share_one_file() {
         use crate::services::{workspace::WorkspaceCtx, wake};
         let d = tempfile::tempdir().unwrap();
         let global = std::sync::Arc::new(GlobalStore::open(d.path()));
         let a = WorkspaceCtx::open_shared("a", &d.path().join("a"), Default::default(), global.clone()).unwrap();
         let b = WorkspaceCtx::open_shared("b", &d.path().join("b"), Default::default(), global).unwrap();
-        // スペースのDBに古い値があっても、全体設定は読まない
+        // エージェントのDBに古い値があっても、全体設定は読まない
         a.db.set_legacy_setting(wake::WORDS_KEY, r#"["旧"]"#);
         a.db.set_legacy_setting(wake::ENABLED_KEY, "1");
         assert!(wake::load(&*a.global).unwrap().words.is_empty());
-        // どのスペースから保存しても、全スペースに同じ値が見える
+        // どのエージェントから保存しても、全エージェントに同じ値が見える
         wake::save(&*b.global, &wake::WakeConfig { enabled: true, words: vec!["やあ".into()] }).unwrap();
         assert_eq!(wake::load(&*a.global).unwrap().words, vec!["やあ".to_owned()]);
     }

@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 import { Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { AgentEvent } from "@/lib/api";
+import type { TaskEvent } from "@/lib/api";
 
 /** 1エントリに保持する出力の最大文字数。超えたら古い方を捨てる。 */
 const OUTPUT_MAX_CHARS = 20_000;
@@ -37,7 +37,7 @@ const TOOL_LABELS: Record<string, string> = {
   read_file: "読み取り",
   search_files: "検索",
   create_file: "作成",
-  space_list: "スペースの一覧",
+  agent_list: "エージェントの一覧",
   ledger_list: "台帳の参照",
   draft_dispatch: "配布の下書き",
   remember: "記憶",
@@ -49,7 +49,7 @@ const clock = (d: Date) => d.toLocaleTimeString("ja-JP", { hour12: false });
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
 /** エージェントの進捗イベントを実行ログへ反映する。ログに関係しないイベントはそのまま返す。 */
-export function applyAgentEvent(log: LogState, e: AgentEvent): LogState {
+export function applyTaskEvent(log: LogState, e: TaskEvent): LogState {
   if (e.type === "tool_call") {
     if (e.name === "propose_plan") {
       const steps = Array.isArray(e.input.steps) ? e.input.steps.filter((s): s is string => typeof s === "string") : [];

@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { useT } from "@/lib/i18n";
 import { PERSONAL_ID, copyWorkspaceSettings, errorMessage, type CopyReport } from "@/lib/api";
 import type { CopyRequest, CopyTarget } from "@/lib/copyTargets";
-import SpaceChip from "./SpaceChip";
+import AgentChip from "./AgentChip";
 
 type Props = {
   request: CopyRequest;
@@ -72,9 +72,9 @@ export default function CopyConfirmModal({ request, targets, onClose, onCopied }
         </h2>
         <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         <div className="mt-3 flex items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 font-medium">
-          <SpaceChip name={from.name} color={from.color} />
+          <AgentChip name={from.name} color={from.color} />
           <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
-          <SpaceChip name={to.name} color={to.color} />
+          <AgentChip name={to.name} color={to.color} />
         </div>
 
         <p className="mt-4 text-xs font-medium text-muted-foreground">{t("コピーするもの")}</p>
@@ -89,7 +89,7 @@ export default function CopyConfirmModal({ request, targets, onClose, onCopied }
         <p className="mt-1 text-xs text-muted-foreground">
           {t("ナレッジ・会話、ナレッジとデバッグログの保存先")}
           {request.includeKeys ? "" : t("、APIキー")}
-          {t("、全体設定(ベースプロンプト・パーソナルデータ・起動ワードなど。全スペース共通)、スペースデータ")}
+          {t("、全体設定(ベースプロンプト・パーソナルデータ・起動ワードなど。全エージェント共通)、エージェントデータ")}
           {request.includeDictionary ? "" : t("、読み上げ辞書")}
           {t("。")}
         </p>

@@ -28,10 +28,10 @@ pub fn now() -> String {
 }
 
 impl Db {
-    /// テスト用: パーソナル・スペースのDBとして開く。アプリは役割を決めて`open_as`で開く。
+    /// テスト用: パーソナル・エージェントのDBとして開く。アプリは役割を決めて`open_as`で開く。
     #[cfg(test)]
     pub fn open(path: &Path) -> Result<Self, AppError> {
-        Self::open_as(path, Role::Space)
+        Self::open_as(path, Role::Agent)
     }
 
     /// 役割を指定して開く(無ければ作る)。未適用のマイグレーションがあれば当てる。リーダーのDBだけが台帳を持つ。

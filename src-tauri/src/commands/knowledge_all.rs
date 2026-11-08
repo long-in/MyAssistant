@@ -1,6 +1,6 @@
-//! 全スペースのナレッジを、切り替えずに一覧・操作するコマンド。
+//! 全エージェントのナレッジを、切り替えずに一覧・操作するコマンド。
 //!
-//! 対象のスペースは`space_id`で指定する。パスは既存と同じく`services::knowledge`(サンドボックス経由)で解決する。
+//! 対象のエージェントは`agent_id`で指定する。パスは既存と同じく`services::knowledge`(サンドボックス経由)で解決する。
 use serde::Serialize;
 use tauri::State;
 
@@ -14,9 +14,9 @@ use crate::{
 };
 use std::path::PathBuf;
 
-/// 1スペース分のナレッジ。`error`があるときは一覧を取れなかった(ほかのスペースは影響を受けない)。
+/// 1エージェント分のナレッジ。`error`があるときは一覧を取れなかった(ほかのエージェントは影響を受けない)。
 #[derive(Debug, Serialize)]
-pub struct SpaceKnowledge {
+pub struct AgentKnowledge {
     pub id: String,
     pub name: String,
     /// イメージカラー(`#rrggbb`)。パーソナルは`None`。
@@ -28,14 +28,14 @@ pub struct SpaceKnowledge {
     pub error: Option<String>,
 }
 
-fn collect(ws: &Workspaces, ctx: &WorkspaceCtx, id: &str) -> SpaceKnowledge {
+fn collect(ws: &Workspaces, ctx: &WorkspaceCtx, id: &str) -> AgentKnowledge {
     let (name, color) = if id == PERSONAL_ID {
         ("Personal".to_owned(), None)
     } else {
         ws.label(id).map(|(n, c)| (n, Some(c))).unwrap_or_else(|| (id.to_owned(), None))
     };
     let root = batch::knowledge_root(ctx);
-    let mut out = SpaceKnowledge {
+    let mut out = AgentKnowledge {
         id: id.to_owned(),
         name,
         color,
@@ -61,9 +61,9 @@ fn collect(ws: &Workspaces, ctx: &WorkspaceCtx, id: &str) -> SpaceKnowledge {
     out
 }
 
-/// パーソナル・リーダー・全スペースのナレッジ。ワークが無効のあいだはパーソナルだけ。
+/// パーソナル・リーダー・全エージェントのナレッジ。ワークが無効のあいだはパーソナルだけ。
 #[tauri::command]
-pub fn list_all_knowledge(ws: State<'_, Workspaces>) -> Vec<SpaceKnowledge> {
+pub fn list_all_knowledge(ws: State<'_, Workspaces>) -> Vec<AgentKnowledge> {
     ws.batch_ids()
         .into_iter()
         .filter_map(|id| match ws.open_for_knowledge(&id) {
@@ -76,8 +76,8 @@ pub fn list_all_knowledge(ws: State<'_, Workspaces>) -> Vec<SpaceKnowledge> {
         .collect()
 }
 
-fn root_of(ws: &Workspaces, space_id: &str) -> Result<PathBuf, AppError> {
-    batch::knowledge_root(&*ws.open_for_knowledge(space_id)?)
+fn root_of(ws: &Workspaces, agent_id: &str) -> Result<PathBuf, AppError> {
+    batch::knowledge_root(&*ws.open_for_knowledge(agent_id)?)
 }
 
 fn now() -> String {
@@ -86,42 +86,42 @@ fn now() -> String {
 
 /// Markdownはノートとして、それ以外は閲覧専用の本文として読む。
 #[tauri::command]
-pub fn read_knowledge_in(ws: State<'_, Workspaces>, space_id: String, path: String) -> Result<String, AppError> {
-    let root = root_of(&ws, &space_id)?;
+pub fn read_knowledge_in(ws: State<'_, Workspaces>, agent_id: String, path: String) -> Result<String, AppError> {
+    let root = root_of(&ws, &agent_id)?;
     if path.ends_with(".md") { knowledge::read(&root, &path) } else { knowledge::read_other(&root, &path) }
 }
 
 #[tauri::command]
-pub fn write_knowledge_in(ws: State<'_, Workspaces>, space_id: String, path: String, content: String) -> Result<(), AppError> {
-    knowledge::write(&root_of(&ws, &space_id)?, &path, &content)
+pub fn write_knowledge_in(ws: State<'_, Workspaces>, agent_id: String, path: String, content: String) -> Result<(), AppError> {
+    knowledge::write(&root_of(&ws, &agent_id)?, &path, &content)
 }
 
 #[tauri::command]
-pub fn create_knowledge_file_in(ws: State<'_, Workspaces>, space_id: String, path: String) -> Result<String, AppError> {
-    knowledge::create_file(&root_of(&ws, &space_id)?, &path, &now())
+pub fn create_knowledge_file_in(ws: State<'_, Workspaces>, agent_id: String, path: String) -> Result<String, AppError> {
+    knowledge::create_file(&root_of(&ws, &agent_id)?, &path, &now())
 }
 
 #[tauri::command]
-pub fn create_knowledge_dir_in(ws: State<'_, Workspaces>, space_id: String, path: String) -> Result<(), AppError> {
-    knowledge::create_dir(&root_of(&ws, &space_id)?, &path)
+pub fn create_knowledge_dir_in(ws: State<'_, Workspaces>, agent_id: String, path: String) -> Result<(), AppError> {
+    knowledge::create_dir(&root_of(&ws, &agent_id)?, &path)
 }
 
 #[tauri::command]
-pub fn rename_knowledge_in(ws: State<'_, Workspaces>, space_id: String, from: String, to: String) -> Result<(), AppError> {
-    knowledge::rename(&root_of(&ws, &space_id)?, &from, &to)
+pub fn rename_knowledge_in(ws: State<'_, Workspaces>, agent_id: String, from: String, to: String) -> Result<(), AppError> {
+    knowledge::rename(&root_of(&ws, &agent_id)?, &from, &to)
 }
 
 /// ファイル、またはフォルダ(中身ごと)を削除する。確認は呼び出し側で行うこと。
 #[tauri::command]
-pub fn delete_knowledge_in(ws: State<'_, Workspaces>, space_id: String, path: String) -> Result<(), AppError> {
-    knowledge::delete(&root_of(&ws, &space_id)?, &path)
+pub fn delete_knowledge_in(ws: State<'_, Workspaces>, agent_id: String, path: String) -> Result<(), AppError> {
+    knowledge::delete(&root_of(&ws, &agent_id)?, &path)
 }
 
-/// Finderで開く。`path`があればそのファイル(フォルダ)を選択した状態で、なければスペースのナレッジフォルダを開く。
+/// Finderで開く。`path`があればそのファイル(フォルダ)を選択した状態で、なければエージェントのナレッジフォルダを開く。
 /// パスはサンドボックスで解決したものだけを渡す。
 #[tauri::command]
-pub fn reveal_knowledge_in_finder(ws: State<'_, Workspaces>, space_id: String, path: Option<String>) -> Result<(), AppError> {
-    let root = root_of(&ws, &space_id)?;
+pub fn reveal_knowledge_in_finder(ws: State<'_, Workspaces>, agent_id: String, path: Option<String>) -> Result<(), AppError> {
+    let root = root_of(&ws, &agent_id)?;
     let mut cmd = std::process::Command::new("/usr/bin/open");
     match path.as_deref().filter(|p| !p.is_empty()) {
         Some(rel) => cmd.arg("-R").arg(path::resolve_existing(&root, rel)?),

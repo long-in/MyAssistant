@@ -1,8 +1,8 @@
-//! ワークスペース(パーソナル / ワークのスペース)ごとの実行コンテキストと、スペースの管理。
+//! ワークスペース(パーソナル / ワークのエージェント)ごとの実行コンテキストと、エージェントの管理。
 //!
 //! DB・APIキー・AWS の一時状態をワークスペースごとに分け、混線させない。
-//! パーソナルは従来どおりアプリデータ直下、スペースは`<アプリデータ>/workspaces/<id>/`に置く。
-//! スペース一覧(名称・イメージカラー)は`workspaces/registry.json`に保持する。
+//! パーソナルは従来どおりアプリデータ直下、エージェントは`<アプリデータ>/workspaces/<id>/`に置く。
+//! エージェント一覧(名称・イメージカラー)は`workspaces/registry.json`に保持する。
 use std::{
     collections::HashMap,
     ops::Deref,
@@ -20,7 +20,7 @@ use tauri::{
 };
 
 use super::{
-    agent_run::{AgentState, RunStatus}, aws::AwsState, batch, batch::BatchGuard, debug_log, debug_log::DebugLog, global_settings::{GlobalStore, SettingsStore}, secrets::Secrets,
+    task_run::{TaskState, RunStatus}, aws::AwsState, batch, batch::BatchGuard, debug_log, debug_log::DebugLog, global_settings::{GlobalStore, SettingsStore}, secrets::Secrets,
 };
 use crate::{
     db::{Db, Role},
@@ -29,20 +29,20 @@ use crate::{
 
 /// パーソナルワークスペースのID。保存先は従来どおりアプリデータ直下。
 pub const PERSONAL_ID: &str = "personal";
-/// リーダー(各スペースのタスク進捗を管理する特別なスペース)のID。スペースの一覧・上限・色には含めない。
+/// リーダー(各エージェントのタスク進捗を管理する特別なエージェント)のID。エージェントの一覧・上限・色には含めない。
 /// ワークの有効/無効(`1` / `0`)を全体設定に保存するキー。全体設定のバックアップや設定のコピーの対象には入れない。
 pub const WORK_ENABLED_KEY: &str = "work_enabled";
 pub const LEADER_ID: &str = "leader";
-/// リーダーの表示名とイメージカラー(固定。スペースの色パレットとは別)。
+/// リーダーの表示名とイメージカラー(固定。エージェントの色パレットとは別)。
 pub const LEADER_NAME: &str = "Leader";
 pub const LEADER_COLOR: &str = "#f59e0b";
-/// 作れるスペースの上限。
-pub const MAX_SPACES: usize = 30;
-/// スペース名の最大文字数。
+/// 作れるエージェントの上限。
+pub const MAX_AGENTS: usize = 30;
+/// エージェント名の最大文字数。
 pub const NAME_MAX_CHARS: usize = 40;
-/// スペースに選べるイメージカラー(`#rrggbb`)。上限(`MAX_SPACES`)と同数で、スペース同士で重複させない。
+/// エージェントに選べるイメージカラー(`#rrggbb`)。上限(`MAX_AGENTS`)と同数で、エージェント同士で重複させない。
 /// 色相をずらした明るい15色と暗い15色(明るさの違いと色相差で見分けやすくする)。
-pub const PALETTE: [&str; MAX_SPACES] = [
+pub const PALETTE: [&str; MAX_AGENTS] = [
     "#e61919", "#e66b19", "#e6bd19", "#bde619", "#6be619", "#19e619", "#19e66b", "#19e6bd", "#19bde6", "#196be6",
     "#1919e6", "#6b19e6", "#bd19e6", "#e619bd", "#e6196b", "#a5381d", "#a56e1d", "#a5a51d", "#6ea51d", "#38a51d",
     "#1da538", "#1da56e", "#1da5a5", "#1d6ea5", "#1d38a5", "#381da5", "#6e1da5", "#a51da5", "#a51d6e", "#a51d38",
@@ -64,7 +64,7 @@ pub struct WorkspaceCtx {
     pub db: Db,
     pub secrets: Secrets,
     pub debug: DebugLog,
-    /// 全スペース共通の全体設定。どのワークスペースも同じファイルを読み、スペースからは上書きできない。
+    /// 全エージェント共通の全体設定。どのワークスペースも同じファイルを読み、エージェントからは上書きできない。
     pub global: Arc<GlobalStore>,
     /// 同じワークスペースを別々に開いた複数の`WorkspaceCtx`の間で共有する状態。
     pub shared: Arc<Shared>,
@@ -78,10 +78,10 @@ pub struct Shared {
     pub batch: BatchGuard,
     /// 会話の合間の記憶の更新(待ち・多重実行の防止)。
     pub memory: super::memory::MemoryState,
-    /// 削除された(または削除中の)スペースの印。裏で動く処理は、書き込む前にこれを確かめて止まる。
+    /// 削除された(または削除中の)エージェントの印。裏で動く処理は、書き込む前にこれを確かめて止まる。
     deleted: AtomicBool,
     /// 作業の依頼の実行状態(承認待ち・中断・進捗の記録)。切り替えても止めず、戻ったときに続きから再開する。
-    pub agent: AgentState,
+    pub task: TaskState,
     /// AWSの一時クレデンシャルとMFA入力待ち。バッチのために一時的に開いたものが待っているMFAにも、IDから答えられるようにする。
     pub aws: AwsState,
 }
@@ -97,7 +97,7 @@ impl WorkspaceCtx {
     /// リーダーのDBだけが台帳を持つ。全体設定の取り込みが済んでいれば、DBに残る全体設定の古い値を消す。
     pub fn open_shared(id: &str, dir: &Path, shared: Arc<Shared>, global: Arc<GlobalStore>) -> Result<Self, AppError> {
         std::fs::create_dir_all(dir).map_err(|e| AppError::Io(e.to_string()))?;
-        let role = if id == LEADER_ID { Role::Leader } else { Role::Space };
+        let role = if id == LEADER_ID { Role::Leader } else { Role::Agent };
         let db = Db::open_as(&dir.join(DB_FILE), role)?;
         if let Err(e) = global.purge_legacy(&db) {
             log::warn!("legacy global settings not purged for {id}: {e}");
@@ -113,15 +113,15 @@ impl WorkspaceCtx {
         })
     }
 
-    /// 削除されていないことを確かめる。バッチや会話が、削除済みのスペースへ書き込まないようにする。
+    /// 削除されていないことを確かめる。バッチや会話が、削除済みのエージェントへ書き込まないようにする。
     pub fn ensure_alive(&self) -> Result<(), AppError> {
-        if self.shared.deleted.load(Ordering::SeqCst) { Err(AppError::SpaceNotFound) } else { Ok(()) }
+        if self.shared.deleted.load(Ordering::SeqCst) { Err(AppError::AgentNotFound) } else { Ok(()) }
     }
 }
 
-/// ワークスペース内の1スペース(独立したエージェント)。
+/// ワークスペース内の1エージェント(ワーキングエージェント)。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Space {
+pub struct Agent {
     pub id: String,
     pub name: String,
     /// イメージカラー(`#rrggbb`)。
@@ -129,14 +129,14 @@ pub struct Space {
     pub created_at: String,
 }
 
-/// 現在選択中のワークスペース。`space`は個人のとき`None`。
+/// 現在選択中のワークスペース。`agent`は個人のとき`None`。
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ActiveWorkspace {
     pub id: String,
-    pub space: Option<Space>,
+    pub agent: Option<Agent>,
 }
 
-/// スペース名にできない名称(切り替えやバッジで、パーソナル・ワークと紛らわしくなるもの)。大文字小文字・前後の空白は無視して比べる。
+/// エージェント名にできない名称(切り替えやバッジで、パーソナル・ワークと紛らわしくなるもの)。大文字小文字・前後の空白は無視して比べる。
 const RESERVED_NAMES: [&str; 6] = ["パーソナル", "ワーク", "リーダー", "personal", "work", "leader"];
 
 /// 名称を整える。前後の空白を除き、1〜`NAME_MAX_CHARS`文字で、制御文字を含まず、予約名でないこと。
@@ -144,7 +144,7 @@ fn clean_name(name: &str) -> Result<String, AppError> {
     let name = name.trim();
     let chars = name.chars().count();
     if chars == 0 || chars > NAME_MAX_CHARS || name.chars().any(char::is_control) {
-        return Err(AppError::InvalidSpace("name".into()));
+        return Err(AppError::InvalidAgent("name".into()));
     }
     if RESERVED_NAMES.contains(&name.to_lowercase().as_str()) {
         return Err(AppError::ReservedName);
@@ -156,15 +156,15 @@ fn clean_name(name: &str) -> Result<String, AppError> {
 fn clean_color(color: &str) -> Result<String, AppError> {
     let c = color.trim().to_ascii_lowercase();
     if !PALETTE.contains(&c.as_str()) {
-        return Err(AppError::InvalidSpace("color".into()));
+        return Err(AppError::InvalidAgent("color".into()));
     }
     Ok(c)
 }
 
-/// `name`と`color`を、`except`以外のスペースがすでに使っていれば拒否する。
+/// `name`と`color`を、`except`以外のエージェントがすでに使っていれば拒否する。
 /// 名称は大文字小文字を区別せず比較する(`name`は整形済みであること)。
-fn ensure_unique(spaces: &[Space], name: &str, color: &str, except: Option<&str>) -> Result<(), AppError> {
-    let others = || spaces.iter().filter(|p| Some(p.id.as_str()) != except);
+fn ensure_unique(agents: &[Agent], name: &str, color: &str, except: Option<&str>) -> Result<(), AppError> {
+    let others = || agents.iter().filter(|p| Some(p.id.as_str()) != except);
     if others().any(|p| p.name.to_lowercase() == name.to_lowercase()) {
         return Err(AppError::NameInUse);
     }
@@ -174,34 +174,34 @@ fn ensure_unique(spaces: &[Space], name: &str, color: &str, except: Option<&str>
     Ok(())
 }
 
-/// 読み込み済みのワークスペースと、現在選択中のID、スペース一覧。
+/// 読み込み済みのワークスペースと、現在選択中のID、エージェント一覧。
 pub struct Workspaces {
     /// アプリデータディレクトリ(パーソナルの保存先でもある)。
     root: PathBuf,
-    /// 全体設定。パーソナルが開いたものを、すべてのスペースで共有する。
+    /// 全体設定。パーソナルが開いたものを、すべてのエージェントで共有する。
     global: Arc<GlobalStore>,
     /// 一覧・読み込み・選択・保存先の変更を1つずつ行うための外側のロック。
     /// 削除と切り替え・読み込みが交差して、存在しないワークスペースを選んだり、削除済みを開き直したりしないようにする。
     op: Mutex<()>,
     loaded: RwLock<HashMap<String, Arc<WorkspaceCtx>>>,
-    /// ワークスペースIDごとの共有状態(読み込んでいないスペースの分も、一時的に開くときのために持つ)。
+    /// ワークスペースIDごとの共有状態(読み込んでいないエージェントの分も、一時的に開くときのために持つ)。
     shared: Mutex<HashMap<String, Arc<Shared>>>,
     active: RwLock<String>,
-    spaces: Mutex<Vec<Space>>,
-    /// リーダー。作るまでは`None`。選択(`active`)の対象にはならず、`spaces`にも入らない。
+    agents: Mutex<Vec<Agent>>,
+    /// リーダー。作るまでは`None`。選択(`active`)の対象にはならず、`agents`にも入らない。
     leader: RwLock<Option<Arc<WorkspaceCtx>>>,
 }
 
 impl Workspaces {
-    /// アプリデータディレクトリ。全スペース共通のファイルの置き場所。
+    /// アプリデータディレクトリ。全エージェント共通のファイルの置き場所。
     pub fn root(&self) -> &Path {
         &self.root
     }
 
-    /// パーソナルを選択した状態で始め、保存済みのスペース一覧を読む。
-    /// 一覧が壊れていたら`.corrupt`へ退避して空から始める(スペースのフォルダは残す)。
+    /// パーソナルを選択した状態で始め、保存済みのエージェント一覧を読む。
+    /// 一覧が壊れていたら`.corrupt`へ退避して空から始める(エージェントのフォルダは残す)。
     pub fn new(root: &Path, personal: WorkspaceCtx) -> Self {
-        let spaces = load_registry(root);
+        let agents = load_registry(root);
         let id = personal.id.clone();
         let global = personal.global.clone();
         // リーダーは、作成済み(フォルダがある)なら開く。開けなければ警告して、未作成として扱う
@@ -212,7 +212,7 @@ impl Workspaces {
             .then(|| WorkspaceCtx::open_shared(LEADER_ID, &leader_dir, Arc::new(Shared::default()), global.clone()))
             .and_then(|r| r.map_err(|e| log::warn!("leader not opened: {e}")).ok())
             .map(Arc::new);
-        // リーダーは、選択できるよう、読み込み済み・共有状態の一覧にも入れる(`spaces`には入れない)
+        // リーダーは、選択できるよう、読み込み済み・共有状態の一覧にも入れる(`agents`には入れない)
         let mut shared = HashMap::from([(id.clone(), personal.shared.clone())]);
         let mut loaded = HashMap::from([(id.clone(), Arc::new(personal))]);
         if let Some(l) = &leader {
@@ -230,7 +230,7 @@ impl Workspaces {
             shared: Mutex::new(shared),
             loaded: RwLock::new(loaded),
             active: RwLock::new(id),
-            spaces: Mutex::new(spaces),
+            agents: Mutex::new(agents),
         }
     }
 
@@ -238,20 +238,20 @@ impl Workspaces {
         self.op.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    fn spaces(&self) -> std::sync::MutexGuard<'_, Vec<Space>> {
-        self.spaces.lock().unwrap_or_else(|p| p.into_inner())
+    fn agents(&self) -> std::sync::MutexGuard<'_, Vec<Agent>> {
+        self.agents.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    fn space_dir(&self, id: &str) -> PathBuf {
+    fn agent_dir(&self, id: &str) -> PathBuf {
         self.root.join(DIR_NAME).join(id)
     }
 
-    /// スペースまたはリーダーの表示用の名称とイメージカラー。パーソナルや一覧に無いIDは`None`。
+    /// エージェントまたはリーダーの表示用の名称とイメージカラー。パーソナルや一覧に無いIDは`None`。
     pub fn label(&self, id: &str) -> Option<(String, String)> {
         if id == LEADER_ID {
             return self.leader().map(|_| (LEADER_NAME.to_owned(), LEADER_COLOR.to_owned()));
         }
-        self.spaces().iter().find(|s| s.id == id).map(|s| (s.name.clone(), s.color.clone()))
+        self.agents().iter().find(|s| s.id == id).map(|s| (s.name.clone(), s.color.clone()))
     }
 
     /// リーダー。作成前は`None`。
@@ -260,7 +260,7 @@ impl Workspaces {
     }
 
     /// ワークが有効か。全体設定に`0`と保存されているときだけ無効(未保存は有効)。
-    /// 無効のあいだも、リーダー・スペースのデータはディスクに残る。選択・配布・バックグラウンド処理の入口だけを閉じる。
+    /// 無効のあいだも、リーダー・エージェントのデータはディスクに残る。選択・配布・バックグラウンド処理の入口だけを閉じる。
     pub fn work_enabled(&self) -> bool {
         self.global.get_setting(WORK_ENABLED_KEY).ok().flatten().as_deref() != Some("0")
     }
@@ -275,7 +275,7 @@ impl Workspaces {
         let mut moved = false;
         if !enabled {
             let busy = |id: &str| matches!(self.run_status(id), RunStatus::Running | RunStatus::AwaitingApproval);
-            if busy(LEADER_ID) || self.spaces().iter().any(|p| busy(&p.id)) {
+            if busy(LEADER_ID) || self.agents().iter().any(|p| busy(&p.id)) {
                 return Err(AppError::WorkBusy);
             }
             let mut active = self.active.write().unwrap_or_else(|p| p.into_inner());
@@ -288,7 +288,7 @@ impl Workspaces {
         Ok(moved)
     }
 
-    /// リーダーがあり、ワークが有効であることを確かめる(スペースを作る前の条件)。
+    /// リーダーがあり、ワークが有効であることを確かめる(エージェントを作る前の条件)。
     pub fn ensure_leader(&self) -> Result<Arc<WorkspaceCtx>, AppError> {
         let leader = self.leader().ok_or(AppError::LeaderRequired)?;
         if !self.work_enabled() {
@@ -319,13 +319,13 @@ impl Workspaces {
     /// 開いている(読み込み済みの)ワークスペースの依頼の状態。一度も開いていなければ`Idle`。開かず、中身も読まない。
     pub fn run_status(&self, id: &str) -> RunStatus {
         let shared = self.shared.lock().unwrap_or_else(|p| p.into_inner()).get(id).cloned();
-        shared.map_or(RunStatus::Idle, |s| s.agent.status())
+        shared.map_or(RunStatus::Idle, |s| s.task.status())
     }
 
     /// ワークスペースの直近の依頼のセッションID(無ければ空)。
     pub fn run_session(&self, id: &str) -> String {
         let shared = self.shared.lock().unwrap_or_else(|p| p.into_inner()).get(id).cloned();
-        shared.map(|s| s.agent.session_id()).unwrap_or_default()
+        shared.map(|s| s.task.session_id()).unwrap_or_default()
     }
 
     fn personal(&self) -> Arc<WorkspaceCtx> {
@@ -340,8 +340,8 @@ impl Workspaces {
 
     pub fn active_info(&self) -> ActiveWorkspace {
         let id = self.active().id.clone();
-        let space = self.spaces().iter().find(|p| p.id == id).cloned();
-        ActiveWorkspace { id, space }
+        let agent = self.agents().iter().find(|p| p.id == id).cloned();
+        ActiveWorkspace { id, agent }
     }
 
     pub fn get(&self, id: &str) -> Option<Arc<WorkspaceCtx>> {
@@ -358,20 +358,20 @@ impl Workspaces {
         self.shared.lock().unwrap_or_else(|p| p.into_inner()).entry(id.to_owned()).or_default().clone()
     }
 
-    /// バックグラウンド処理の対象になるワークスペースのID(パーソナル・リーダー・すべてのスペース)。開かずに返す。
+    /// バックグラウンド処理の対象になるワークスペースのID(パーソナル・リーダー・すべてのエージェント)。開かずに返す。
     pub fn batch_ids(&self) -> Vec<String> {
         let _op = self.op();
         self.ids_locked()
     }
 
-    /// パーソナル・(あれば)リーダー・すべてのスペースのID。
+    /// パーソナル・(あれば)リーダー・すべてのエージェントのID。
     fn ids_locked(&self) -> Vec<String> {
         if !self.work_enabled() {
             return vec![PERSONAL_ID.to_owned()];
         }
         std::iter::once(PERSONAL_ID.to_owned())
             .chain(self.leader().map(|_| LEADER_ID.to_owned()))
-            .chain(self.spaces().iter().map(|p| p.id.clone()))
+            .chain(self.agents().iter().map(|p| p.id.clone()))
             .collect()
     }
 
@@ -381,18 +381,18 @@ impl Workspaces {
         if let Some(ctx) = self.get(id) {
             return Ok(ctx);
         }
-        if !self.spaces().iter().any(|p| p.id == id) {
-            return Err(AppError::SpaceNotFound);
+        if !self.agents().iter().any(|p| p.id == id) {
+            return Err(AppError::AgentNotFound);
         }
-        let ctx = Arc::new(WorkspaceCtx::open_shared(id, &self.space_dir(id), self.shared_for(id), self.global.clone())?);
+        let ctx = Arc::new(WorkspaceCtx::open_shared(id, &self.agent_dir(id), self.shared_for(id), self.global.clone())?);
         if let Err(e) = debug_log::refresh(&ctx) {
-            log::warn!("debug log init failed for space {id}: {e}");
+            log::warn!("debug log init failed for agent {id}: {e}");
         }
         Ok(ctx)
     }
 
     /// 切り替えずにナレッジを操作するために開く。パーソナルは常に、ほかはワークが有効なときだけ。
-    /// 未読み込みのスペースは一時的に開くだけで、読み込んだままにしない(終了時のバッチの対象を変えない)。
+    /// 未読み込みのエージェントは一時的に開くだけで、読み込んだままにしない(終了時のバッチの対象を変えない)。
     pub fn open_for_knowledge(&self, id: &str) -> Result<Arc<WorkspaceCtx>, AppError> {
         let _op = self.op();
         if id == PERSONAL_ID {
@@ -404,7 +404,7 @@ impl Workspaces {
         self.open_transient_locked(id)
     }
 
-    /// 整理バッチなど、選択していないワークスペースの処理のために開く。未読み込みのスペースは一時的に開くだけで、読み込んだままにしない。
+    /// 整理バッチなど、選択していないワークスペースの処理のために開く。未読み込みのエージェントは一時的に開くだけで、読み込んだままにしない。
     pub fn open_for_batch(&self, id: &str) -> Result<Arc<WorkspaceCtx>, AppError> {
         let _op = self.op();
         self.open_transient_locked(id)
@@ -420,24 +420,24 @@ impl Workspaces {
             .collect()
     }
 
-    /// スペースを(未読み込みなら)開く。一覧に無いIDは開かない。`op`を持った状態で呼ぶ。
+    /// エージェントを(未読み込みなら)開く。一覧に無いIDは開かない。`op`を持った状態で呼ぶ。
     fn load_locked(&self, id: &str) -> Result<Arc<WorkspaceCtx>, AppError> {
         if let Some(ctx) = self.get(id) {
             return Ok(ctx);
         }
-        if !self.spaces().iter().any(|p| p.id == id) {
-            return Err(AppError::SpaceNotFound);
+        if !self.agents().iter().any(|p| p.id == id) {
+            return Err(AppError::AgentNotFound);
         }
-        let ctx = Arc::new(WorkspaceCtx::open_shared(id, &self.space_dir(id), self.shared_for(id), self.global.clone())?);
+        let ctx = Arc::new(WorkspaceCtx::open_shared(id, &self.agent_dir(id), self.shared_for(id), self.global.clone())?);
         // デバッグログの出力先は、開いたときに決める(裏で動く処理も自分のワークスペースのログへ書く)
         if let Err(e) = debug_log::refresh(&ctx) {
-            log::warn!("debug log init failed for space {id}: {e}");
+            log::warn!("debug log init failed for agent {id}: {e}");
         }
         self.loaded.write().unwrap_or_else(|p| p.into_inner()).insert(id.to_owned(), ctx.clone());
         Ok(ctx)
     }
 
-    /// IDからワークスペースを得る(スペースは未読み込みなら開く)。一覧に無いIDは`SpaceNotFound`。
+    /// IDからワークスペースを得る(エージェントは未読み込みなら開く)。一覧に無いIDは`AgentNotFound`。
     pub fn resolve(&self, id: &str) -> Result<Arc<WorkspaceCtx>, AppError> {
         let _op = self.op();
         if id == PERSONAL_ID { Ok(self.personal()) } else { self.load_locked(id) }
@@ -478,65 +478,65 @@ impl Workspaces {
         save()
     }
 
-    pub fn list(&self) -> Vec<Space> {
-        self.spaces().clone()
+    pub fn list(&self) -> Vec<Agent> {
+        self.agents().clone()
     }
 
-    /// スペースを作る。名称・色を検証し、上限(`MAX_SPACES`)を超える場合は拒否する。
-    pub fn create(&self, name: &str, color: &str) -> Result<Space, AppError> {
+    /// エージェントを作る。名称・色を検証し、上限(`MAX_AGENTS`)を超える場合は拒否する。
+    pub fn create(&self, name: &str, color: &str) -> Result<Agent, AppError> {
         let (name, color) = (clean_name(name)?, clean_color(color)?);
         let _op = self.op();
-        let spaces = self.spaces();
-        if spaces.len() >= MAX_SPACES {
-            return Err(AppError::SpaceLimit);
+        let agents = self.agents();
+        if agents.len() >= MAX_AGENTS {
+            return Err(AppError::AgentLimit);
         }
-        ensure_unique(&spaces, &name, &color, None)?;
-        let space = Space {
+        ensure_unique(&agents, &name, &color, None)?;
+        let agent = Agent {
             id: uuid::Uuid::new_v4().to_string(),
             name,
             color,
             created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         };
-        // 既存のワークスペースが、新しいスペースのフォルダを含む場所を保存先にしていたら作らない
+        // 既存のワークスペースが、新しいエージェントのフォルダを含む場所を保存先にしていたら作らない
         // (古い設定でアプリデータ全体を保存先にしている場合など。そのままではキーやDBがナレッジから見えてしまう)
-        let dir = canonical_lenient(&self.space_dir(&space.id));
-        drop(spaces);
+        let dir = canonical_lenient(&self.agent_dir(&agent.id));
+        drop(agents);
         for other in self.all_for_check_locked() {
             if claimed_paths(&other).iter().any(|c| overlaps(&dir, &canonical_lenient(c))) {
                 return Err(AppError::PathInUse);
             }
         }
-        let mut spaces = self.spaces();
+        let mut agents = self.agents();
         // 先にフォルダとDBを作れることを確かめてから一覧へ載せる
-        let ctx = Arc::new(WorkspaceCtx::open_shared(&space.id, &self.space_dir(&space.id), self.shared_for(&space.id), self.global.clone())?);
-        let mut next = spaces.clone();
-        next.push(space.clone());
+        let ctx = Arc::new(WorkspaceCtx::open_shared(&agent.id, &self.agent_dir(&agent.id), self.shared_for(&agent.id), self.global.clone())?);
+        let mut next = agents.clone();
+        next.push(agent.clone());
         save_registry(&self.root, &next)?;
-        *spaces = next;
+        *agents = next;
         if let Err(e) = debug_log::refresh(&ctx) {
-            log::warn!("debug log init failed for space {}: {e}", space.id);
+            log::warn!("debug log init failed for agent {}: {e}", agent.id);
         }
-        self.loaded.write().unwrap_or_else(|p| p.into_inner()).insert(space.id.clone(), ctx);
-        Ok(space)
+        self.loaded.write().unwrap_or_else(|p| p.into_inner()).insert(agent.id.clone(), ctx);
+        Ok(agent)
     }
 
     /// 名称とイメージカラーを変える。
-    pub fn update(&self, id: &str, name: &str, color: &str) -> Result<Space, AppError> {
+    pub fn update(&self, id: &str, name: &str, color: &str) -> Result<Agent, AppError> {
         let (name, color) = (clean_name(name)?, clean_color(color)?);
         let _op = self.op();
-        let mut spaces = self.spaces();
-        ensure_unique(&spaces, &name, &color, Some(id))?;
-        let mut next = spaces.clone();
-        let target = next.iter_mut().find(|p| p.id == id).ok_or(AppError::SpaceNotFound)?;
+        let mut agents = self.agents();
+        ensure_unique(&agents, &name, &color, Some(id))?;
+        let mut next = agents.clone();
+        let target = next.iter_mut().find(|p| p.id == id).ok_or(AppError::AgentNotFound)?;
         target.name = name;
         target.color = color;
         let updated = target.clone();
         save_registry(&self.root, &next)?;
-        *spaces = next;
+        *agents = next;
         Ok(updated)
     }
 
-    /// スペースを選択する。`PERSONAL_ID`でパーソナルへ戻る。
+    /// エージェントを選択する。`PERSONAL_ID`でパーソナルへ戻る。
     pub fn switch(&self, id: &str) -> Result<ActiveWorkspace, AppError> {
         let _op = self.op();
         if id != PERSONAL_ID {
@@ -550,27 +550,27 @@ impl Workspaces {
         Ok(self.active_info())
     }
 
-    /// スペースを一覧とディスクから削除する。選択中ならパーソナルへ戻す。元に戻せない。
+    /// エージェントを一覧とディスクから削除する。選択中ならパーソナルへ戻す。元に戻せない。
     /// `delete_knowledge`が偽なら、既定の場所のナレッジ(とデバッグログ)を、削除前に`kept-knowledge/`へ移して残す。
     /// 選択中を切り戻したかと、残した場所を返す。裏で動いている処理には削除の印(`ensure_alive`)が付き、書き込む前に止まる。
     /// アプリが管理するフォルダ(`workspaces/<id>/`)だけを消す。利用者が指定したナレッジの保存先は消さない。
     pub fn delete(&self, id: &str, delete_knowledge: bool) -> Result<Deleted, AppError> {
         let _op = self.op();
-        let mut spaces = self.spaces();
-        let Some(space) = spaces.iter().find(|p| p.id == id).cloned() else {
-            return Err(AppError::SpaceNotFound);
+        let mut agents = self.agents();
+        let Some(agent) = agents.iter().find(|p| p.id == id).cloned() else {
+            return Err(AppError::AgentNotFound);
         };
         // ナレッジを残すときは、消す前に移す。移せなければ何も消さずに失敗する
-        let kept = if delete_knowledge { None } else { self.keep_knowledge(&space)? };
-        let next: Vec<Space> = spaces.iter().filter(|p| p.id != id).cloned().collect();
+        let kept = if delete_knowledge { None } else { self.keep_knowledge(&agent)? };
+        let next: Vec<Agent> = agents.iter().filter(|p| p.id != id).cloned().collect();
         if let Err(e) = save_registry(&self.root, &next) {
             if let Some((from, to)) = &kept {
                 let _ = std::fs::rename(to, from); // 一覧が変わらないので、ナレッジも元の場所へ戻す
             }
             return Err(e);
         }
-        *spaces = next;
-        drop(spaces);
+        *agents = next;
+        drop(agents);
         let was_active = {
             let mut active = self.active.write().unwrap_or_else(|p| p.into_inner());
             let was = *active == id;
@@ -583,28 +583,28 @@ impl Workspaces {
         if let Some(shared) = self.shared.lock().unwrap_or_else(|p| p.into_inner()).remove(id) {
             shared.deleted.store(true, Ordering::SeqCst);
             // 実行中の依頼は中断する(動いているコマンドも止まり、承認待ちは拒否になる)
-            shared.agent.abort();
+            shared.task.abort();
         }
         self.loaded.write().unwrap_or_else(|p| p.into_inner()).remove(id);
         // `id`は一覧にあったもの(生成したUUID)だけなので、`workspaces/`配下の1フォルダに限られる
-        if let Err(e) = std::fs::remove_dir_all(self.space_dir(id))
+        if let Err(e) = std::fs::remove_dir_all(self.agent_dir(id))
             && e.kind() != std::io::ErrorKind::NotFound
         {
-            log::warn!("space dir not removed: {e}");
+            log::warn!("agent dir not removed: {e}");
         }
         Ok(Deleted { was_active, kept_knowledge: kept.map(|(_, to)| to.to_string_lossy().into_owned()) })
     }
 
     /// 既定の場所のナレッジを`kept-knowledge/<名称>-<ID先頭>/`へ移す。無ければ`None`。移す前と後の場所を返す。
-    fn keep_knowledge(&self, space: &Space) -> Result<Option<(PathBuf, PathBuf)>, AppError> {
-        let from = self.space_dir(&space.id).join("knowledge");
+    fn keep_knowledge(&self, agent: &Agent) -> Result<Option<(PathBuf, PathBuf)>, AppError> {
+        let from = self.agent_dir(&agent.id).join("knowledge");
         if !from.is_dir() {
             return Ok(None);
         }
         let parent = self.root.join(KEPT_DIR_NAME);
         std::fs::create_dir_all(&parent).map_err(|e| AppError::Io(e.to_string()))?;
-        let id8: String = space.id.chars().take(8).collect();
-        let to = parent.join(format!("{}-{id8}", folder_name(&space.name)));
+        let id8: String = agent.id.chars().take(8).collect();
+        let to = parent.join(format!("{}-{id8}", folder_name(&agent.name)));
         if to.exists() {
             return Err(AppError::PathInUse);
         }
@@ -613,10 +613,10 @@ impl Workspaces {
     }
 }
 
-/// スペースの削除の結果。
+/// エージェントの削除の結果。
 #[derive(Debug)]
 pub struct Deleted {
-    /// 選択中のスペースを削除して、パーソナルへ戻ったか。
+    /// 選択中のエージェントを削除して、パーソナルへ戻ったか。
     pub was_active: bool,
     /// 残したナレッジの場所(残さなかった、または、既定の場所にナレッジが無いときは`None`)。
     pub kept_knowledge: Option<String>,
@@ -629,7 +629,7 @@ fn folder_name(name: &str) -> String {
         .map(|c| if c.is_control() || "/\\:*?\"<>|".contains(c) { '_' } else { c })
         .collect();
     let s = s.trim_matches(|c: char| c.is_whitespace() || c == '.');
-    if s.is_empty() { "space".to_owned() } else { s.to_owned() }
+    if s.is_empty() { "agent".to_owned() } else { s.to_owned() }
 }
 
 /// そのワークスペースが使う(または、既定に戻すと使う)ナレッジとデバッグログの場所。
@@ -672,7 +672,7 @@ fn registry_path(root: &Path) -> PathBuf {
     root.join(DIR_NAME).join(REGISTRY_FILE)
 }
 
-fn load_registry(root: &Path) -> Vec<Space> {
+fn load_registry(root: &Path) -> Vec<Agent> {
     let path = registry_path(root);
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
@@ -682,7 +682,7 @@ fn load_registry(root: &Path) -> Vec<Space> {
             return Vec::new();
         }
     };
-    match serde_json::from_str::<Vec<Space>>(&text) {
+    match serde_json::from_str::<Vec<Agent>>(&text) {
         Ok(v) => v,
         Err(e) => {
             log::warn!("registry corrupt, moved aside: {e}");
@@ -693,12 +693,12 @@ fn load_registry(root: &Path) -> Vec<Space> {
 }
 
 /// 一時ファイルへ書いてからリネームし、書き込み途中の破損を避ける。
-fn save_registry(root: &Path, spaces: &[Space]) -> Result<(), AppError> {
+fn save_registry(root: &Path, agents: &[Agent]) -> Result<(), AppError> {
     let io = |e: std::io::Error| AppError::Io(e.to_string());
     let path = registry_path(root);
     std::fs::create_dir_all(root.join(DIR_NAME)).map_err(io)?;
     let tmp = path.with_extension("json.tmp");
-    let json = serde_json::to_string_pretty(spaces).map_err(|e| AppError::Io(e.to_string()))?;
+    let json = serde_json::to_string_pretty(agents).map_err(|e| AppError::Io(e.to_string()))?;
     std::fs::write(&tmp, json).map_err(io)?;
     std::fs::rename(&tmp, &path).map_err(io)
 }
@@ -743,13 +743,13 @@ mod tests {
         assert!(ws.work_enabled(), "未保存は有効");
         assert!(matches!(ws.set_work_enabled(false), Err(AppError::LeaderRequired)));
         ws.create_leader().unwrap();
-        let space = ws.create("A", PALETTE[0]).unwrap();
-        ws.switch(&space.id).unwrap();
+        let agent = ws.create("A", PALETTE[0]).unwrap();
+        ws.switch(&agent.id).unwrap();
         // 開いていたら、パーソナルへ戻る
         assert!(ws.set_work_enabled(false).unwrap());
         assert!(!ws.work_enabled());
         assert_eq!(ws.active().id, PERSONAL_ID);
-        assert!(matches!(ws.switch(&space.id), Err(AppError::WorkDisabled)));
+        assert!(matches!(ws.switch(&agent.id), Err(AppError::WorkDisabled)));
         assert!(matches!(ws.switch(LEADER_ID), Err(AppError::WorkDisabled)));
         assert!(matches!(ws.ensure_leader(), Err(AppError::WorkDisabled)));
         assert_eq!(ws.batch_ids(), vec![PERSONAL_ID.to_owned()]);
@@ -761,24 +761,24 @@ mod tests {
         assert_eq!(again.list().len(), 1);
         assert!(again.leader().is_some());
         assert!(!again.set_work_enabled(true).unwrap());
-        assert_eq!(again.switch(&space.id).unwrap().id, space.id);
+        assert_eq!(again.switch(&agent.id).unwrap().id, agent.id);
     }
 
     #[test]
-    fn leader_is_created_once_outside_the_space_list() {
+    fn leader_is_created_once_outside_the_agent_list() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
         assert!(matches!(ws.ensure_leader(), Err(AppError::LeaderRequired)));
         let leader = ws.create_leader().unwrap();
         assert_eq!(leader.id, LEADER_ID);
         assert!(matches!(ws.create_leader(), Err(AppError::LeaderExists)));
-        // スペースの一覧・上限・色には入らない
+        // エージェントの一覧・上限・色には入らない
         assert!(ws.list().is_empty());
         assert_eq!(ws.active().id, PERSONAL_ID);
         // 選択はできる。Ctxの元になる`active()`も、パーソナルに落ちずリーダーを返す
         assert_eq!(ws.switch(LEADER_ID).unwrap().id, LEADER_ID);
         assert_eq!(ws.active().id, LEADER_ID);
-        assert!(ws.active_info().space.is_none());
+        assert!(ws.active_info().agent.is_none());
         assert!(Arc::ptr_eq(&ws.resolve(LEADER_ID).unwrap(), &leader));
         assert_eq!(ws.run_status(LEADER_ID), RunStatus::Idle);
         assert_eq!(ws.label(LEADER_ID), Some((LEADER_NAME.into(), LEADER_COLOR.into())));
@@ -803,13 +803,13 @@ mod tests {
     }
 
     #[test]
-    fn run_status_reads_loaded_space_without_opening() {
+    fn run_status_reads_loaded_agent_without_opening() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
         let a = ws.create("A", PALETTE[0]).unwrap();
         assert_eq!(ws.run_status(&a.id), RunStatus::Idle);
         let ctx = ws.resolve(&a.id).unwrap();
-        assert!(ctx.shared.agent.try_begin_detached("s1", "x"));
+        assert!(ctx.shared.task.try_begin_detached("s1", "x"));
         assert_eq!((ws.run_status(&a.id), ws.run_session(&a.id).as_str()), (RunStatus::Running, "s1"));
         assert_eq!(ws.run_status("unknown"), RunStatus::Idle);
     }
@@ -836,10 +836,10 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
         for name in ["", "   ", "a\nb", &"あ".repeat(NAME_MAX_CHARS + 1)] {
-            assert!(matches!(ws.create(name, PALETTE[0]), Err(AppError::InvalidSpace(_))), "{name:?}");
+            assert!(matches!(ws.create(name, PALETTE[0]), Err(AppError::InvalidAgent(_))), "{name:?}");
         }
         for color in ["", "red", "#12345", "#1234567", "#12345g", "112233", "#000000", "#ffffff"] {
-            assert!(matches!(ws.create("x", color), Err(AppError::InvalidSpace(_))), "{color:?}");
+            assert!(matches!(ws.create("x", color), Err(AppError::InvalidAgent(_))), "{color:?}");
         }
         let p = ws.create("  営業  ", &PALETTE[0].to_uppercase()).unwrap();
         assert_eq!((p.name.as_str(), p.color.as_str()), ("営業", PALETTE[0]));
@@ -847,20 +847,20 @@ mod tests {
     }
 
     #[test]
-    fn enforces_space_limit() {
+    fn enforces_agent_limit() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
-        for i in 0..MAX_SPACES {
+        for i in 0..MAX_AGENTS {
             ws.create(&format!("p{i}"), PALETTE[i]).unwrap();
         }
-        assert!(matches!(ws.create("over", PALETTE[0]), Err(AppError::SpaceLimit)));
+        assert!(matches!(ws.create("over", PALETTE[0]), Err(AppError::AgentLimit)));
         let (first, first_color) = (ws.list()[0].id.clone(), ws.list()[0].color.clone());
         ws.delete(&first, true).unwrap();
         assert!(ws.create("again", &first_color).is_ok());
     }
 
     #[test]
-    fn registry_persists_and_spaces_reload_lazily() {
+    fn registry_persists_and_agents_reload_lazily() {
         let d = tempfile::tempdir().unwrap();
         let id = {
             let ws = workspaces(d.path());
@@ -873,15 +873,15 @@ mod tests {
         assert!(ws.get(&id).is_none(), "not loaded until needed");
         assert_eq!(ws.list()[0].name, "A2");
         let info = ws.switch(&id).unwrap();
-        assert_eq!(info.space.unwrap().color, PALETTE[2]);
+        assert_eq!(info.agent.unwrap().color, PALETTE[2]);
         assert_eq!(ws.active().db.get_setting("k").unwrap().as_deref(), Some("v"));
     }
 
     #[test]
-    fn switch_to_unknown_space_fails_and_keeps_active() {
+    fn switch_to_unknown_agent_fails_and_keeps_active() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
-        assert!(matches!(ws.switch("../etc"), Err(AppError::SpaceNotFound)));
+        assert!(matches!(ws.switch("../etc"), Err(AppError::AgentNotFound)));
         assert_eq!(ws.active_info().id, PERSONAL_ID);
     }
 
@@ -896,9 +896,9 @@ mod tests {
         assert_eq!(ws.active_info().id, PERSONAL_ID);
         assert!(!d.path().join(DIR_NAME).join(&p.id).exists());
         assert!(ws.list().is_empty());
-        assert!(matches!(ws.delete(&p.id, true), Err(AppError::SpaceNotFound)));
+        assert!(matches!(ws.delete(&p.id, true), Err(AppError::AgentNotFound)));
         // 一覧に無いIDでは何も消えない(パスの注入対策)
-        assert!(matches!(ws.delete("..", true), Err(AppError::SpaceNotFound)));
+        assert!(matches!(ws.delete("..", true), Err(AppError::AgentNotFound)));
         assert!(d.path().join("timeline.db").exists());
     }
 
@@ -911,7 +911,7 @@ mod tests {
         std::fs::create_dir_all(note.parent().unwrap()).unwrap();
         std::fs::write(&note, "keep me").unwrap();
         let r = ws.delete(&a.id, false).unwrap();
-        // スペースは消え、ナレッジはアプリデータ直下の別の場所に残る(名称の区切り文字は無害化される)
+        // エージェントは消え、ナレッジはアプリデータ直下の別の場所に残る(名称の区切り文字は無害化される)
         assert!(!d.path().join(DIR_NAME).join(&a.id).exists());
         let kept = std::path::PathBuf::from(r.kept_knowledge.unwrap());
         assert_eq!(kept.parent().unwrap(), d.path().join(KEPT_DIR_NAME));
@@ -962,19 +962,19 @@ mod tests {
     #[test]
     fn palette_has_30_distinct_valid_colors() {
         let set: std::collections::HashSet<_> = PALETTE.iter().collect();
-        assert_eq!((PALETTE.len(), set.len()), (MAX_SPACES, MAX_SPACES));
+        assert_eq!((PALETTE.len(), set.len()), (MAX_AGENTS, MAX_AGENTS));
         for c in PALETTE {
             assert!(c.len() == 7 && c.starts_with('#') && c[1..].bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()), "{c}");
         }
     }
 
     #[test]
-    fn colors_cannot_be_shared_between_spaces() {
+    fn colors_cannot_be_shared_between_agents() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
         let a = ws.create("A", PALETTE[0]).unwrap();
         let b = ws.create("B", PALETTE[1]).unwrap();
-        // 作成・更新とも、他のスペースの色は選べない(大文字でも同じ色として扱う)
+        // 作成・更新とも、他のエージェントの色は選べない(大文字でも同じ色として扱う)
         assert!(matches!(ws.create("C", PALETTE[0]), Err(AppError::ColorInUse)));
         assert!(matches!(ws.create("C", &PALETTE[0].to_uppercase()), Err(AppError::ColorInUse)));
         assert!(matches!(ws.update(&b.id, "B", PALETTE[0]), Err(AppError::ColorInUse)));
@@ -987,7 +987,7 @@ mod tests {
     }
 
     #[test]
-    fn names_cannot_be_shared_between_spaces() {
+    fn names_cannot_be_shared_between_agents() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
         let a = ws.create("Sales", PALETTE[0]).unwrap();
@@ -1034,7 +1034,7 @@ mod tests {
         // 関係のない場所と、自分自身の既定の場所は使える
         assert!(ws.ensure_paths_free(&b.id, free.path()).is_ok());
         assert!(ws.ensure_paths_free(&b.id, &d.path().join(DIR_NAME).join(&b.id).join("knowledge")).is_ok());
-        // パーソナルから見ても、スペースの場所は使えない
+        // パーソナルから見ても、エージェントの場所は使えない
         assert!(ws.ensure_paths_free(PERSONAL_ID, &a_default).is_err());
         assert!(ws.ensure_paths_free(PERSONAL_ID, free.path()).is_ok());
     }
@@ -1047,12 +1047,12 @@ mod tests {
         let a = ws.create("A", PALETTE[0]).unwrap();
         let leader_default = d.path().join(DIR_NAME).join(LEADER_ID).join("knowledge");
         let free = tempfile::tempdir().unwrap();
-        // スペースやパーソナルは、リーダーのナレッジの場所(その中・その親)を使えない
+        // エージェントやパーソナルは、リーダーのナレッジの場所(その中・その親)を使えない
         for bad in [leader_default.clone(), leader_default.join("sub"), d.path().join(DIR_NAME).join(LEADER_ID)] {
             assert!(matches!(ws.ensure_paths_free(&a.id, &bad), Err(AppError::PathInUse)), "{bad:?}");
             assert!(matches!(ws.ensure_paths_free(PERSONAL_ID, &bad), Err(AppError::PathInUse)), "{bad:?}");
         }
-        // リーダー自身は、自分の既定の場所へ戻せる。別の空いた場所も使える。スペースの場所は使えない
+        // リーダー自身は、自分の既定の場所へ戻せる。別の空いた場所も使える。エージェントの場所は使えない
         assert!(ws.ensure_paths_free(LEADER_ID, &leader_default).is_ok());
         assert!(ws.ensure_paths_free(LEADER_ID, free.path()).is_ok());
         assert!(ws.ensure_paths_free(LEADER_ID, &d.path().join(DIR_NAME).join(&a.id).join("knowledge")).is_err());
@@ -1088,25 +1088,25 @@ mod tests {
         let ws = workspaces(d.path());
         let p = ws.create("A", PALETTE[0]).unwrap();
         let personal = ws.get(PERSONAL_ID).unwrap();
-        let space = ws.get(&p.id).unwrap();
+        let agent = ws.get(&p.id).unwrap();
         // パーソナルだけデバッグモードを有効にする
         personal.db.set_setting(debug_log::ENABLED_KEY, "1").unwrap();
         debug_log::refresh(&personal).unwrap();
-        debug_log::refresh(&space).unwrap();
-        // スペースを選択している間も、パーソナルの裏の処理はパーソナルのログへ書く
+        debug_log::refresh(&agent).unwrap();
+        // エージェントを選択している間も、パーソナルの裏の処理はパーソナルのログへ書く
         ws.switch(&p.id).unwrap();
         debug_log::record(&personal, "api", serde_json::json!({ "from": "personal" }));
-        debug_log::record(&space, "api", serde_json::json!({ "from": "space" }));
+        debug_log::record(&agent, "api", serde_json::json!({ "from": "agent" }));
         let files = |c: &WorkspaceCtx| std::fs::read_dir(debug_log::log_dir(c).unwrap()).map(|r| r.count()).unwrap_or(0);
         assert_eq!(files(&personal), 1);
-        assert_eq!(files(&space), 0, "無効なワークスペースには書かない");
-        assert!(debug_log::enabled(&personal) && !debug_log::enabled(&space));
+        assert_eq!(files(&agent), 0, "無効なワークスペースには書かない");
+        assert!(debug_log::enabled(&personal) && !debug_log::enabled(&agent));
     }
 
     #[test]
     fn app_data_is_never_a_storage_location() {
         let d = tempfile::tempdir().unwrap();
-        let ws = workspaces(d.path()); // スペースが1件も無くても拒否する
+        let ws = workspaces(d.path()); // エージェントが1件も無くても拒否する
         for bad in [d.path().to_owned(), d.path().join(DIR_NAME), d.path().join(DIR_NAME).join("anything"), d.path().join("models")] {
             assert!(matches!(ws.ensure_paths_free(PERSONAL_ID, &bad), Err(AppError::PathInUse)), "{bad:?}");
         }
@@ -1121,7 +1121,7 @@ mod tests {
     }
 
     #[test]
-    fn creating_a_space_is_refused_when_an_existing_location_would_contain_it() {
+    fn creating_a_agent_is_refused_when_an_existing_location_would_contain_it() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
         // 古い設定で、パーソナルがアプリデータ全体をナレッジの保存先にしている
@@ -1148,7 +1148,7 @@ mod tests {
     }
 
     #[test]
-    fn deleted_spaces_are_marked_and_the_active_one_falls_back() {
+    fn deleted_agents_are_marked_and_the_active_one_falls_back() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
         let a = ws.create("A", PALETTE[0]).unwrap();
@@ -1157,11 +1157,11 @@ mod tests {
         ws.switch(&a.id).unwrap();
         assert!(held.ensure_alive().is_ok());
         assert!(ws.delete(&a.id, true).unwrap().was_active, "選択中だった");
-        assert!(matches!(held.ensure_alive(), Err(AppError::SpaceNotFound)), "裏の処理は削除に気づいて止まる");
+        assert!(matches!(held.ensure_alive(), Err(AppError::AgentNotFound)), "裏の処理は削除に気づいて止まる");
         assert_eq!(ws.active().id, PERSONAL_ID);
         assert!(!ws.delete(&b.id, true).unwrap().was_active, "選択中ではなかった");
         // 削除済みのIDは、選択も読み込みもできず、一覧から開き直されない
-        assert!(matches!(ws.switch(&a.id), Err(AppError::SpaceNotFound)));
+        assert!(matches!(ws.switch(&a.id), Err(AppError::AgentNotFound)));
         assert_eq!(ws.batch_ids(), vec![PERSONAL_ID.to_owned()]);
         assert!(!d.path().join(DIR_NAME).join(&a.id).exists());
     }
@@ -1194,7 +1194,7 @@ mod tests {
             });
             t1.join().unwrap();
             t2.join().unwrap();
-            // どの順序でも、削除済みのスペースが選択・読み込み・フォルダとして残らない
+            // どの順序でも、削除済みのエージェントが選択・読み込み・フォルダとして残らない
             assert!(ws.list().is_empty());
             assert_eq!(ws.active().id, PERSONAL_ID);
             assert!(ws.get(&p.id).is_none());
@@ -1203,10 +1203,10 @@ mod tests {
     }
 
     #[test]
-    fn background_work_opens_spaces_transiently_and_shares_state() {
+    fn background_work_opens_agents_transiently_and_shares_state() {
         let d = tempfile::tempdir().unwrap();
         let id = workspaces(d.path()).create("A", PALETTE[0]).unwrap().id;
-        let ws = workspaces(d.path()); // 再起動後: スペースは未読み込み
+        let ws = workspaces(d.path()); // 再起動後: エージェントは未読み込み
         assert_eq!(ws.batch_ids(), vec![PERSONAL_ID.to_owned(), id.clone()], "開かずに一覧を返す");
         assert!(ws.get(&id).is_none());
 
@@ -1214,7 +1214,7 @@ mod tests {
         let transient = ws.open_for_batch(&id).unwrap();
         transient.db.set_setting("k", "v").unwrap();
         assert!(ws.get(&id).is_none(), "開いたままにしない");
-        // 保存先の確認も、他のスペースを読み込んだままにしない
+        // 保存先の確認も、他のエージェントを読み込んだままにしない
         let free = tempfile::tempdir().unwrap();
         assert!(ws.ensure_paths_free(PERSONAL_ID, free.path()).is_ok());
         assert!(ws.get(&id).is_none());
@@ -1227,8 +1227,8 @@ mod tests {
 
         // 削除は、一時的に開かれたものにも伝わる
         ws.delete(&id, true).unwrap();
-        assert!(matches!(transient.ensure_alive(), Err(AppError::SpaceNotFound)));
-        assert!(matches!(ws.open_for_batch(&id), Err(AppError::SpaceNotFound)));
+        assert!(matches!(transient.ensure_alive(), Err(AppError::AgentNotFound)));
+        assert!(matches!(ws.open_for_batch(&id), Err(AppError::AgentNotFound)));
     }
 
     #[test]
@@ -1245,23 +1245,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deleting_a_space_aborts_its_running_request() {
+    async fn deleting_a_agent_aborts_its_running_request() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
         let p = ws.create("A", PALETTE[0]).unwrap();
         let shared = ws.get(&p.id).unwrap().shared.clone();
         let token = crate::services::cancel::CancelToken::default();
-        shared.agent.set_cancel(token.clone());
-        let rx = shared.agent.register_approval("t1");
+        shared.task.set_cancel(token.clone());
+        let rx = shared.task.register_approval("t1");
         ws.delete(&p.id, true).unwrap();
         token.cancelled().await; // 中断されている
         assert!(rx.await.is_err(), "承認待ちは拒否として終わる");
-        // 別のスペースの依頼には影響しない
+        // 別のエージェントの依頼には影響しない
         let q = ws.create("B", PALETTE[1]).unwrap();
         let other = ws.get(&q.id).unwrap().shared.clone();
-        let rx2 = other.agent.register_approval("t2");
+        let rx2 = other.task.register_approval("t2");
         ws.delete(&p.id, true).unwrap_err();
-        other.agent.answer("t2", true);
+        other.task.answer("t2", true);
         assert!(rx2.await.unwrap());
     }
 }

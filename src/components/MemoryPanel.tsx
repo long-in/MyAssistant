@@ -9,7 +9,7 @@ import { PaneHeader } from "@/components/GlobalPanels";
 import { useT } from "@/lib/i18n";
 import { MEMORY_PINNED_PATH, MEMORY_UNDERSTANDING_PATH, type MemoryView } from "@/lib/api";
 
-/** スペースの記憶(覚えておくこと・担当の理解)の表示。推定で覚えたものは、確定・削除できる。 */
+/** エージェントの記憶(覚えておくこと・担当の理解)の表示。推定で覚えたものは、確定・削除できる。 */
 export default function MemoryPanel({
   memory,
   onConfirm,

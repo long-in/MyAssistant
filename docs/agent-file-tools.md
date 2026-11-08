@@ -1,6 +1,6 @@
 # エージェント: ファイル操作・インターネット検索
 
-音声対話の中で、LLM がナレッジのファイルを調べたり作成したり、インターネットを検索したりする機能。専用のエージェント画面・モードは無く、通常の音声入力から呼ばれる。実装は `services/agent.rs`(ツール定義・実行・ループ)、`commands/agent.rs`(承認・中断の橋渡し)、`services/llm_client.rs`(`complete_with_tools`)。
+音声対話の中で、LLM がナレッジのファイルを調べたり作成したり、インターネットを検索したりする機能。専用のエージェント画面・モードは無く、通常の音声入力から呼ばれる。実装は `services/tool_loop.rs`(ツール定義・実行・ループ)、`commands/task.rs`(承認・中断の橋渡し)、`services/llm_client.rs`(`complete_with_tools`)。
 
 コマンド実行(`propose_plan` / `run_command`)は同じツールループに載る別機能で、[agent-command-tasks.md](agent-command-tasks.md) に書く。
 
@@ -34,7 +34,7 @@ sequenceDiagram
       L->>FE: ToolCall イベント
       opt 承認が必要(create_file など)
         L->>FE: Approval イベント
-        FE->>L: agent_approve(id, 可否)
+        FE->>L: task_approve(id, 可否)
       end
       L->>L: ツール実行
       L->>FE: ToolResult イベント
@@ -86,9 +86,9 @@ sequenceDiagram
 
 ## フロントエンド
 
-- `Channel<AgentEvent>`(`text` / `tool_call` / `tool_result` / `approval` / `command_output`)を受けて、実行ログと承認モーダルを更新する。
+- `Channel<TaskEvent>`(`text` / `tool_call` / `tool_result` / `approval` / `command_output`)を受けて、実行ログと承認モーダルを更新する。
 - 承認はモーダルのボタンか音声で答える。音声の判定と待ち時間は [agent-command-tasks.md](agent-command-tasks.md#音声承認) を参照。ファイル作成の承認も同じ仕組み。
-- 実行中は「中断」で停止できる(`agent_cancel`)。承認待ちは拒否として扱う。
+- 実行中は「中断」で停止できる(`task_cancel`)。承認待ちは拒否として扱う。
 
 ## 非スコープ
 

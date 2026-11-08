@@ -1,4 +1,4 @@
-//! スペースの記憶。PM(ユーザー)から仕事を任されたメンバーとして、やり取りを重ねるほど話が通じるようにする。
+//! エージェントの記憶。PM(ユーザー)から仕事を任されたメンバーとして、やり取りを重ねるほど話が通じるようにする。
 //!
 //! - 覚えておくこと(`Memory/pinned.md`): 頼まれたことと、会話から大事だと判断したこと。毎回の発話で必ず渡す。
 //! - 担当の理解(`Memory/understanding.md`): 担当業務についての理解。会話の合間に書き直して育てる。毎回の発話で渡す。
@@ -537,7 +537,7 @@ async fn update(ctx: &WorkspaceCtx) -> Result<MemoryReport, AppError> {
     run(db, &root, &date, &now, |prompt| {
         let model = target.model.clone();
         async move {
-            // 削除されたスペースへ記憶を書かせない
+            // 削除されたエージェントへ記憶を書かせない
             ctx.ensure_alive()?;
             let msg = [ChatMessage { role: "user".into(), content: prompt }];
             let done = llm_client::complete(ctx, target.provider, &model, None, &msg).await?;
