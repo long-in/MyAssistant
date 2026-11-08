@@ -76,6 +76,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   leader_exists: "リーダーはすでに作成されています。",
   work_disabled: "ワークは無効です。全体設定で有効にしてください。",
   work_busy: "ワークの中に実行中または承認待ちの依頼があります。完了してから無効にしてください。",
+  sandbox_error: "サンドボックスで問題が発生しました。",
   path_in_use: "その場所は、ほかのワークスペースのナレッジまたはデバッグログの保存先と重なっています。別の場所を選んでください。",
 };
 
@@ -84,6 +85,8 @@ export function errorMessage(e: unknown): string {
   const body =
     code === "provider_rejected" && message
       ? tr("拒否されました: {message}", { message })
+      : code === "sandbox_error" && message
+        ? tr(message)
       : code === "aws_config_error" && message
         ? tr("AWSの設定に問題があります: {message}", { message })
       : tr((code && ERROR_MESSAGES[code]) || "予期しないエラーが発生しました。");
@@ -245,6 +248,38 @@ export const taskCancel = () => invoke<void>("task_cancel");
 /** シェルコマンドによる作業の可否(Claude選択時のみ有効)。未設定なら有効。 */
 export const getShellAccess = () => invoke<boolean>("get_shell_access");
 export const setShellAccess = (enabled: boolean) => invoke<void>("set_shell_access", { enabled });
+
+/** サンドボックス(エージェント専用のDockerコンテナでコマンドを実行する)の設定。エージェントだけが使える。既定は無効。 */
+export const getSandboxEnabled = () => invoke<boolean>("get_sandbox_enabled");
+export const setSandboxEnabled = (enabled: boolean) => invoke<void>("set_sandbox_enabled", { enabled });
+
+export type DockerState = "missing" | "stopped" | "ready";
+export type SandboxStatus = {
+  docker: DockerState;
+  /** 現在のDockerfileのイメージがビルド済みか。 */
+  image_ready: boolean;
+  container_running: boolean;
+  building: boolean;
+};
+export const getSandboxStatus = () => invoke<SandboxStatus>("get_sandbox_status");
+
+export type SandboxFiles = {
+  dockerfile: "missing" | "template" | "edited";
+  /** 環境変数ファイルの名前と検証結果。値は含まれない。 */
+  env: { names: string[]; error: { line: number | null; message: string } | null };
+};
+export const getSandboxFiles = () => invoke<SandboxFiles>("get_sandbox_files");
+
+/** イメージをビルドする。進捗は`SANDBOX_BUILD_EVENT`で流れる。`force`ならビルド済みでも作り直す。 */
+export const buildSandboxImage = (force: boolean) => invoke<void>("build_sandbox_image", { force });
+export const SANDBOX_BUILD_EVENT = "sandbox-build-progress";
+export type SandboxBuildProgress = { workspace_id: string; line: string };
+/** コンテナを作り直す(専用ボリュームは残る)。 */
+export const resetSandbox = () => invoke<void>("reset_sandbox");
+/** Dockerfileを標準の内容で上書きする。 */
+export const resetSandboxDockerfile = () => invoke<void>("reset_sandbox_dockerfile");
+/** Finderでファイルを選択して開く。 */
+export const revealSandboxFile = (kind: "env" | "dockerfile") => invoke<void>("reveal_sandbox_file", { kind });
 
 /** コマンド権限。各項目は`git status`のようなコマンド名と引数の接頭辞。 */
 export type CommandPolicy = {
