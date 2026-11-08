@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Archive, AudioLines, Bell, Copy, BookOpen, Keyboard, Pencil, Share2, HardDriveDownload, Volume2, Briefcase, ClipboardList, Download, FolderKanban, Languages, Link2, ListOrdered, Loader2, Mic, Plus, ScrollText, Send, Settings2, ShieldCheck, SlidersHorizontal, SpellCheck, Square, Timer, Upload, UserRound, X, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
@@ -14,9 +14,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { refreshWorkspace, switchTo } from "@/lib/workspace";
 import ModelSelector from "@/components/ModelSelector";
 import HelpDrawer from "@/components/HelpDrawer";
+import BackupPasswordModal from "@/components/BackupPasswordModal";
 import { ensureOsPermission, osNotificationsEnabled, setOsNotificationsEnabled, syncOsNotifications } from "@/lib/osNotify";
 import NotePanel from "@/components/NotePanel";
-import { getSharedData, saveSharedData, LEADER_COLOR, LEADER_ID, createLeader, errorMessage, leaderExists, setWorkEnabled, workEnabled, type KeyStatus, setGlobalLanguage, exportGlobalSettings, importGlobalSettings, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, getBatchInterval, setBatchInterval, listModels, loadProofreadRoute, saveProofreadRoute, type ModelInfo, type Route, type WakeConfig, reportError, saveBaseInstructions, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
+import { getSharedData, saveSharedData, LEADER_COLOR, LEADER_ID, createLeader, errorMessage, leaderExists, setWorkEnabled, workEnabled, type KeyStatus, setGlobalLanguage, exportGlobalSettings, importGlobalSettings, backupCreate, restorePrepare, restoreApply, restoreDiscard, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, getBatchInterval, setBatchInterval, listModels, loadProofreadRoute, saveProofreadRoute, type ModelInfo, type Route, type WakeConfig, reportError, type AppError, saveBaseInstructions, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
 
 /** 見出しの左に出すアイコン(英字の見出しごと)。無いものは歯車。 */
 const HEADING_ICONS: Record<string, LucideIcon> = {
@@ -802,6 +803,105 @@ export function WakeWords({ ttsReady, engine, cloudStt }: { ttsReady: boolean; e
   );
 }
 
+
+/** アプリ全体(全スペースのDB・ナレッジ・APIキー)のバックアップとリストア。 */
+export function AppBackup() {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [modal, setModal] = useState<null | { mode: "create" } | { mode: "restore"; src: string; wrong: boolean }>(null);
+
+  /** パスワードを決めてから保存先を選び、書き出す。 */
+  const create = async (password: string | null) => {
+    setModal(null);
+    const stamp = new Date().toISOString().slice(0, 10);
+    const dest = await saveDialog({
+      title: t("アプリ全体のバックアップ"),
+      defaultPath: `myassistant-backup-${stamp}.zip`,
+      filters: [{ name: "ZIP", extensions: ["zip"] }],
+    });
+    if (!dest) return;
+    setBusy(true);
+    try {
+      const r = await backupCreate(dest, password);
+      toast.success(t("{n}スペース・{files}ファイルを書き出しました。", { n: r.workspaces, files: r.files }));
+    } catch (e) {
+      toast.error(reportError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 検証して展開し、確認が取れたら再起動して差し替える。暗号化されていればパスワードを求める。 */
+  const prepare = async (src: string, password: string | null) => {
+    setModal(null);
+    setBusy(true);
+    try {
+      const p = await restorePrepare(src, password);
+      const ok = await ask(
+        t("{date} のバックアップ({n}スペース)で、現在のデータを置き換えます。アプリは再起動します。現在のデータはアプリデータ内の restore-backup-日時 フォルダに退避されます。続けますか?", {
+          date: p.created_at,
+          n: p.workspaces,
+        }),
+        { title: t("バックアップから復元"), kind: "warning" },
+      );
+      if (!ok) {
+        await restoreDiscard();
+        setBusy(false);
+        return;
+      }
+      await restoreApply();
+    } catch (e) {
+      const code = (e as Partial<AppError>)?.code;
+      if (code === "backup_password_required" || code === "backup_password_wrong") {
+        setModal({ mode: "restore", src, wrong: code === "backup_password_wrong" });
+      } else {
+        toast.error(reportError(e));
+      }
+      setBusy(false);
+    }
+  };
+
+  const restore = async () => {
+    const src = await openDialog({
+      title: t("バックアップから復元"),
+      multiple: false,
+      directory: false,
+      filters: [{ name: "ZIP", extensions: ["zip"] }],
+    });
+    if (typeof src === "string") await prepare(src, null);
+  };
+
+  return (
+    <section className="hud-panel hud-accent px-5 py-4">
+      <Heading title="App Backup" help={t("アプリ全体のバックアップ")}>
+        <p>{t("全スペースの会話・設定・ナレッジ・APIキーを1つのzipに書き出し、あとで復元できます。")}</p>
+        <ul>
+          <li>{t("APIキーは、そのまま含まれます。パスワードを設定するとzip全体をAES-256で暗号化できます(任意。忘れると復元できません)。")}</li>
+          <li>{t("暗号化したzipは、macOS標準のアーカイブユーティリティでは開けません。7-Zip・Kekaなどを使ってください。アプリでの復元には影響しません。")}</li>
+          <li>{t("Whisper・VOICEVOXなどのモデルは含まれません。復元後に必要なら取得し直してください。")}</li>
+          <li>{t("アプリデータの外に置いたナレッジも含まれます。復元するとアプリの標準の場所に戻り、保存先の設定は解除されます。")}</li>
+          <li>{t("復元すると現在のデータは置き換わります(退避が残ります)。実行中の整理や会話は止まります。")}</li>
+        </ul>
+      </Heading>
+      <div className="mt-3 flex gap-2">
+        <Button variant="outline" size="sm" disabled={busy} onClick={() => setModal({ mode: "create" })}>
+          {busy ? <Loader2 className="animate-spin" /> : <Download />} {t("バックアップを作成")}
+        </Button>
+        <Button variant="outline" size="sm" disabled={busy} onClick={restore}>
+          <Upload /> {t("復元")}
+        </Button>
+      </div>
+      {modal && (
+        <BackupPasswordModal
+          mode={modal.mode}
+          wrong={modal.mode === "restore" && modal.wrong}
+          onClose={() => setModal(null)}
+          onSubmit={(pw) => (modal.mode === "create" ? void create(pw) : void prepare(modal.src, pw))}
+        />
+      )}
+    </section>
+  );
+}
 
 /** 全体設定だけのバックアップ。スペースごとの設定のバックアップ(設定画面の Backup)とは別に書き出す。 */
 export function GlobalBackup() {

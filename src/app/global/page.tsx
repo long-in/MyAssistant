@@ -9,6 +9,7 @@ import {
   PageHeader,
   StatusPill,
   GlobalBackup,
+  AppBackup,
   LanguageSetting,
   OsNotifications,
   PersonalData,
@@ -136,6 +137,7 @@ export default function GlobalSettings() {
             <LanguageSetting />
             <OsNotifications />
             <GlobalBackup />
+            <AppBackup />
           </TabsContent>
 
           <TabsContent value="work" className="flex flex-col gap-6">

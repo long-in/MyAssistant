@@ -50,12 +50,12 @@ pub const PALETTE: [&str; MAX_SPACES] = [
 /// ワークスペースが切り替わったことを画面へ知らせるイベント名。
 pub const WORKSPACE_CHANGED_EVENT: &str = "workspace-changed";
 
-const DIR_NAME: &str = "workspaces";
+pub(crate) const DIR_NAME: &str = "workspaces";
 /// 削除時に残したナレッジを置くフォルダ(アプリデータ直下)。
-const KEPT_DIR_NAME: &str = "kept-knowledge";
-const REGISTRY_FILE: &str = "registry.json";
+pub(crate) const KEPT_DIR_NAME: &str = "kept-knowledge";
+pub(crate) const REGISTRY_FILE: &str = "registry.json";
 /// ワークスペースごとのDBのファイル名。
-const DB_FILE: &str = "timeline.db";
+pub(crate) const DB_FILE: &str = "timeline.db";
 
 /// 1ワークスペース分の状態。`dir`配下に`timeline.db`と`secrets.json`を置く。
 pub struct WorkspaceCtx {

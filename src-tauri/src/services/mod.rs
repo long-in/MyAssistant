@@ -2,6 +2,7 @@ pub mod agent;
 pub mod agent_run;
 pub mod attention;
 pub mod audio;
+pub mod backup;
 pub mod aws;
 pub mod batch;
 pub mod cancel;

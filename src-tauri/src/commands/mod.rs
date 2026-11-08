@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod aws;
+pub mod backup;
 pub mod chat;
 pub mod command_policy;
 pub mod debug;

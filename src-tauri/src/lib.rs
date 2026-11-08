@@ -26,6 +26,10 @@ pub fn run() {
       commands::agent::agent_cancel,
       commands::agent::agent_resume,
       commands::agent::agent_detach,
+      commands::backup::backup_create,
+      commands::backup::restore_prepare,
+      commands::backup::restore_apply,
+      commands::backup::restore_discard,
       commands::aws::get_aws_status,
       commands::aws::preview_aws_config,
       commands::aws::save_aws_config,
@@ -180,6 +184,12 @@ pub fn run() {
       let dir = app.path().app_data_dir()?;
       services::legacy_data::migrate(&dir);
       std::fs::create_dir_all(&dir)?;
+      // 予約されたリストアは、DBを開く前に差し替える(失敗しても元に戻して通常どおり起動する)
+      match services::backup::apply_pending(&dir) {
+        Ok(true) => log::info!("backup restored"),
+        Ok(false) => {}
+        Err(e) => log::warn!("backup restore failed: {e}"),
+      }
       services::aws::init(app.handle());
       // パーソナルは従来どおりアプリデータ直下(`timeline.db` / `secrets.json` / `knowledge`)
       let personal = services::workspace::WorkspaceCtx::open(services::workspace::PERSONAL_ID, &dir)?;

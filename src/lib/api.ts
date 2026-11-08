@@ -60,6 +60,9 @@ export const ERROR_MESSAGES: Record<string, string> = {
   mfa_required: "MFAコードが入力されませんでした。もう一度お試しください。",
   invalid_dictionary: "読み上げ辞書のJSONを取り込めませんでした。[{\"word\": \"語\", \"reading\": \"読み\"}] の形式で、ファイルは1MB以下にしてください。",
   invalid_settings: "設定ファイルの形式が正しくありません。このアプリが書き出したファイルを選んでください。",
+  backup_password_required: "このバックアップは暗号化されています。パスワードを入力してください。",
+  backup_password_wrong: "パスワードが違います。",
+  invalid_backup: "バックアップファイルを使えません。このアプリが書き出した、壊れていない新しすぎないzipを選んでください。",
   // スペース(ワークスペースの管理)の画面に出る文言。表記は言語設定に従う
   invalid_space_data: "指示は2,000文字以内で、< > と制御文字を含めずに入力してください。",
   invalid_space: "スペースの名称(1〜40文字)またはイメージカラーが正しくありません。",
@@ -700,6 +703,17 @@ export const importSettings = (src: string) => invoke<SettingsTransferReport>("i
 /** 全体設定だけの書き出し・読み込み。 */
 export const exportGlobalSettings = (dest: string) => invoke<SettingsTransferReport>("export_global_settings", { dest });
 export const importGlobalSettings = (src: string) => invoke<SettingsTransferReport>("import_global_settings", { src });
+
+export type BackupSummary = { workspaces: number; files: number; bytes: number };
+export type RestorePreview = { created_at: string; workspaces: number; files: number };
+/** アプリ全体(全スペースのDB・ナレッジ・APIキー)をzipへ書き出す。パスワードがあればAES-256で暗号化する。 */
+export const backupCreate = (dest: string, password: string | null) => invoke<BackupSummary>("backup_create", { dest, password });
+/** バックアップのzipを検証して展開する。現在のデータは変えない。暗号化されていればパスワードが要る。 */
+export const restorePrepare = (src: string, password: string | null) => invoke<RestorePreview>("restore_prepare", { src, password });
+/** 展開済みのバックアップで、アプリを再起動して差し替える。 */
+export const restoreApply = () => invoke<void>("restore_apply");
+/** 展開済みのバックアップを捨てる。 */
+export const restoreDiscard = () => invoke<void>("restore_discard");
 
 /** トレイメニューの表示言語を切り替える。 */
 

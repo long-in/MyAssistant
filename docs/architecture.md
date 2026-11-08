@@ -85,7 +85,7 @@ flowchart LR
 sequenceDiagram
   participant App as アプリ
   participant Loop as 定期バッチ
-  App->>App: アプリデータ作成 → パーソナルの WorkspaceCtx(Db・secrets)を開く
+  App->>App: アプリデータ作成 → 予約されたリストアがあれば差し替え(backup.md)→ パーソナルの WorkspaceCtx(Db・secrets)を開く
   App->>App: Workspaces を登録(スペース一覧 registry.json を読む)、デバッグログの出力先を決定
   App->>App: メニューバー(トレイ)を作成
   App->>Loop: 非同期タスクを起動

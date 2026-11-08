@@ -77,6 +77,15 @@ pub enum AppError {
     Io(String),
     #[error("invalid settings file: {0}")]
     InvalidSettings(String),
+    /// バックアップのzipが使えない(形式・版・チェックサム・不正なパス)。
+    #[error("invalid backup: {0}")]
+    InvalidBackup(String),
+    /// 暗号化されたバックアップで、パスワードが無い。
+    #[error("backup password is required")]
+    BackupPasswordRequired,
+    /// バックアップのパスワードが違う。
+    #[error("backup password is incorrect")]
+    BackupPasswordWrong,
     #[error("invalid pronunciation dictionary: {0}")]
     InvalidDictionary(String),
     #[error("invalid personal data: {0}")]
@@ -168,6 +177,9 @@ impl AppError {
             Self::PathNotAllowed => "path_not_allowed",
             Self::Io(_) => "io_error",
             Self::InvalidSettings(_) => "invalid_settings",
+            Self::InvalidBackup(_) => "invalid_backup",
+            Self::BackupPasswordRequired => "backup_password_required",
+            Self::BackupPasswordWrong => "backup_password_wrong",
             Self::InvalidDictionary(_) => "invalid_dictionary",
             Self::InvalidProfile(_) => "invalid_profile",
             Self::InvalidSpaceData(_) => "invalid_space_data",

@@ -148,7 +148,7 @@ erDiagram
 
 ## 設定のエクスポート・インポート(`settings_transfer.rs`)
 
-別の端末への移行やバックアップに使う。設定画面の Backup。
+別の端末への移行やバックアップに使う。設定画面の Backup。会話・ナレッジ・API キーを含むアプリ全体のバックアップは [backup.md](backup.md)。
 
 ### 対象
 
