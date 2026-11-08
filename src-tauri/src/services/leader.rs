@@ -378,7 +378,6 @@ pub async fn suggest(leader: &WorkspaceCtx, agents: &[Agent], instruction: &str)
     let msg = [ChatMessage { role: "user".into(), content: build_user_prompt(&render_history(&rows), agents, &instruction) }];
     match llm_client::complete(leader, target.provider, &target.model, Some(&system), &msg).await {
         Ok(done) => {
-            let _ = leader.db.record_usage(target.provider.as_str(), &target.model, done.input_tokens, done.output_tokens);
             Ok(parse_suggestion(&done.text, agents))
         }
         Err(e) => {

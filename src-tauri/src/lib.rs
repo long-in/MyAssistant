@@ -70,7 +70,6 @@ pub fn run() {
       commands::global_settings::set_global_language,
       commands::global_settings::set_global_os_notifications,
       commands::chat::add_stt_correction,
-      commands::chat::get_usage_this_month,
       commands::chat::list_models,
       commands::chat::load_routing,
       commands::chat::save_routing,

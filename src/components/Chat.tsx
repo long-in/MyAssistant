@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import WorkspaceBadge from "@/components/WorkspaceBadge";
 import { VoiceOrb } from "./Waveforms";
-import UsageHud from "./UsageHud";
 import Subtitles from "./Subtitles";
 import ApprovalModal, { type Approval, type Listening } from "./ApprovalModal";
 import AbortButton from "./AbortButton";
@@ -37,7 +36,6 @@ import {
   type ModelInfo,
   type Route,
   type RunSnapshot,
-  type UsageRow,
   DEFAULT_VOICE_TIMING,
   type VoiceTiming,
   type WakeConfig,
@@ -56,7 +54,6 @@ import {
   getKeyStatus,
   getVoiceTiming,
   getWakeConfig,
-  getUsageThisMonth,
   isSpeaking,
   listModels,
   loadRouting,
@@ -187,7 +184,6 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
   // 非同期の途中で変わりうる状態として読む(型が直前の比較で絞られないように関数にする)
   const micState = (): Mic => micNow.current;
   const keyHeld = useRef(false);
-  const [usage, setUsage] = useState<UsageRow[]>([]);
   const [needModel, setNeedModel] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [ttsReady, setTtsReady] = useState(false);
@@ -278,11 +274,6 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
     return () => clearInterval(id);
   }, []);
 
-  const refreshUsage = () => getUsageThisMonth().then(setUsage).catch(() => {});
-  useEffect(() => {
-    refreshUsage();
-  }, []);
-
   const changeRoute = (r: Route) => {
     setRoute(r);
     saveRouting(r).catch(fail);
@@ -317,7 +308,6 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
     setBusy(false);
     setActivity(null);
     showApproval(null);
-    refreshUsage();
     const { reply, error } = e;
     if (error) fail(error);
     if (reply) {
@@ -337,7 +327,6 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
       const { reply, error } = snap.finished;
       if (error) fail(error);
       if (reply) setTurns([{ ...turn, reply: reply.content, replyAt: new Date(), via: reply.model }]);
-      refreshUsage();
       return;
     }
     setBusy(true);
@@ -454,7 +443,6 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
     try {
       if (!route) throw new Error(t("使えるモデルがありません。設定でAPIキーを登録してください。"));
       const r = await sendChat(sessionId, text, route, onTaskEvent);
-      refreshUsage();
       if (aborted()) return "none"; // 待っている間に新しい会話へ切り替わった、または中断された
       const replied = { user: text, userAt, reply: r.content, replyAt: new Date(), via: r.model };
       result = "replied";
@@ -994,9 +982,6 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
       <div className="flex min-h-0 flex-1">
       {/* 中央: 読み上げ音声の円形波形 */}
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-4 px-6 py-4">
-        <div className={HIDE_WHEN_SMALL}>
-          <UsageHud rows={usage} />
-        </div>
         {/* 利用できる幅・高さのうち小さい方に合わせて、円形波形を正方形で最大化する */}
         <div className="flex min-h-0 w-full flex-1 items-center justify-center [container-type:size]">
           <div className="relative size-[min(100cqmin,40rem)] @container">

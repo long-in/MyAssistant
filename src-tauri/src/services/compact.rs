@@ -72,9 +72,6 @@ async fn summarize(
 ) -> Result<String, AppError> {
     let msg = [ChatMessage { role: "user".into(), content: prompt(previous, rows) }];
     let done = llm_client::complete(ctx, provider, model, Some(SYSTEM), &msg).await?;
-    if let Err(e) = ctx.db.record_usage(provider.as_str(), model, done.input_tokens, done.output_tokens) {
-        log::warn!("usage record failed: {e}");
-    }
     let text: String = done.text.trim().chars().take(SUMMARY_MAX_CHARS).collect();
     if text.is_empty() { Err(AppError::Db("empty summary".into())) } else { Ok(text) }
 }

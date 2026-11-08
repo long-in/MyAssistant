@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter, Manager, State, ipc::Channel};
 
 use crate::{
     commands::task as task_cmd,
-    db::{Db, UsageRow},
+    db::Db,
     services::{
         tool_loop::{self, TaskEvent},
         attention::{self, AttentionKind},
@@ -220,12 +220,6 @@ pub fn list_models(ctx: Ctx) -> Vec<ModelInfo> {
     llm_router::catalog(&ctx)
 }
 
-/// 当月のトークン使用量(このアプリ経由の呼び出しのローカル集計)。
-#[tauri::command]
-pub fn get_usage_this_month(ctx: Ctx) -> Result<Vec<UsageRow>, AppError> {
-    ctx.db.usage_this_month()
-}
-
 #[tauri::command]
 /// 前回選んだモデル。キー削除などで使えなくなっていれば既定にフォールバックする。
 pub fn load_routing(ctx: Ctx) -> Result<Option<Route>, AppError> {
@@ -360,11 +354,6 @@ async fn send_chat_inner(
     });
     let rows = window.recent;
 
-    let record_usage = |input: u64, output: u64| {
-        if let Err(e) = ctx.db.record_usage(target.provider.as_str(), &target.model, input, output) {
-            log::warn!("usage record failed: {e}");
-        }
-    };
     // 今回の発話は保存済みなので履歴から外し、別に渡す
     let mut prior: Vec<Value> = rows.into_iter().map(|r| json!({ "role": r.role, "content": r.content })).collect();
     prior.pop();
@@ -396,7 +385,6 @@ async fn send_chat_inner(
             }
             ctx.shared.task.emit(event);
         },
-        record_usage,
         || active(app).id == ctx.id,
     )
     .await?;

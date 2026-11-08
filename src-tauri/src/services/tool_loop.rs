@@ -864,7 +864,7 @@ mod tests {
     }
 
     fn turn(content: Vec<Value>, stop: &str) -> ToolTurn {
-        ToolTurn { content, stop_reason: stop.into(), input_tokens: 10, output_tokens: 5 }
+        ToolTurn { content, stop_reason: stop.into() }
     }
 
     fn tool_use(id: &str, name: &str, input: Value) -> Value {

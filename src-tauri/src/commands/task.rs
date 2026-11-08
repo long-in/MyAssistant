@@ -63,7 +63,6 @@ pub async fn run_with_tools(
     mut history: Vec<Value>,
     user_text: &str,
     on_event: &(impl Fn(TaskEvent) + Sync),
-    on_usage: impl Fn(u64, u64),
     is_foreground: impl Fn() -> bool,
 ) -> Result<TaskOutcome, AppError> {
     let state = &ctx.shared.task;
@@ -94,11 +93,8 @@ pub async fn run_with_tools(
         &mut history,
         user_text,
         |msgs| {
-            let on_usage = &on_usage;
             async move {
                 let turn = llm_client::complete_with_tools(ctx, provider, model, system, &msgs, tools).await?;
-                // 途中で失敗しても、ここまでに使った分は記録する
-                on_usage(turn.input_tokens, turn.output_tokens);
                 Ok(turn)
             }
         },

@@ -20,16 +20,9 @@ pub struct ChatMessage {
     pub content: String,
 }
 
-/// LLMの応答本文と、プロバイダーが返したトークン使用量(返さない場合は0)。
+/// LLMの応答本文。
 pub struct Completion {
     pub text: String,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-}
-
-fn usage_of(body: &Value) -> (u64, u64) {
-    let get = |p: &str| body.pointer(p).and_then(Value::as_u64).unwrap_or(0);
-    (get("/usage/input_tokens"), get("/usage/output_tokens"))
 }
 
 /// 応答を読み、デバッグモードなら往復を記録する。成功以外のステータスはエラーにする。
@@ -53,8 +46,6 @@ const TASK_TIMEOUT: Duration = Duration::from_secs(120);
 pub struct ToolTurn {
     pub content: Vec<Value>,
     pub stop_reason: String,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
 }
 
 /// `tool_use`ブロックの呼び出し内容。
@@ -91,12 +82,9 @@ impl ToolTurn {
 }
 
 fn parse_tool_turn(body: &Value) -> Option<ToolTurn> {
-    let (input_tokens, output_tokens) = usage_of(body);
     Some(ToolTurn {
         content: body.get("content")?.as_array()?.clone(),
         stop_reason: body.get("stop_reason")?.as_str()?.to_owned(),
-        input_tokens,
-        output_tokens,
     })
 }
 
@@ -229,13 +217,12 @@ async fn complete_inner(
             read_json(ctx, provider.as_str(), url, &request, res).await?
         }
     };
-    let (input_tokens, output_tokens) = usage_of(&response);
     let text = anthropic_text(&response).ok_or_else(|| {
         // 原因調査用。応答本文にAPIキーは含まれない
         log::error!("unexpected {} response: {response}", provider.as_str());
         AppError::BadResponse
     })?;
-    Ok(Completion { text, input_tokens, output_tokens })
+    Ok(Completion { text })
 }
 
 #[cfg(test)]
@@ -250,13 +237,11 @@ mod tests {
                 { "type": "text", "text": "調べます" },
                 { "type": "tool_use", "id": "t1", "name": "list_files", "input": { "path": "" } }
             ],
-            "stop_reason": "tool_use",
-            "usage": { "input_tokens": 10, "output_tokens": 5 }
+            "stop_reason": "tool_use"
         });
         let turn = parse_tool_turn(&body).unwrap();
         assert_eq!(turn.stop_reason, "tool_use");
         assert_eq!(turn.text(), "調べます");
-        assert_eq!((turn.input_tokens, turn.output_tokens), (10, 5));
         assert_eq!(
             turn.tool_calls(),
             [ToolCall { id: "t1".into(), name: "list_files".into(), input: json!({ "path": "" }) }]

@@ -165,18 +165,9 @@ export type ModelInfo = {
 
 export type ChatReply = { content: string; provider: Provider; model: string };
 
-export type UsageRow = {
-  provider: Provider;
-  model: string;
-  requests: number;
-  input_tokens: number;
-  output_tokens: number;
-};
 /** 聞き取り間違いの訂正をナレッジ(Markdown)へ記録する。保存した場合はtrue。 */
 export const addSttCorrection = (heard: string, correct: string) =>
   invoke<boolean>("add_stt_correction", { heard, correct });
-/** 当月のトークン使用量(このアプリ経由の呼び出しのローカル集計)。 */
-export const getUsageThisMonth = () => invoke<UsageRow[]>("get_usage_this_month");
 
 export const listModels = () => invoke<ModelInfo[]>("list_models");
 export const loadRouting = () => invoke<Route | null>("load_routing");

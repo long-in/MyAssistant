@@ -542,7 +542,6 @@ async fn update(ctx: &WorkspaceCtx) -> Result<MemoryReport, AppError> {
             let msg = [ChatMessage { role: "user".into(), content: prompt }];
             let done = llm_client::complete(ctx, target.provider, &model, None, &msg).await?;
             ctx.ensure_alive()?;
-            let _ = db.record_usage(target.provider.as_str(), &model, done.input_tokens, done.output_tokens);
             Ok(done.text)
         }
     })
