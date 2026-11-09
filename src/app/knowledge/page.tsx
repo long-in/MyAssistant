@@ -13,22 +13,12 @@ import { Button } from "@/components/ui/button";
 import { splitFrontmatter } from "@/lib/knowledgeDoc";
 import { useWorkspace } from "@/lib/workspace";
 import KnowledgeTree, { type NodeKind } from "@/components/KnowledgeTree";
-import ModelSelector from "@/components/ModelSelector";
 import MemoryPanel from "@/components/MemoryPanel";
 import { EmptyState, PaneHeader, StatusPill } from "@/components/GlobalPanels";
 import {
   LEADER_ID,
-  type KeyStatus,
   type KnowledgeFile,
   type MemoryView,
-  type ModelInfo,
-  type Route,
-  getKeyStatus,
-  listModels,
-  loadBatchRoute,
-  saveBatchRoute,
-  loadMemoryRoute,
-  saveMemoryRoute,
   memoryView,
   memoryConfirm,
   memoryForget,
@@ -68,11 +58,7 @@ export default function Knowledge() {
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
   const [dir, setDir] = useState("");
-  const [route, setRoute] = useState<Route | null>(null);
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [keyStatus, setKeyStatus] = useState<Partial<KeyStatus>>({});
   const [memory, setMemory] = useState<MemoryView>({ pins: [], understanding: "" });
-  const [memoryRoute, setMemoryRoute] = useState<Route | null>(null);
   // 記憶の表示中(ノートを開くと閉じる)
   const [showMemory, setShowMemory] = useState(false);
 
@@ -90,14 +76,6 @@ export default function Knowledge() {
   useEffect(() => {
     refresh();
     knowledgeDir().then(setDir).catch(() => {});
-    Promise.all([listModels(), loadBatchRoute(), getKeyStatus(), loadMemoryRoute()])
-      .then(([m, r, k, mr]) => {
-        setModels(m);
-        setRoute(r);
-        setKeyStatus(k);
-        setMemoryRoute(mr);
-      })
-      .catch((e) => toast.error(reportError(e)));
   }, [refresh]);
 
   // 会話ごとのリアルタイム更新を一覧へ反映する
@@ -109,16 +87,6 @@ export default function Knowledge() {
       un.then((f) => f());
     };
   }, [refresh]);
-
-  const changeRoute = (next: Route) => {
-    setRoute(next);
-    saveBatchRoute(next).catch((e) => toast.error(reportError(e)));
-  };
-
-  const changeMemoryRoute = (next: Route) => {
-    setMemoryRoute(next);
-    saveMemoryRoute(next).catch((e) => toast.error(reportError(e)));
-  };
 
   const confirmPin = async (text: string) => {
     try {
@@ -366,8 +334,6 @@ export default function Knowledge() {
         />
         <div className="hud-panel hud-accent m-3 px-4 py-3">
           <p className="hud-label mb-2">Organize</p>
-          <p className="mb-2 text-xs text-muted-foreground">{t("整理に使うモデル")}</p>
-          <ModelSelector route={route} models={models} keyStatus={keyStatus} onChange={changeRoute} />
           <Button size="sm" className="mt-2 w-full" disabled={running} onClick={organize}>
             {running ? <Loader2 className="animate-spin" /> : <Sparkles />}
             {running ? t("整理中…") : t("今すぐ整理")}
@@ -380,8 +346,6 @@ export default function Knowledge() {
             {t("覚えておくこと {n}件", { n: memory.pins.length })}
             {memory.pins.some((p) => p.inferred) && ` · ${t("推定 {n}件", { n: memory.pins.filter((p) => p.inferred).length })}`}
           </p>
-          <p className="mb-2 text-xs text-muted-foreground">{t("記憶の更新に使うモデル")}</p>
-          <ModelSelector route={memoryRoute} models={models} keyStatus={keyStatus} onChange={changeMemoryRoute} />
           <Button size="sm" variant={showMemory ? "default" : "outline"} className="mt-2 w-full" onClick={() => setShowMemory(true)}>
             <Brain /> {t("記憶を見る")}
           </Button>

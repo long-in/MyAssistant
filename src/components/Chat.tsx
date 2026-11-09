@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import { approvalLine } from "@/components/AttentionToasts";
 import { notifyOsIfBackground } from "@/lib/osNotify";
 import { createPortal } from "react-dom";
-import ModelSelector from "./ModelSelector";
+import ModelPicker from "./ModelPicker";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import WorkspaceBadge from "@/components/WorkspaceBadge";
@@ -964,7 +964,7 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
   return (
     <div className="relative flex h-full flex-col">
       <WorkspaceBadge className="pointer-events-none absolute top-4 right-4 z-10" />
-      {modelSlot && createPortal(<ModelSelector route={route} models={models} keyStatus={keyStatus} onChange={changeRoute} />, modelSlot)}
+      {modelSlot && createPortal(<ModelPicker route={route} models={models} keyStatus={keyStatus} onChange={changeRoute} />, modelSlot)}
       {setup && (
         <div className="mx-6 mt-4 flex flex-col gap-2 empty:hidden">
           {!Object.values(keyStatus).some(Boolean) && Object.keys(keyStatus).length > 0 && <SetupNotice text={t("APIキーが未登録のため、AIが応答できません。")} action={t("設定を開く")} onAction={() => router.push("/setup")} />}

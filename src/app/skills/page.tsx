@@ -11,26 +11,18 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import ModelSelector from "@/components/ModelSelector";
 import { EmptyState, PaneHeader, StatusPill } from "@/components/GlobalPanels";
 import {
   SKILL_LIMITS,
   SKILL_NAME_RE,
-  type KeyStatus,
-  type ModelInfo,
-  type Route,
   type Skill,
   createSkill,
   deleteSkill,
   exportSkills,
-  getKeyStatus,
   importSkills,
-  listModels,
   listSkills,
-  loadSkillsRoute,
   previewImportSkills,
   reportError,
-  saveSkillsRoute,
   updateSkill,
 } from "@/lib/api";
 
@@ -62,9 +54,6 @@ export default function Skills() {
   const [draft, setDraft] = useState<Draft>(EMPTY);
   const [editMode, setEditMode] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [route, setRoute] = useState<Route | null>(null);
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [keyStatus, setKeyStatus] = useState<Partial<KeyStatus>>({});
   const [transferring, setTransferring] = useState(false);
 
   const refresh = useCallback(
@@ -80,19 +69,7 @@ export default function Skills() {
 
   useEffect(() => {
     refresh();
-    Promise.all([listModels(), loadSkillsRoute(), getKeyStatus()])
-      .then(([m, r, k]) => {
-        setModels(m);
-        setRoute(r);
-        setKeyStatus(k);
-      })
-      .catch((e) => toast.error(reportError(e)));
   }, [refresh]);
-
-  const changeRoute = (next: Route) => {
-    setRoute(next);
-    saveSkillsRoute(next).catch((e) => toast.error(reportError(e)));
-  };
 
   const open = selected !== null || creating;
   const dirty = open && JSON.stringify(draft) !== JSON.stringify(saved);
@@ -263,9 +240,7 @@ export default function Skills() {
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="hud-panel hud-accent m-3 px-4 py-3">
             <p className="hud-label mb-2">Matching</p>
-            <p className="mb-2 text-xs text-muted-foreground">{t("発話に合うスキルを選ぶモデル")}</p>
-            <ModelSelector route={route} models={models} keyStatus={keyStatus} onChange={changeRoute} />
-            <p className="mt-2 text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               {skills.length === 0
                 ? t("スキルがないので、選定は行われず、トークンも使いません。")
                 : t("発話のたびに、全スキルの名前と説明(約{n}トークン)を送って選びます。説明は短く保つと節約できます。", { n: indexTokens })}

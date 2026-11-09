@@ -22,7 +22,8 @@ import { DEFAULT_TUNING, getTuning, setTuning, LEADER_ID, PERSONAL_ID, getAgentD
 import { bumpSettingsVersion, refreshWorkspace, useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
 import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, aquaKeyRegistered, deleteAquaKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, setCommandPolicy, type CommandPolicy, getShellAccess, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, saveAquaKey, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setShellAccess, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
-import { Heading, PageHeader, Proofread, StatusPill, TuningPanel, type TuningField } from "@/components/GlobalPanels";
+import AiSettings from "@/components/AiSettings";
+import { Heading, PageHeader, StatusPill, TuningPanel, type TuningField } from "@/components/GlobalPanels";
 
 type KeyRowProps = {
   title: string;
@@ -1445,7 +1446,7 @@ export default function Setup() {
             </div>
           </section>
 
-          <Proofread keyStatus={status} />
+          <AiSettings keyStatus={status} leader={active.id === LEADER_ID} />
 
           {/* モデルの取得元 */}
           <section className="hud-panel hud-accent px-5 py-4">
