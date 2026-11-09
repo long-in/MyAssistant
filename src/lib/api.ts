@@ -1,7 +1,8 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { tr } from "@/lib/i18n";
 
-export const PROVIDERS = ["anthropic", "bedrock"] as const;
+/** `local`は端末内のLLM。キーは無く、`KeyStatus`は取得済みかどうかを表す。 */
+export const PROVIDERS = ["anthropic", "bedrock", "local"] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export type KeyStatus = Record<Provider, boolean>;
 
@@ -11,6 +12,7 @@ export type AppError = { code: string; message: string; source?: string | null }
 export const SOURCE_LABELS: Record<string, string> = {
   anthropic: "Anthropic (Claude)",
   bedrock: "Amazon Bedrock (Claude)",
+  local: "Local (Qwen)",
   google_tts: "Google Cloud Text-to-Speech",
   google_stt: "Google Cloud Speech-to-Text",
   aqua_stt: "Aqua Voice",
@@ -20,6 +22,7 @@ export const SOURCE_LABELS: Record<string, string> = {
 export const PROVIDER_LABELS: Record<Provider, string> = {
   anthropic: "Anthropic (Claude)",
   bedrock: "Amazon Bedrock (Claude)",
+  local: "Local (Qwen)",
 };
 
 export const ERROR_MESSAGES: Record<string, string> = {
@@ -54,6 +57,10 @@ export const ERROR_MESSAGES: Record<string, string> = {
   api_disabled: "このキーのプロジェクトで対象のAPIが有効化されていません。Google Cloud Consoleで「Cloud Text-to-Speech API」または「Cloud Speech-to-Text API」を有効にしてください。",
   key_restricted: "APIキーの制限(API制限・アプリケーション制限)によりブロックされました。キーの制限設定を確認してください。",
   billing_disabled: "プロジェクトの課金(請求先アカウント)が有効になっていません。",
+  local_llm_missing: "ローカルLLMが未取得です。設定の「AI Link」で取得してください。",
+  local_llm_error: "ローカルLLMの起動または応答に失敗しました。",
+  checksum_mismatch: "取得したファイルの検証に失敗しました。もう一度取得してください。",
+  download_cancelled: "取得を中断しました。",
   invalid_version: "バージョンには英数字と . _ - のみ使えます(64文字まで)。",
   path_not_allowed: "ナレッジディレクトリ外のパスにはアクセスできません。",
   io_error: "ファイルの読み書きに失敗しました。",
@@ -100,6 +107,19 @@ export const saveApiKey = (provider: Provider, key: string) =>
 
 export const deleteApiKey = (provider: Provider) =>
   invoke<void>("delete_api_key", { provider });
+
+/** 端末内のLLM(llama-serverとモデル)の取得状況。`size`は取得する合計(バイト)。 */
+export type LocalLlmStatus = { installed: boolean; downloading: boolean; label: string; size: number };
+export type DownloadProgress = { downloaded: number; total: number };
+export const localLlmStatus = () => invoke<LocalLlmStatus>("local_llm_status");
+/** 取得の進み具合を`onProgress`へ流す。取得済みのモデルは取り直さない。 */
+export const downloadLocalLlm = (onProgress: (p: DownloadProgress) => void) => {
+  const channel = new Channel<DownloadProgress>();
+  channel.onmessage = onProgress;
+  return invoke<void>("download_local_llm", { onProgress: channel });
+};
+export const cancelLocalLlmDownload = () => invoke<void>("cancel_local_llm_download");
+export const removeLocalLlm = () => invoke<void>("remove_local_llm");
 
 /** `~/.aws/config`・`credentials`の貼り付け内容から読み取ったプロファイル。キーの値は含まれない。 */
 export type AwsProfile = {

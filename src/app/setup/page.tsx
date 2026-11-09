@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import AwsPanel from "@/components/AwsPanel";
+import LocalLlmPanel from "@/components/LocalLlmPanel";
 import DeleteAgentModal from "@/components/DeleteAgentModal";
 import NotePanel from "@/components/NotePanel";
 import CopySettingsCard from "@/components/CopySettingsCard";
@@ -1277,6 +1278,7 @@ export default function Setup() {
               <Heading title="AI Link" help={t("AIの接続")} status={<StatusPill on={linked > 0}>{linked} / {PROVIDERS.length}</StatusPill>}>
                 <p>{t("使いたいAIのAPIキーを登録します。全部は不要で、1つ以上あれば使えます。")}</p>
                 <ul>
+                  <li>{t("ローカル(Qwen)は、キーの代わりにモデルをこの端末へダウンロードして使います。取得したモデルは全エージェントで共通です。")}</li>
                   <li>{t("Amazon Bedrockは、APIキーではなく~/.aws/configと~/.aws/credentialsの中身を貼り付けて登録します。MFA付きのスイッチロール(role_arn + source_profile)に対応し、コードが必要なときは入力欄が開きます。")}</li>
                   <li>{t("Bedrockでは、インターネット検索・ページ取得は使えません(ナレッジのファイル操作とコマンド実行は使えます)。")}</li>
                   <li>{t("キーは疎通確認に成功した場合のみ、この端末のアプリデータ内に保存されます。")}</li>
@@ -1284,7 +1286,7 @@ export default function Setup() {
                 </ul>
               </Heading>
             <div className="flex flex-col gap-2">
-              {PROVIDERS.filter((p) => p !== "bedrock").map((p: Provider) => (
+              {PROVIDERS.filter((p) => p !== "bedrock" && p !== "local").map((p: Provider) => (
                 <KeyRow
                   card
                   key={p}
@@ -1296,6 +1298,7 @@ export default function Setup() {
                 />
               ))}
               <AwsPanel onChanged={refresh} />
+              <LocalLlmPanel onChanged={refresh} />
             </div>
           </section>
           {active.id === LEADER_ID && <LeaderKeyCopy onCopied={refresh} />}
