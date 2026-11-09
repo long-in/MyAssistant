@@ -108,6 +108,7 @@ export default function GlobalSettings() {
 
           <TabsContent value="ai" className="flex flex-col gap-6">
             <BaseInstructions />
+            <SharedData />
             <PersonalData />
           </TabsContent>
 
@@ -142,7 +143,6 @@ export default function GlobalSettings() {
 
           <TabsContent value="work" className="flex flex-col gap-6">
             <WorkEnable />
-            <SharedData />
           </TabsContent>
         </Tabs>
       </div>
