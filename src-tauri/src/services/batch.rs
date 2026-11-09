@@ -139,7 +139,7 @@ where
         // キャプチャは整理元、記憶は専用の更新があるので、追記先の候補には出さない
         let existing: Vec<_> = knowledge::list(root)?
             .into_iter()
-            .filter(|f| f.category != knowledge::CAPTURE_CATEGORY && !memory::is_memory(&f.path) && !super::harness::is_harness(&f.path))
+            .filter(|f| f.category != knowledge::CAPTURE_CATEGORY && !memory::is_memory(&f.path) && !super::skills::is_skill(&f.path))
             .collect();
         let outcome = async {
             let out = parse_output(&classify(build_prompt(&instructions, &seg, &existing)).await?)?;
@@ -147,10 +147,10 @@ where
             let stamp = now();
             let mut written = 0;
             for e in &out.entries {
-                // 記憶のフォルダへは書かせない(覚えておくこと・担当の理解は会話の合間の更新が担う)。ハーネスの定義も同様に、人が書いたものを整理で変えない
+                // 記憶のフォルダへは書かせない(覚えておくこと・担当の理解は会話の合間の更新が担う)。スキルの定義も同様に、人が書いたものを整理で変えない
                 if e.content.trim().is_empty()
                     || memory::is_memory(e.category.trim())
-                    || super::harness::is_harness(e.category.trim())
+                    || super::skills::is_skill(e.category.trim())
                 {
                     continue;
                 }

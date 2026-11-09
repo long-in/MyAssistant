@@ -19,7 +19,6 @@ use super::{
     llm_client::{ToolCall, ToolTurn},
     memory::{self, Forgot, Remembered},
     shell::{self, Stream},
-    harness::Limits,
     skills::{self, Access as SkillAccess},
 };
 use crate::utils::{
@@ -431,8 +430,8 @@ fn validate_create(input: &Value) -> Result<(&str, &str), String> {
     if memory::is_memory(path) {
         return Err("Memoryフォルダには作成できません。覚えておくことはrememberで記録してください。".into());
     }
-    if super::harness::is_harness(path) {
-        return Err("Harnessフォルダには作成できません。ハーネスはユーザーが画面から登録します。".into());
+    if skills::is_skill(path) {
+        return Err("Skillsフォルダには作成できません。スキルはcreate_skillで作成してください。".into());
     }
     if content.len() > WRITE_MAX_BYTES {
         return Err(format!("内容が大きすぎます(上限{WRITE_MAX_BYTES}バイト)。"));
@@ -573,14 +572,12 @@ pub struct Env<'a> {
     host: Option<ToolHost<'a>>,
     /// 実行を許すスキル用ツール。リーダーでも`use_skill`は`host`より先に処理する。
     skills: SkillAccess,
-    /// ハーネスによる制限(使えるツール・参照範囲・ステップ数)。ハーネスが無ければ何も制限しない。
-    limits: Limits,
 }
 
 impl<'a> Env<'a> {
     /// ファイル操作だけの環境。コマンド実行は`with_shell`で有効にする。
     pub fn new(root: &'a Path) -> Self {
-        Self { root, cancel: CancelToken::default(), shell: false, host: None, skills: SkillAccess::default(), limits: Limits::default() }
+        Self { root, cancel: CancelToken::default(), shell: false, host: None, skills: SkillAccess::default() }
     }
 
     pub fn with_cancel(mut self, cancel: CancelToken) -> Self {
@@ -603,16 +600,8 @@ impl<'a> Env<'a> {
         self
     }
 
-    /// ハーネスの制限を適用する。
-    pub fn with_limits(mut self, limits: Limits) -> Self {
-        self.limits = limits;
-        self
-    }
-
-    /// LLMを呼ぶ回数の上限。ハーネスの指定は、既定の上限を下げる方向にだけ効く。
     fn max_steps(&self) -> usize {
-        let base = if self.shell { MAX_STEPS_SHELL } else { MAX_STEPS };
-        self.limits.max_steps.map_or(base, |n| n.min(base))
+        if self.shell { MAX_STEPS_SHELL } else { MAX_STEPS }
     }
 }
 
@@ -732,12 +721,7 @@ where
     E: FnMut(TaskEvent),
 {
     emit(TaskEvent::ToolCall { id: call.id.clone(), name: call.name.clone(), input: call.input.clone() });
-    let scoped = scoped_files(env.root, &env.limits.paths, &call.name, &call.input);
     let outcome = match call.name.as_str() {
-        // ハーネスで許していないツールは、定義を渡していても(履歴の名残などで)呼ばれたら拒否する
-        name if !env.limits.allows(name) => Err(format!("このハーネスでは使えないツールです: {name}")),
-        // ハーネスの参照範囲の外は読ませない。範囲内ならそのまま通常の処理へ進む
-        _ if scoped.is_some() => scoped.expect("checked"),
         // スキルのツールは、リーダー(`host`)でも同じ処理にする
         "list_skills" if env.skills.any() => Ok(skills::tool_list(env.root)),
         "use_skill" if env.skills.any() => skills::tool_use(env.root, &call.input),
@@ -766,61 +750,6 @@ where
         block["is_error"] = json!(true);
     }
     block
-}
-
-/// ハーネスの参照範囲(`paths`)で`list_files`・`read_file`・`search_files`を制限する。
-/// 範囲内の呼び出し、または制限の対象外のツール・入力不備は`None`(通常の処理に任せる)。
-/// 範囲外は拒否し、範囲の手前(祖先)のフォルダの一覧は範囲へ続く名前だけを返す。
-/// 判定は正規化後の実パスで行うので、範囲内のシンボリックリンクを使った迂回はできない。
-fn scoped_files(root: &Path, paths: &[String], name: &str, input: &Value) -> Option<Result<String, String>> {
-    if paths.is_empty() || !matches!(name, "list_files" | "read_file" | "search_files") {
-        return None;
-    }
-    let denied = || Err("このハーネスの参照範囲の外です。".to_owned());
-    let allowed: Vec<PathBuf> = paths.iter().filter_map(|p| resolve_existing(root, p).ok()).filter(|p| p.is_dir()).collect();
-    let within = |full: &Path| allowed.iter().any(|a| full.starts_with(a));
-    let given = |key: &str| str_arg(input, key).map(str::trim).filter(|p| !p.is_empty() && *p != ".");
-    match name {
-        "read_file" => {
-            let full = resolve_existing(root, given("path")?).ok()?;
-            if within(&full) { None } else { Some(denied()) }
-        }
-        "list_files" => {
-            let full = match given("path") {
-                Some(p) => resolve_existing(root, p).ok()?,
-                None => root.canonicalize().ok()?,
-            };
-            if within(&full) {
-                return None;
-            }
-            let mut names: Vec<String> = allowed
-                .iter()
-                .filter_map(|a| a.strip_prefix(&full).ok()?.components().next())
-                .map(|c| format!("{}/", c.as_os_str().to_string_lossy()))
-                .collect();
-            names.sort();
-            names.dedup();
-            Some(if names.is_empty() { denied() } else { Ok(names.join("\n")) })
-        }
-        _ => {
-            if let Some(p) = given("path") {
-                let full = resolve_existing(root, p).ok()?;
-                return if within(&full) { None } else { Some(denied()) };
-            }
-            // 場所を指定しない検索は、範囲ごとに検索して合わせる
-            let mut found = Vec::new();
-            for p in paths {
-                let mut scoped = input.clone();
-                scoped["path"] = json!(p);
-                if let Ok(r) = search_files(root, &scoped)
-                    && r != "該当なし"
-                {
-                    found.push(r);
-                }
-            }
-            Some(Ok(if found.is_empty() { "該当なし".to_owned() } else { found.join("\n") }))
-        }
-    }
 }
 
 async fn create_with_approval<A, AF, E>(
@@ -1399,88 +1328,12 @@ mod tests {
         assert_eq!(names(SkillAccess { use_skill: false, manage: true }), ["list_skills", "use_skill", "create_skill", "update_skill", "delete_skill"]);
     }
 
-    // ---- ハーネス ----
-
-    fn limits(tools: &[&str], paths: &[&str], max_steps: Option<usize>) -> Limits {
-        Limits {
-            tools: tools.iter().map(|s| (*s).to_owned()).collect(),
-            paths: paths.iter().map(|s| (*s).to_owned()).collect(),
-            max_steps,
-        }
-    }
-
     #[test]
-    fn scoped_files_limits_reads_to_the_allowed_folders() {
+    fn create_file_refuses_the_skills_folder() {
         let (_d, root) = knowledge();
-        fs::create_dir_all(root.join("Work")).unwrap();
-        fs::write(root.join("Work/plan.md"), "Tauriの計画").unwrap();
-        let paths = vec!["Dev".to_owned()];
-        let call = |name: &str, input: Value| scoped_files(&root, &paths, name, &input);
-        // 範囲内は通常の処理へ(None)、範囲外は拒否
-        assert!(call("read_file", json!({ "path": "Dev/rust.md" })).is_none());
-        assert!(call("read_file", json!({ "path": "top.md" })).unwrap().is_err());
-        assert!(call("read_file", json!({ "path": "Work/plan.md" })).unwrap().is_err());
-        assert!(call("list_files", json!({ "path": "Dev" })).is_none());
-        assert!(call("list_files", json!({ "path": "Work" })).unwrap().is_err());
-        // 範囲の手前のフォルダでは、範囲へ続く名前だけを見せる
-        assert_eq!(call("list_files", json!({})).unwrap().unwrap(), "Dev/");
-        // 場所を指定しない検索は、範囲の中だけを検索する
-        let hits = call("search_files", json!({ "query": "Tauri" })).unwrap().unwrap();
-        assert!(hits.contains("Dev/rust.md") && !hits.contains("Work/plan.md"), "{hits}");
-        assert!(call("search_files", json!({ "query": "Tauri", "path": "Work" })).unwrap().is_err());
-        // 制限の対象外のツール、範囲が空のときは何もしない
-        assert!(call("remember", json!({ "text": "x" })).is_none());
-        assert!(scoped_files(&root, &[], "read_file", &json!({ "path": "top.md" })).is_none());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn scoped_files_blocks_symlink_detours_out_of_the_scope() {
-        let (_d, root) = knowledge();
-        fs::create_dir_all(root.join("Work")).unwrap();
-        fs::write(root.join("Work/plan.md"), "x").unwrap();
-        std::os::unix::fs::symlink(root.join("Work"), root.join("Dev/detour")).unwrap();
-        let paths = vec!["Dev".to_owned()];
-        let r = scoped_files(&root, &paths, "read_file", &json!({ "path": "Dev/detour/plan.md" }));
-        assert!(r.is_some_and(|r| r.is_err()), "範囲内のリンク経由でも、実パスが範囲外なら拒否");
-    }
-
-    #[tokio::test]
-    async fn disallowed_tools_and_out_of_scope_reads_are_refused_in_the_loop() {
-        let (_d, root) = knowledge();
-        let env = Env::new(&root).with_limits(limits(&["read_file"], &["Dev"], None));
-        let script = vec![
-            turn(vec![tool_use("a", "read_file", json!({ "path": "Dev/rust.md" }))], "tool_use"),
-            turn(vec![tool_use("b", "read_file", json!({ "path": "top.md" }))], "tool_use"),
-            turn(vec![tool_use("c", "list_files", json!({}))], "tool_use"),
-            turn(vec![tool_use("d", "create_file", json!({ "path": "x.md", "content": "y" }))], "tool_use"),
-            done(),
-        ];
-        let (history, kinds, _) = shell_session(script, &env, |_| true).await;
-        assert!(kinds.is_empty(), "許していないツールは承認も求めない");
-        assert!(!result_of(&history, 2).1);
-        assert!(result_of(&history, 4).0.contains("参照範囲の外"));
-        let (listed, is_err) = result_of(&history, 6);
-        assert!(is_err && listed.contains("使えないツール"), "{listed}");
-        assert!(result_of(&history, 8).0.contains("使えないツール"));
-        assert!(!root.join("x.md").exists());
-    }
-
-    #[test]
-    fn harness_max_steps_only_lowers_the_default() {
-        let (_d, root) = knowledge();
-        assert_eq!(Env::new(&root).max_steps(), MAX_STEPS);
-        assert_eq!(Env::new(&root).with_limits(limits(&[], &[], Some(3))).max_steps(), 3);
-        assert_eq!(Env::new(&root).with_limits(limits(&[], &[], Some(40))).max_steps(), MAX_STEPS, "既定を超えては上げない");
-        assert_eq!(Env::new(&root).with_shell(true).with_limits(limits(&[], &[], Some(40))).max_steps(), MAX_STEPS_SHELL);
-    }
-
-    #[test]
-    fn create_file_refuses_the_harness_folder() {
-        let (_d, root) = knowledge();
-        let r = execute_tool(&root, "create_file", &json!({ "path": "Harness/x.md", "content": "y" }));
-        assert!(r.unwrap_err().contains("Harness"));
-        assert!(!root.join("Harness").exists());
+        let r = execute_tool(&root, "create_file", &json!({ "path": "Skills/x/SKILL.md", "content": "y" }));
+        assert!(r.unwrap_err().contains("create_skill"));
+        assert!(!root.join("Skills").exists());
     }
 
     // ---- コマンド実行 ----

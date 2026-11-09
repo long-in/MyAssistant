@@ -280,6 +280,9 @@ export default function Skills() {
           <p className="mt-2 text-xs text-muted-foreground">
             {t("会話から作ることもできます。「〜をスキルにして」のように「スキル」と言って頼んでください。")}
           </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("定義はナレッジの「Skills」フォルダの SKILL.md です。ナレッジ画面から直接編集もできます。")}
+          </p>
         </div>
       </aside>
 

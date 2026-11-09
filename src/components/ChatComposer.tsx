@@ -28,12 +28,12 @@ type Props = {
   /** 処理中の強制中断。 */
   onStop: () => void;
   model: { route: Route | null; models: ModelInfo[]; keyStatus: Partial<KeyStatus>; onChange: (route: Route) => void };
-  /** ハーネスの選択。`value`が`null`なら自動(発話に合うものを選ぶ)。ハーネスが無い、またはリーダーでは渡さない。 */
-  harness?: { value: string | null; names: string[]; onChange: (name: string | null) => void };
+  /** スキルの指定。`value`が`null`なら自動(発話に合うものを選ぶ)。スキルが無ければ渡さない。 */
+  skill?: { value: string | null; names: string[]; onChange: (name: string | null) => void };
 };
 
 /** 下部の入力カード。待機・マイク・ミュートの操作と、メッセージ入力欄(モデルの切り替えと送信/停止つき)。 */
-export default function ChatComposer({ standby, mic, speak, draft, onDraft, onSubmit, placeholder, inputDisabled, sendDisabled, busy, onStop, model, harness }: Props) {
+export default function ChatComposer({ standby, mic, speak, draft, onDraft, onSubmit, placeholder, inputDisabled, sendDisabled, busy, onStop, model, skill }: Props) {
   const t = useT();
   const recording = mic.state === "recording";
   return (
@@ -107,17 +107,17 @@ export default function ChatComposer({ standby, mic, speak, draft, onDraft, onSu
                 <div className="min-w-0 max-w-64">
                   <ModelPicker compact disabled={busy} route={model.route} models={model.models} keyStatus={model.keyStatus} onChange={model.onChange} />
                 </div>
-                {harness && (
+                {skill && (
                   <select
-                    value={harness.value ?? ""}
+                    value={skill.value ?? ""}
                     disabled={busy}
-                    aria-label={t("ハーネス")}
-                    title={t("この依頼に使うハーネス。「自動」では、発話に合うものがあれば選ばれます")}
-                    onChange={(e) => harness.onChange(e.target.value === "" ? null : e.target.value)}
+                    aria-label={t("スキル")}
+                    title={t("この依頼に使うスキル。「自動」では、発話に合うものがあれば候補になります")}
+                    onChange={(e) => skill.onChange(e.target.value === "" ? null : e.target.value)}
                     className="h-7 min-w-0 max-w-40 truncate rounded-md border border-primary/30 bg-background/60 px-2 text-xs text-muted-foreground focus:border-primary focus:outline-none"
                   >
-                    <option value="">{t("ハーネス: 自動")}</option>
-                    {harness.names.map((n) => (
+                    <option value="">{t("スキル: 自動")}</option>
+                    {skill.names.map((n) => (
                       <option key={n} value={n}>
                         {n}
                       </option>

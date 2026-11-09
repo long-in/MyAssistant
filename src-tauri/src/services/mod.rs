@@ -13,7 +13,7 @@ pub mod compact;
 pub mod debug_log;
 pub mod global_settings;
 pub mod graph;
-pub mod harness;
+pub mod skills_migration;
 pub mod scheduler;
 pub mod secrets;
 pub mod settings_registry;

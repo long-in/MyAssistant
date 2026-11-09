@@ -55,8 +55,8 @@ import {
   getVoiceTiming,
   getWakeConfig,
   isSpeaking,
-  listHarnesses,
   listModels,
+  listSkills,
   loadRouting,
   playBase64Mp3,
   recordingWaveform,
@@ -169,9 +169,9 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   const approvalRef = useRef<Approval | null>(null);
   const [listening, setListening] = useState<Listening>("idle");
   const [route, setRoute] = useState<Route | null>(null);
-  // 使えるハーネスの名前と、選んでいるハーネス(`null`なら発話に合うものを自動で選ぶ)
-  const [harnessNames, setHarnessNames] = useState<string[]>([]);
-  const [harness, setHarness] = useState<string | null>(null);
+  // 使えるスキルの名前と、入力欄で指定したスキル(`null`なら発話に合うものを自動で選ぶ)
+  const [skillNames, setSkillNames] = useState<string[]>([]);
+  const [skill, setSkill] = useState<string | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [keyStatus, setKeyStatus] = useState<Partial<KeyStatus>>({});
   const [mic, setMicState] = useState<Mic>("idle");
@@ -274,16 +274,16 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     return () => clearInterval(id);
   }, []);
 
-  // 対話画面へ戻るたびに、ハーネスの一覧を読み直す。削除された、または名前が変わったものを選んでいたら自動に戻す
+  // 対話画面へ戻るたびに、スキルの一覧を読み直す。削除されたものを選んでいたら自動に戻す
   useEffect(() => {
     if (!active) return;
-    listHarnesses()
+    listSkills()
       .then((o) => {
-        const names = o.harnesses.map((h) => h.name);
-        setHarnessNames(names);
-        setHarness((cur) => (cur !== null && names.includes(cur) ? cur : null));
+        const names = o.skills.map((s) => s.name);
+        setSkillNames(names);
+        setSkill((cur) => (cur !== null && names.includes(cur) ? cur : null));
       })
-      .catch(() => setHarnessNames([]));
+      .catch(() => setSkillNames([]));
   }, [active]);
 
   const changeRoute = (r: Route) => {
@@ -483,7 +483,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     let result: "spoke" | "replied" | "none" = "none";
     try {
       if (!route) throw new Error(t("使えるモデルがありません。設定でAPIキーを登録してください。"));
-      const r = await sendChat(sessionId, text, route, harness, onTaskEvent);
+      const r = await sendChat(sessionId, text, route, skill, onTaskEvent);
       if (aborted()) return "none"; // 待っている間に新しい会話へ切り替わった、または中断された
       const replied = { reply: r.content, replyAt: new Date(), via: r.model };
       result = "replied";
@@ -1104,7 +1104,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
         busy={busy}
         onStop={abortAll}
         model={{ route, models, keyStatus, onChange: changeRoute }}
-        harness={workspaceId !== LEADER_ID && harnessNames.length > 0 ? { value: harness, names: harnessNames, onChange: setHarness } : undefined}
+        skill={skillNames.length > 0 ? { value: skill, names: skillNames, onChange: setSkill } : undefined}
       />
     </div>
   );

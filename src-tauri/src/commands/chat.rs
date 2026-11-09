@@ -17,14 +17,13 @@ use crate::{
         batch, compact,
         global_settings::SettingsStore,
         graph::{self, GraphCache},
-        harness,
         knowledge, leader,
         llm_client::SystemPrompt,
         llm_router::{self, ModelInfo, Route},
         memory,
         chat_session, profile, prompts,
         secrets::Provider,
-        skills,
+        skills, skills_migration,
         agent_data, tuning,
         workspace::{self, Ctx, WorkspaceCtx, Workspaces, active},
     },
@@ -201,11 +200,11 @@ struct SystemParts {
     steady: Vec<String>,
     /// 発話ごとに変わる参考データ(関連ナレッジ・スキル候補)。
     per_turn: Vec<String>,
-    /// この依頼の進め方。最も優先させる指示なので末尾に置く。
-    harness: Option<String>,
+    /// 入力欄で指定したスキルの手順。この依頼で最も優先させる指示なので末尾に置く。
+    skill: Option<String>,
 }
 
-/// 固定部分は「ベース指示 → ユーザーの指示 → 変わりにくい参考データ」、可変部分は「発話ごとの参考データ → 参考データの注意 → ハーネス」。
+/// 固定部分は「ベース指示 → ユーザーの指示 → 変わりにくい参考データ」、可変部分は「発話ごとの参考データ → 参考データの注意 → 指定したスキル」。
 /// 参考データの注意は可変部分に置く(固定部分に置くと、関連ナレッジの有無で固定部分が変わりキャッシュが切れるため)。
 fn assemble_system(p: SystemParts) -> SystemPrompt {
     let has_reference = !p.steady.is_empty() || !p.per_turn.is_empty();
@@ -214,7 +213,7 @@ fn assemble_system(p: SystemParts) -> SystemPrompt {
         .per_turn
         .into_iter()
         .chain(has_reference.then(|| REFERENCE_NOTE.to_owned()))
-        .chain(p.harness)
+        .chain(p.skill)
         .collect();
     SystemPrompt { stable: stable.join("\n\n"), volatile: volatile.join("\n\n") }
 }
@@ -274,7 +273,7 @@ pub async fn send_chat(
     session_id: String,
     text: String,
     route: Route,
-    harness: Option<String>,
+    skill: Option<String>,
     on_event: Channel<TaskEvent>,
 ) -> Result<ChatReply, AppError> {
     let text = text.trim();
@@ -283,7 +282,7 @@ pub async fn send_chat(
     }
     // 進捗・承認待ち・結果は、ワークスペースごとの記録にも残す。切り替えても依頼は止まらず、戻ったときに続きから再開できる
     ctx.shared.task.begin(&session_id, text, on_event);
-    run_recorded(&app, &ctx.0, &contexts, &graphs, session_id, text, route, harness).await
+    run_recorded(&app, &ctx.0, &contexts, &graphs, session_id, text, route, skill).await
 }
 
 /// 記録(`TaskState::begin`か`try_begin_detached`)を始めた依頼を実行し、結果を記録して、裏のエージェントなら知らせる。
@@ -296,10 +295,10 @@ pub async fn run_recorded(
     session_id: String,
     text: &str,
     route: Route,
-    harness: Option<String>,
+    skill: Option<String>,
 ) -> Result<ChatReply, AppError> {
     let session = session_id.clone();
-    let result = send_chat_inner(app, ctx, contexts, graphs, session_id, text, route, harness).await;
+    let result = send_chat_inner(app, ctx, contexts, graphs, session_id, text, route, skill).await;
     // 発話ごとの実行ログを残す。再起動後の再開で、画面に同じログを戻す
     chat_session::record_events(&ctx.db, &session, &ctx.shared.task.events());
     // リーダーから配布した依頼なら、終わったことを台帳へ残す(後で別の依頼に置き換わっても、結果が分かるように)
@@ -331,7 +330,7 @@ async fn send_chat_inner(
     session_id: String,
     text: &str,
     route: Route,
-    harness: Option<String>,
+    skill: Option<String>,
 ) -> Result<ChatReply, AppError> {
     let available: Vec<Provider> = Provider::ALL
         .into_iter()
@@ -359,26 +358,22 @@ async fn send_chat_inner(
         .and_then(|root| related_context(&root, &graphs, &format!("{text}\n{previous}")));
     // スキルは全件を載せず、軽量モデルが選んだ候補(名前と説明だけ)を添える。スキルが無ければ何も呼ばず、トークンも使わない。リーダーは会話からの管理をしない
     let root = batch::knowledge_root(&ctx)?;
+    // 旧形式のスキル・ハーネスが残っていれば、読む前に移す
+    skills_migration::migrate(&root);
     // 「はい」などの返事でも管理ツールを渡し続けるため、直近の会話(今回の発話を除く4件)でスキルに触れていたかも見る
     let recent_mention = window.recent.iter().rev().skip(1).take(4).any(|r| skills::mentions_skills(&r.content));
-    // ハーネスは、チャットでの指定を優先し、無ければ発話から選ぶ。リーダーには使わない
-    let harness = if ctx.id == workspace::LEADER_ID {
-        None
-    } else {
-        harness::resolve(&ctx, &root, harness.as_deref(), text, previous).await?
-    };
-    if let Some(h) = &harness {
-        // 選ばれたハーネスを実行ログへ残す(自動選定の結果も、利用者が確かめられるように)
-        let id = "harness".to_owned();
-        ctx.shared.task.emit(TaskEvent::ToolCall { id: id.clone(), name: "harness".into(), input: json!({ "name": h.name }) });
-        ctx.shared.task.emit(TaskEvent::ToolResult { id, ok: true, preview: format!("ハーネス「{}」で進めます", h.name) });
-    }
-    let limits = harness.as_ref().map(harness::Harness::limits).unwrap_or_default();
-    // ツールを絞るハーネスでは、スキルの選定も行わない(スキルのツールを渡せないため。トークンも使わない)
-    let prepared = if limits.restricts_tools() {
-        skills::Prepared::default()
-    } else {
-        skills::prepare(&ctx, &root, text, previous, ctx.id != workspace::LEADER_ID, recent_mention).await
+    let may_manage = ctx.id != workspace::LEADER_ID;
+    // 入力欄でスキルを指定したときは、選定を省いて手順を最初から渡す(Claude Codeの`/スキル名`と同じ)
+    let (skill, prepared) = match skill.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+        Some(name) => {
+            let s = skills::get(&root, name).ok_or_else(|| AppError::InvalidSkill(format!("スキル「{name}」はありません。")))?;
+            // 指定したスキルを、use_skillと同じ形で実行ログへ残す
+            let id = "skill".to_owned();
+            ctx.shared.task.emit(TaskEvent::ToolCall { id: id.clone(), name: "use_skill".into(), input: json!({ "name": s.name }) });
+            ctx.shared.task.emit(TaskEvent::ToolResult { id, ok: true, preview: format!("スキル「{}」で進めます", s.name) });
+            (Some(s), skills::prepare_explicit(&root, text, may_manage, recent_mention))
+        }
+        None => (None, skills::prepare(&ctx, &root, text, previous, may_manage, recent_mention).await),
     };
     // 基本情報は設定の変更を次の発話から反映するため、セッションのキャッシュに入れず毎回読む
     // パーソナルはパーソナルデータ、エージェントは共通データとエージェントデータ(どちらもユーザーが書いた指示)を渡す。エージェントにパーソナルデータは渡さない
@@ -407,7 +402,7 @@ async fn send_chat_inner(
             .chain(window.summary.as_deref().map(compact::summary_section))
             .collect(),
         per_turn: related.into_iter().chain(prepared.section).collect(),
-        harness: harness.as_ref().map(harness::instruction_block),
+        skill: skill.as_ref().map(skills::instruction_block),
     });
     let rows = window.recent;
 
@@ -430,7 +425,6 @@ async fn send_chat_inner(
         shell_access(&ctx.db)?,
         host,
         prepared.access,
-        limits,
         prior,
         text,
         &|event| {
@@ -490,7 +484,7 @@ mod tests {
             instructions: vec!["指示".into()],
             steady: vec!["訂正履歴".into()],
             per_turn: vec!["関連ナレッジ".into(), "スキル候補".into()],
-            harness: Some("<harness>".into()),
+            skill: Some("<skill>".into()),
         }
     }
 
@@ -498,18 +492,18 @@ mod tests {
     fn system_keeps_per_turn_parts_out_of_the_cached_prefix() {
         let s = assemble_system(parts());
         assert_eq!(s.stable, "ベース\n\n指示\n\n訂正履歴");
-        assert_eq!(s.volatile, format!("関連ナレッジ\n\nスキル候補\n\n{REFERENCE_NOTE}\n\n<harness>"));
+        assert_eq!(s.volatile, format!("関連ナレッジ\n\nスキル候補\n\n{REFERENCE_NOTE}\n\n<skill>"));
         // 発話ごとの参考データが変わっても、固定部分は変わらない
-        let other = assemble_system(SystemParts { per_turn: Vec::new(), harness: None, ..parts() });
+        let other = assemble_system(SystemParts { per_turn: Vec::new(), skill: None, ..parts() });
         assert_eq!(other.stable, s.stable);
         assert_eq!(other.volatile, REFERENCE_NOTE);
     }
 
     #[test]
     fn reference_note_only_with_reference_data() {
-        let bare = SystemParts { base: "ベース".into(), instructions: Vec::new(), steady: Vec::new(), per_turn: Vec::new(), harness: None };
+        let bare = SystemParts { base: "ベース".into(), instructions: Vec::new(), steady: Vec::new(), per_turn: Vec::new(), skill: None };
         assert_eq!(assemble_system(bare), SystemPrompt { stable: "ベース".into(), volatile: String::new() });
-        let harness_only = SystemParts { base: "ベース".into(), instructions: Vec::new(), steady: Vec::new(), per_turn: Vec::new(), harness: Some("<harness>".into()) };
-        assert_eq!(assemble_system(harness_only).volatile, "<harness>");
+        let skill_only = SystemParts { base: "ベース".into(), instructions: Vec::new(), steady: Vec::new(), per_turn: Vec::new(), skill: Some("<skill>".into()) };
+        assert_eq!(assemble_system(skill_only).volatile, "<skill>");
     }
 }

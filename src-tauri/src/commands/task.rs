@@ -9,7 +9,6 @@ use crate::{
         task_run::RunSnapshot,
         attention::{self, AttentionKind},
         cancel::CancelToken,
-        harness::Limits,
         leader,
         llm_client::{self, SystemPrompt},
         secrets::Provider,
@@ -54,7 +53,6 @@ async fn wait_for_answer(
 /// `web_access`が有効なときは、インターネット検索・ページ取得(サーバーツール)も渡す。Bedrockでは使えない。
 /// `shell_access`が有効なときは、作業計画の提示とシェルコマンドの実行も渡す。
 /// `skills`の範囲だけ、スキル用のツール(手順の読み込み・作成・更新・削除)とその使い方も渡す。リーダーにも渡す。
-/// `limits`(ハーネス)があれば、使えるツールだけを定義とガイドに含め、参照範囲とステップ数の上限も実行に適用する。リーダーには適用しない。
 /// 進捗(ツール呼び出し・承認要求・コマンド出力)は`on_event`へ流す。実行中は`task_cancel`で中断できる。
 /// `is_foreground`は、このワークスペースを選んでいるかどうか。承認待ちの時間切れを数えるかどうかを決める。
 pub async fn run_with_tools(
@@ -67,7 +65,6 @@ pub async fn run_with_tools(
     shell_access: bool,
     host: Option<tool_loop::ToolHost<'_>>,
     skills: SkillAccess,
-    limits: Limits,
     mut history: Vec<Value>,
     user_text: &str,
     on_event: &(impl Fn(TaskEvent) + Sync),
@@ -86,11 +83,6 @@ pub async fn run_with_tools(
         tool_loop::tool_definitions(shell_access)
     };
     let (shell_access, web_access) = if leader { (false, None) } else { (shell_access, web_access) };
-    // ハーネスは権限を絞る方向にだけ働く。許していないツールは、定義もガイドも渡さない(実行時にも拒否する)
-    let limits = if leader { Limits::default() } else { limits };
-    let shell_access = shell_access && (limits.allows("propose_plan") || limits.allows("run_command"));
-    let web_access = web_access.filter(|_| limits.allows("web_search") || limits.allows("web_fetch"));
-    let skills = if limits.restricts_tools() { SkillAccess::default() } else { skills };
     if shell_access {
         system.push_str(&format!("\n\n{}", tool_loop::shell_guide()));
     }
@@ -103,12 +95,11 @@ pub async fn run_with_tools(
         system.push_str(&format!("\n\n{}", tool_loop::SKILL_GUIDE));
         tools.extend(tool_loop::skill_tool_definitions(skills));
     }
-    tools.retain(|t| t["name"].as_str().is_none_or(|n| limits.allows(n)));
     let system = SystemPrompt { stable: system, volatile };
     let (system, tools) = (&system, &tools);
     let cancel = CancelToken::default();
     state.set_cancel(cancel.clone());
-    let env = Env::new(root).with_cancel(cancel.clone()).with_shell(shell_access).with_host(host).with_skills(skills).with_limits(limits);
+    let env = Env::new(root).with_cancel(cancel.clone()).with_shell(shell_access).with_host(host).with_skills(skills);
     let is_foreground = &is_foreground;
     let result = tool_loop::run(
         &env,

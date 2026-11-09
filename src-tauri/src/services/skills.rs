@@ -1,7 +1,8 @@
 //! スキル(決まった依頼に対する、あらかじめ登録した対応手順)。
 //!
-//! 保存先はナレッジ配下の`.my-assistant/skills/<名前>.md`で、エージェントごとに持つ。
-//! `.`始まりのフォルダなので、ナレッジの一覧・整理バッチ・グラフ・初期化の対象にならない。パスは`utils::path`のサンドボックスを通す。
+//! 保存先はナレッジ直下の`Skills/<名前>/SKILL.md`(Agent Skills標準の形式)で、エージェントごとに持つ。
+//! 通常のナレッジなので画面から直接編集できるが、整理バッチ・グラフ・直近の文脈・初期化の対象にはしない(`is_skill`)。
+//! 読むのは各フォルダの`SKILL.md`だけで、補助ファイルは読まない。パスは`utils::path`のサンドボックスを通す。
 //!
 //! トークンを抑えるため、全スキルを毎回プロンプトへ載せない。
 //! 1. 発話ごとに軽量モデルへ「スキルの一覧(名前・説明)と発話」を渡し、当てはまるスキルの名前を最大3件選ばせる(`select`)。
@@ -27,8 +28,10 @@ use crate::utils::{error::AppError, path::ensure_dir};
 
 /// 選定に使うモデル指定(`Route`のJSON)のキー。未設定なら既定(Haiku)。
 pub const ROUTE_KEY: &str = "skills_route";
-/// スキルを置くフォルダ(ナレッジ直下からの相対)。
-const DIR_PARTS: [&str; 2] = [".my-assistant", "skills"];
+/// スキルを置くフォルダ(ナレッジ直下)。
+pub const DIR: &str = "Skills";
+/// スキル1件のフォルダ内で、定義として読むファイル名。
+const FILE_NAME: &str = "SKILL.md";
 /// 名前の最大文字数。
 pub const NAME_MAX: usize = 40;
 /// 説明の最大文字数。選定のたびに全スキル分が送られるので短く抑える。
@@ -205,26 +208,50 @@ pub fn from_input(input: &Value) -> Result<Skill, String> {
 
 // ---------- 保存 ----------
 
-/// 読み取り用のスキルフォルダ。無い、またはナレッジの外へ出ている場合は`None`(作成はしない)。
+/// スキルのファイル(`Skills/`配下)か。大文字小文字を区別しないファイルシステムに合わせ、区別せずに比べる。
+pub fn is_skill(path: &str) -> bool {
+    path.trim_start_matches("./").split(['/', '\\']).next().is_some_and(|p| p.eq_ignore_ascii_case(DIR))
+}
+
+/// 読み取り用のスキルフォルダ。無い、シンボリックリンク、またはナレッジの外へ出ている場合は`None`(作成はしない)。
 fn existing_dir(root: &Path) -> Option<PathBuf> {
     let root = root.canonicalize().ok()?;
-    let dir = DIR_PARTS.iter().fold(root.clone(), |p, part| p.join(part)).canonicalize().ok()?;
+    let dir = root.join(DIR);
+    if is_symlink(&dir) {
+        return None;
+    }
+    let dir = dir.canonicalize().ok()?;
     (dir.starts_with(&root) && dir.is_dir()).then_some(dir)
 }
 
-/// 書き込み用のスキルフォルダ。無ければ作る。
-fn write_dir(root: &Path) -> Result<PathBuf, AppError> {
-    let parts: Vec<String> = DIR_PARTS.iter().map(|p| (*p).to_owned()).collect();
-    ensure_dir(root, &parts)
+/// 書き込み先の`Skills/<名前>/SKILL.md`。フォルダが無ければ作る。途中にシンボリックリンクがあれば拒否する。
+fn write_path(root: &Path, name: &str) -> Result<PathBuf, AppError> {
+    if !valid_name(name) {
+        return Err(AppError::PathNotAllowed);
+    }
+    let base = root.join(DIR);
+    if is_symlink(&base) || is_symlink(&base.join(name)) {
+        return Err(AppError::PathNotAllowed);
+    }
+    let path = ensure_dir(root, &[DIR.to_owned(), name.to_owned()])?.join(FILE_NAME);
+    if is_symlink(&path) {
+        return Err(AppError::PathNotAllowed);
+    }
+    Ok(path)
 }
 
 fn is_symlink(path: &Path) -> bool {
     path.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink())
 }
 
-fn read_skill(path: &Path) -> Option<Skill> {
-    let name = path.file_stem()?.to_str()?;
-    if path.extension()? != "md" || !valid_name(name) || is_symlink(path) {
+/// スキル1件のフォルダから読む。名前はフォルダ名を正とする。
+fn read_skill(dir: &Path) -> Option<Skill> {
+    let name = dir.file_name()?.to_str()?;
+    if !valid_name(name) || is_symlink(dir) || !dir.is_dir() {
+        return None;
+    }
+    let path = dir.join(FILE_NAME);
+    if is_symlink(&path) {
         return None;
     }
     let meta = path.metadata().ok()?;
@@ -234,7 +261,7 @@ fn read_skill(path: &Path) -> Option<Skill> {
     Some(parse(name, &fs::read_to_string(path).ok()?))
 }
 
-/// 全スキルを名前順に返す。読めないファイル・不正な名前のファイルは除く。
+/// 全スキルを名前順に返す。読めないもの・不正な名前のフォルダ・`SKILL.md`の無いフォルダは除く。
 pub fn list(root: &Path) -> Vec<Skill> {
     let Some(dir) = existing_dir(root) else { return Vec::new() };
     let Ok(entries) = fs::read_dir(dir) else { return Vec::new() };
@@ -247,7 +274,7 @@ pub fn get(root: &Path, name: &str) -> Option<Skill> {
     if !valid_name(name) {
         return None;
     }
-    read_skill(&existing_dir(root)?.join(format!("{name}.md")))
+    read_skill(&existing_dir(root)?.join(name))
 }
 
 /// 新規作成する。同名(大文字小文字を区別しない)があれば失敗し、上書きはしない。
@@ -258,10 +285,7 @@ pub fn create(root: &Path, skill: Skill) -> Result<Skill, AppError> {
     if list(root).iter().any(|s| s.name.to_lowercase() == lower) {
         return Err(invalid(format!("スキル「{}」は既にあります。内容を変えるにはupdate_skillを使います。", skill.name)));
     }
-    let path = write_dir(root)?.join(format!("{}.md", skill.name));
-    if is_symlink(&path) {
-        return Err(AppError::PathNotAllowed);
-    }
+    let path = write_path(root, &skill.name)?;
     let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(io)?;
     std::io::Write::write_all(&mut file, render(&skill).as_bytes()).map_err(io)?;
     Ok(skill)
@@ -274,19 +298,22 @@ pub fn update(root: &Path, skill: Skill) -> Result<Skill, AppError> {
     if get(root, &skill.name).is_none() {
         return Err(invalid(format!("スキル「{}」はありません。", skill.name)));
     }
-    let path = write_dir(root)?.join(format!("{}.md", skill.name));
-    if is_symlink(&path) {
-        return Err(AppError::PathNotAllowed);
-    }
-    fs::write(&path, render(&skill)).map_err(io)?;
+    fs::write(write_path(root, &skill.name)?, render(&skill)).map_err(io)?;
     Ok(skill)
 }
 
+/// `SKILL.md`を消し、フォルダが空になればフォルダも消す。ユーザーが置いた補助ファイルは消さない。
 pub fn delete(root: &Path, name: &str) -> Result<(), AppError> {
     if get(root, name).is_none() {
         return Err(invalid(format!("スキル「{name}」はありません。")));
     }
-    fs::remove_file(write_dir(root)?.join(format!("{name}.md"))).map_err(io)
+    let path = write_path(root, name)?;
+    fs::remove_file(&path).map_err(io)?;
+    if let Some(dir) = path.parent() {
+        // 補助ファイルが残っていれば失敗するが、それで正しい
+        let _ = fs::remove_dir(dir);
+    }
+    Ok(())
 }
 
 // ---------- エクスポート・インポート ----------
@@ -520,12 +547,25 @@ pub async fn prepare(
     recent_mention: bool,
 ) -> Prepared {
     let skills = list(root);
-    let mention = recent_mention || mentions_skills(text);
+    let picks = if !skills.is_empty() && text.chars().count() >= SELECT_MIN_CHARS {
+        select(ctx, &skills, text, previous).await
+    } else {
+        Vec::new()
+    };
+    build_prepared(&skills, &picks, recent_mention || mentions_skills(text), may_manage)
+}
+
+/// 入力欄でスキルを指定したときの準備。手順は`instruction_block`で渡すので、選定は呼ばない(トークンも使わない)。
+/// 管理ツールと名前の一覧は、`prepare`と同じく「スキル」への言及があるときだけ渡す。
+pub fn prepare_explicit(root: &Path, text: &str, may_manage: bool, recent_mention: bool) -> Prepared {
+    build_prepared(&list(root), &[], recent_mention || mentions_skills(text), may_manage)
+}
+
+fn build_prepared(skills: &[Skill], picks: &[String], mention: bool, may_manage: bool) -> Prepared {
     let manage = may_manage && mention;
     if skills.is_empty() {
         return Prepared { section: None, access: Access { use_skill: mention, manage } };
     }
-    let picks = if text.chars().count() >= SELECT_MIN_CHARS { select(ctx, &skills, text, previous).await } else { Vec::new() };
     let mut parts = Vec::<String>::new();
     if !picks.is_empty() {
         let lines: Vec<String> = picks
@@ -546,6 +586,15 @@ pub async fn prepare(
         section: (!parts.is_empty()).then(|| parts.join("\n\n")),
         access: Access { use_skill: !picks.is_empty() || mention, manage },
     }
+}
+
+/// 入力欄で指定したスキルの手順を、システムプロンプトの末尾へ添える節。
+/// ユーザーが登録して指定した手順なので従わせるが、承認や制限は変えない(`use_skill`の結果と同じ扱い)。
+pub fn instruction_block(skill: &Skill) -> String {
+    format!(
+        "<skill name=\"{}\">\nユーザーが入力欄で指定したスキル(登録済みの対応手順)です。この依頼は次の手順に沿って対応してください。ファイル作成やコマンド実行の承認・制限、ほかの安全上の決まりは変わりません。\n\n{}\n</skill>",
+        skill.name, skill.body
+    )
 }
 
 // ---------- ツールの実行 ----------
@@ -740,12 +789,14 @@ mod tests {
     }
 
     #[test]
-    fn crud_in_hidden_dir_without_overwriting_on_create() {
+    fn crud_in_skills_dir_without_overwriting_on_create() {
         let (_d, root) = root();
         assert!(list(&root).is_empty());
         create(&root, skill("b-skill")).unwrap();
         create(&root, skill("a-skill")).unwrap();
-        assert!(root.join(".my-assistant/skills/a-skill.md").is_file());
+        let file = root.join("Skills/a-skill/SKILL.md");
+        assert!(file.is_file());
+        assert!(std::fs::read_to_string(&file).unwrap().starts_with("---\nname: \"a-skill\"\n"), "標準どおりnameを書く");
         let names: Vec<_> = list(&root).into_iter().map(|s| s.name).collect();
         assert_eq!(names, ["a-skill", "b-skill"], "名前順");
         // 同名(大文字小文字違いを含む)は作れず、元の内容も変わらない
@@ -762,7 +813,39 @@ mod tests {
 
         delete(&root, "a-skill").unwrap();
         assert!(get(&root, "a-skill").is_none());
+        assert!(!root.join("Skills/a-skill").exists(), "空になったフォルダは消す");
         assert!(delete(&root, "a-skill").is_err());
+    }
+
+    #[test]
+    fn delete_keeps_auxiliary_files_and_only_skill_md_is_read() {
+        let (_d, root) = root();
+        create(&root, skill("with-aux")).unwrap();
+        std::fs::write(root.join("Skills/with-aux/reference.md"), "補助").unwrap();
+        // SKILL.mdの無いフォルダ・直下のファイルはスキルとして読まない
+        std::fs::create_dir_all(root.join("Skills/empty")).unwrap();
+        std::fs::write(root.join("Skills/loose.md"), "---\ndescription: \"x\"\n---\n本文").unwrap();
+        let names: Vec<_> = list(&root).into_iter().map(|s| s.name).collect();
+        assert_eq!(names, ["with-aux"]);
+
+        delete(&root, "with-aux").unwrap();
+        assert!(get(&root, "with-aux").is_none());
+        assert!(root.join("Skills/with-aux/reference.md").is_file(), "補助ファイルは消さない");
+    }
+
+    #[test]
+    fn standard_skill_files_are_read_with_the_folder_name() {
+        let (_d, root) = root();
+        std::fs::create_dir_all(root.join("Skills/pdf")).unwrap();
+        std::fs::write(root.join("Skills/pdf/SKILL.md"), "---\nname: other-name\ndescription: Extract text from PDFs\n---\n\n# PDF\n手順").unwrap();
+        let s = get(&root, "pdf").unwrap();
+        assert_eq!((s.name.as_str(), s.description.as_str(), s.body.as_str()), ("pdf", "Extract text from PDFs", "# PDF\n手順"));
+    }
+
+    #[test]
+    fn is_skill_matches_only_the_top_level_folder() {
+        assert!(is_skill("Skills/a/SKILL.md") && is_skill("./skills/a/SKILL.md") && is_skill("Skills"));
+        assert!(!is_skill("Inbox/Skills.md") && !is_skill("SkillsNotes/a.md"));
     }
 
     #[test]
@@ -785,18 +868,27 @@ mod tests {
         create(&root, skill("real")).unwrap();
         let outside = d.path().join("outside.md");
         std::fs::write(&outside, "---\ndescription: \"x\"\n---\n外").unwrap();
-        std::os::unix::fs::symlink(&outside, root.join(".my-assistant/skills/linked.md")).unwrap();
+        // SKILL.mdがシンボリックリンク
+        std::fs::create_dir_all(root.join("Skills/linked")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("Skills/linked/SKILL.md")).unwrap();
+        // スキルのフォルダがシンボリックリンク
+        std::fs::create_dir_all(d.path().join("elsewhere-skill")).unwrap();
+        std::fs::write(d.path().join("elsewhere-skill/SKILL.md"), "---\ndescription: \"x\"\n---\n外").unwrap();
+        std::os::unix::fs::symlink(d.path().join("elsewhere-skill"), root.join("Skills/dirlink")).unwrap();
         let names: Vec<_> = list(&root).into_iter().map(|s| s.name).collect();
         assert_eq!(names, ["real"]);
         assert!(update(&root, skill("linked")).is_err());
+        assert!(create(&root, skill("dirlink")).is_err());
+        assert!(get(&root, "dirlink").is_none());
 
-        // フォルダごとナレッジの外へ向けたシンボリックリンクは読まない
+        // Skillsフォルダごとのシンボリックリンクは読まない
         let (d2, root2) = self::root();
-        std::fs::create_dir_all(root2.join(".my-assistant")).unwrap();
-        std::fs::create_dir_all(d2.path().join("elsewhere")).unwrap();
-        std::fs::write(d2.path().join("elsewhere/x.md"), "手順").unwrap();
-        std::os::unix::fs::symlink(d2.path().join("elsewhere"), root2.join(".my-assistant/skills")).unwrap();
+        std::fs::create_dir_all(&root2).unwrap();
+        std::fs::create_dir_all(d2.path().join("elsewhere/x")).unwrap();
+        std::fs::write(d2.path().join("elsewhere/x/SKILL.md"), "手順").unwrap();
+        std::os::unix::fs::symlink(d2.path().join("elsewhere"), root2.join("Skills")).unwrap();
         assert!(list(&root2).is_empty());
+        assert!(create(&root2, skill("y")).is_err());
     }
 
     #[test]
@@ -830,6 +922,25 @@ mod tests {
         let out = tool_list(&root);
         assert!(out.contains("全31件"), "{out}");
         assert_eq!(out.lines().count(), 1 + 31, "件数の制限なく全件を返す");
+    }
+
+    #[test]
+    fn explicit_preparation_skips_candidates_and_follows_mentions() {
+        let (_d, root) = root();
+        create(&root, skill("daily")).unwrap();
+        let p = prepare_explicit(&root, "日報をお願い", true, false);
+        assert!(p.section.is_none(), "候補は添えない");
+        assert_eq!(p.access, Access::default());
+        let p = prepare_explicit(&root, "このスキルを直して", true, false);
+        assert!(p.section.unwrap().contains("<skill_names>\ndaily"));
+        assert_eq!(p.access, Access { use_skill: true, manage: true });
+        assert_eq!(prepare_explicit(&root, "スキル", false, false).access, Access { use_skill: true, manage: false }, "リーダーは管理しない");
+    }
+
+    #[test]
+    fn instruction_block_wraps_the_body() {
+        let b = instruction_block(&skill("daily"));
+        assert!(b.starts_with("<skill name=\"daily\">\n") && b.ends_with("今日の予定を3行で伝える\n</skill>"), "{b}");
     }
 
     #[test]
