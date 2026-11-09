@@ -6,6 +6,7 @@
 | --- | --- |
 | [architecture.md](architecture.md) | 全体構成、プロセス間の通信、起動・終了の流れ |
 | [chat-flow.md](chat-flow.md) | 対話(`send_chat`)の処理、システムプロンプトの組み立て、モデル選択、会話の要約 |
+| [local-llm.md](local-llm.md) | ローカル LLM(Qwen 2.5 7B)の取得、llama-server の起動・停止、形式の変換 |
 | [conversation-session.md](conversation-session.md) | 会話の継続と切り替え、自動で会話を続けるループ |
 | [voice-input.md](voice-input.md) | 録音、発話判定(VAD)、音声認識(3 エンジン)、校正、聞き取り訂正 |
 | [voice-output.md](voice-output.md) | 音声合成(TTS)、字幕の同期、定型音声 |

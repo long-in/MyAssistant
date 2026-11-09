@@ -9,6 +9,7 @@ pub mod global_settings;
 pub mod knowledge;
 pub mod knowledge_all;
 pub mod leader;
+pub mod local_llm;
 pub mod profile;
 pub mod prompts;
 pub mod settings;

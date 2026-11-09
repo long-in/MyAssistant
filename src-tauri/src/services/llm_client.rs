@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{
-    aws, debug_log,
+    aws, debug_log, local_llm,
     secrets::Provider,
     workspace::WorkspaceCtx,
 };
@@ -133,10 +133,11 @@ fn parse_tool_turn(body: &Value) -> Option<ToolTurn> {
     })
 }
 
-/// ツール使用API(Anthropic / Bedrock)。`messages`と`tools`はMessages APIのJSON形式のまま渡す。
-/// Bedrockはサーバーツール(検索・ページ取得)を持たないため、`tools`にはClient側ツールだけを渡すこと。
+/// ツール使用API(Anthropic / Bedrock / ローカル)。`messages`と`tools`はMessages APIのJSON形式のまま渡す。
+/// Bedrockとローカルはサーバーツール(検索・ページ取得)を持たないため、`tools`にはClient側ツールだけを渡すこと。
 /// キャッシュ点はシステムプロンプトの固定部分の末尾(`tools`を含む)と、最後のユーザーメッセージの2か所に置く。
 /// キャッシュの最小トークン数に満たないときは、キャッシュされないだけで結果は変わらない。
+/// ローカルはOpenAI形式へ変換して送り(`local_llm.rs`)、キャッシュ点は付けない。
 pub async fn complete_with_tools(
     ctx: &WorkspaceCtx,
     provider: Provider,
@@ -145,6 +146,9 @@ pub async fn complete_with_tools(
     messages: &[Value],
     tools: &[Value],
 ) -> Result<ToolTurn, AppError> {
+    if provider == Provider::Local {
+        return local_llm::complete_with_tools(ctx, system, messages, tools).await.map_err(|e| e.with_source(provider.as_str()));
+    }
     async {
         let request = json!({
             "model": model,
@@ -263,6 +267,8 @@ async fn complete_inner(
         };
     }
     let response = match provider {
+        // ローカルはキャッシュの指定が無く、応答の形式も違うため、テキストをそのまま返す
+        Provider::Local => return local_llm::complete(ctx, system, messages).await.map(|text| Completion { text }),
         Provider::Bedrock => invoke_bedrock(ctx, model, &request, Duration::from_secs(60)).await?,
         Provider::Anthropic => {
             let key = ctx.secrets.get_key(provider)?

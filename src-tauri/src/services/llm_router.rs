@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use super::{aws, secrets::Provider, workspace::WorkspaceCtx};
+use super::{aws, local_llm, secrets::Provider, workspace::WorkspaceCtx};
 use crate::utils::error::AppError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -28,17 +28,19 @@ const FIXED: &[(Provider, &str, &str, Tier)] = &[
     (Provider::Anthropic, "claude-opus-5-5", "Claude Opus 5.5", Tier::Heavy),
 ];
 
-/// 利用可能モデル。固定のモデルに、登録済みのBedrockモデルを足したもの。
+/// 利用可能モデル。固定のモデルに、登録済みのBedrockモデルと、取得済みならローカルのモデルを足したもの。
 pub fn catalog(ctx: &WorkspaceCtx) -> Vec<ModelInfo> {
-    catalog_with(&aws::models(ctx))
+    catalog_with(&aws::models(ctx), local_llm::installed())
 }
 
-fn catalog_with(bedrock: &[String]) -> Vec<ModelInfo> {
+/// ローカルは末尾に置く。既定(`effective_in`の先頭へのフォールバック)ではClaudeを優先するため。
+fn catalog_with(bedrock: &[String], local: bool) -> Vec<ModelInfo> {
     let info = |provider, id: &str, label: &str, tier| ModelInfo { provider, id: id.to_owned(), label: label.to_owned(), tier };
     FIXED
         .iter()
         .map(|&(p, id, label, tier)| info(p, id, label, tier))
         .chain(bedrock.iter().map(|id| info(Provider::Bedrock, id, id, Tier::Heavy)))
+        .chain(local.then(|| info(Provider::Local, local_llm::MODEL_ID, local_llm::MODEL_LABEL, Tier::Heavy)))
         .collect()
 }
 
@@ -104,8 +106,24 @@ mod tests {
     }
 
     #[test]
+    fn local_is_listed_only_when_installed_and_never_preferred() {
+        assert!(!catalog_with(&[], false).iter().any(|m| m.provider == Provider::Local));
+        let c = catalog_with(&bedrock(), true);
+        let local = route("local", local_llm::MODEL_ID);
+        assert_eq!(c.last().unwrap().provider, Provider::Local);
+        // Claudeが使えれば既定はClaude、ローカルしか無ければローカル
+        let all = [Provider::Anthropic, Provider::Bedrock, Provider::Local];
+        assert_eq!(effective_in(&c, None, &all), Some(route("anthropic", "claude-sonnet-5-5")));
+        assert_eq!(effective_in(&c, None, &[Provider::Local]), Some(local.clone()));
+        // 選んだローカルは保たれ、取得済みでなくなれば既定へ戻る
+        assert_eq!(effective_in(&c, Some(local.clone()), &all), Some(local.clone()));
+        let without = catalog_with(&bedrock(), false);
+        assert_eq!(effective_in(&without, Some(local), &[Provider::Anthropic]), Some(route("anthropic", "claude-sonnet-5-5")));
+    }
+
+    #[test]
     fn effective_keeps_saved_and_falls_back() {
-        let c = catalog_with(&bedrock());
+        let c = catalog_with(&bedrock(), false);
         let saved = route("anthropic", "claude-opus-5-5");
         let all = [Provider::Anthropic, Provider::Bedrock];
         assert_eq!(effective_in(&c, Some(saved.clone()), &all), Some(saved.clone()));
@@ -125,19 +143,19 @@ mod tests {
 
     #[test]
     fn bedrock_defaults_to_a_sonnet_model() {
-        let c = catalog_with(&bedrock());
+        let c = catalog_with(&bedrock(), false);
         let sonnet = route("bedrock", "us.anthropic.claude-sonnet-5-5-v1:0");
         assert_eq!(effective_in(&c, None, &[Provider::Bedrock]), Some(sonnet.clone()));
         // sonnetが無ければ登録済みの先頭
-        let only_haiku = catalog_with(&["x.haiku".to_owned()]);
+        let only_haiku = catalog_with(&["x.haiku".to_owned()], false);
         assert_eq!(effective_in(&only_haiku, None, &[Provider::Bedrock]), Some(route("bedrock", "x.haiku")));
         // モデルが1つも登録されていないBedrockは選べない
-        assert_eq!(effective_in(&catalog_with(&[]), None, &[Provider::Bedrock]), None);
+        assert_eq!(effective_in(&catalog_with(&[], false), None, &[Provider::Bedrock]), None);
     }
 
     #[test]
     fn manual_validates_model_and_key() {
-        let c = catalog_with(&bedrock());
+        let c = catalog_with(&bedrock(), false);
         let r = route("anthropic", "claude-opus-5-5");
         assert_eq!(resolve_in(&c, &r, &[Provider::Anthropic]).unwrap().model, "claude-opus-5-5");
         assert!(matches!(resolve_in(&c, &r, &[Provider::Bedrock]), Err(AppError::KeyMissing(_))));

@@ -174,3 +174,8 @@ VOICEVOX CORE(読み上げの選択肢)もリポジトリに含まれず、ユ�
 
 - [VOICEVOX CORE](https://github.com/VOICEVOX/voicevox_core)(MIT License)、[VOICEVOX ONNX Runtime](https://github.com/VOICEVOX/onnxruntime-builder)(同梱の `TERMS.txt` に従う)、[Open JTalk 辞書](https://github.com/r9y9/open_jtalk)、[VOICEVOX 音声モデル](https://github.com/VOICEVOX/voicevox_vvm)(音声モデル利用規約と各音声ライブラリの規約に従う)。
 - 生成した音声を公開・配布する場合は、「VOICEVOX:ずんだもん」のように利用した音声ライブラリのクレジット表記が必要です。
+
+ローカル LLM(LLM の選択肢)もリポジトリに含まれず、ユーザーが設定画面で取得したときだけ、公式の配布物をアプリデータへダウンロードします。
+
+- [llama.cpp](https://github.com/ggml-org/llama.cpp)(MIT License, Copyright (c) 2023-2024 The ggml authors)。リリース `b12110` の macOS arm64 版(llama-server と dylib)を、別プロセスとして実行します。
+- [Qwen2.5-7B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF)(Apache License 2.0, Copyright Alibaba Cloud)。

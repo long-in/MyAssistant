@@ -47,10 +47,10 @@ async fn wait_for_answer(
     }
 }
 
-/// 音声対話の1ターンをファイル操作ツール付きで実行する(Claude専用。Anthropic直接またはBedrock)。
+/// 音声対話の1ターンをファイル操作ツール付きで実行する(Anthropic直接・Bedrock・端末内のLLM)。
 /// `history`は直前までの会話(`user`/`assistant`のテキスト)で、今回の発話は`user_text`で渡す。
 /// ツールの使い方は`system`の固定部分の末尾へ足す(設定を変えない限り変わらず、キャッシュの対象になる)。
-/// `web_access`が有効なときは、インターネット検索・ページ取得(サーバーツール)も渡す。Bedrockでは使えない。
+/// `web_access`が有効なときは、インターネット検索・ページ取得(サーバーツール)も渡す。Bedrockと端末内のLLMでは使えない。
 /// `shell_access`が有効なときは、作業計画の提示とシェルコマンドの実行も渡す。
 /// `skills`の範囲だけ、スキル用のツール(手順の読み込み・作成・更新・削除)とその使い方も渡す。リーダーにも渡す。
 /// 進捗(ツール呼び出し・承認要求・コマンド出力)は`on_event`へ流す。実行中は`task_cancel`で中断できる。
@@ -86,7 +86,7 @@ pub async fn run_with_tools(
     if shell_access {
         system.push_str(&format!("\n\n{}", tool_loop::shell_guide()));
     }
-    // 検索・ページ取得はAnthropicのサーバーツールで、Bedrockには無い
+    // 検索・ページ取得はAnthropicのサーバーツールで、Bedrockと端末内のLLMには無い
     if let Some((search_max, fetch_max)) = web_access.filter(|_| provider == Provider::Anthropic) {
         system.push_str(&format!("\n\n{}", tool_loop::WEB_GUIDE));
         tools.extend(tool_loop::web_tool_definitions(search_max, fetch_max));
