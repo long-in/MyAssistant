@@ -10,7 +10,8 @@ use crate::{
         attention::{self, AttentionKind},
         cancel::CancelToken,
         harness::Limits,
-        leader, llm_client,
+        leader,
+        llm_client::{self, SystemPrompt},
         secrets::Provider,
         skills::Access as SkillAccess,
         workspace::{Ctx, WorkspaceCtx, Workspaces},
@@ -49,6 +50,7 @@ async fn wait_for_answer(
 
 /// 音声対話の1ターンをファイル操作ツール付きで実行する(Claude専用。Anthropic直接またはBedrock)。
 /// `history`は直前までの会話(`user`/`assistant`のテキスト)で、今回の発話は`user_text`で渡す。
+/// ツールの使い方は`system`の固定部分の末尾へ足す(設定を変えない限り変わらず、キャッシュの対象になる)。
 /// `web_access`が有効なときは、インターネット検索・ページ取得(サーバーツール)も渡す。Bedrockでは使えない。
 /// `shell_access`が有効なときは、作業計画の提示とシェルコマンドの実行も渡す。
 /// `skills`の範囲だけ、スキル用のツール(手順の読み込み・作成・更新・削除)とその使い方も渡す。リーダーにも渡す。
@@ -60,7 +62,7 @@ pub async fn run_with_tools(
     root: &Path,
     provider: Provider,
     model: &str,
-    system: &str,
+    system: SystemPrompt,
     web_access: Option<(u32, u32)>,
     shell_access: bool,
     host: Option<tool_loop::ToolHost<'_>>,
@@ -75,10 +77,13 @@ pub async fn run_with_tools(
     std::fs::create_dir_all(root).map_err(|e| AppError::Io(e.to_string()))?;
     // リーダーは、ファイル・コマンド・Webに代えて、台帳の参照と配布の下書きのツールだけを使う
     let leader = host.is_some();
-    let (mut system, mut tools) = if leader {
-        (format!("{system}\n\n{}", leader::TOOL_GUIDE), leader::tool_definitions())
+    let SystemPrompt { stable: mut system, volatile } = system;
+    let mut tools = if leader {
+        system.push_str(&format!("\n\n{}", leader::TOOL_GUIDE));
+        leader::tool_definitions()
     } else {
-        (format!("{system}\n\n{}", tool_loop::TOOL_GUIDE), tool_loop::tool_definitions(shell_access))
+        system.push_str(&format!("\n\n{}", tool_loop::TOOL_GUIDE));
+        tool_loop::tool_definitions(shell_access)
     };
     let (shell_access, web_access) = if leader { (false, None) } else { (shell_access, web_access) };
     // ハーネスは権限を絞る方向にだけ働く。許していないツールは、定義もガイドも渡さない(実行時にも拒否する)
@@ -99,6 +104,7 @@ pub async fn run_with_tools(
         tools.extend(tool_loop::skill_tool_definitions(skills));
     }
     tools.retain(|t| t["name"].as_str().is_none_or(|n| limits.allows(n)));
+    let system = SystemPrompt { stable: system, volatile };
     let (system, tools) = (&system, &tools);
     let cancel = CancelToken::default();
     state.set_cancel(cancel.clone());
