@@ -824,6 +824,4 @@ export const EN: Record<string, string> = {
   "{n}往復": "{n} exchanges",
   "情報": "Info",
   "スキル": "Skill",
-  "スキル: 自動": "Skill: Auto",
-  "この依頼に使うスキル。「自動」では、発話に合うものがあれば候補になります": "Skill for this request. With \"Auto\", matching skills are suggested if there are any",
 };
