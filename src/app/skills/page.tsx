@@ -1,8 +1,10 @@
 "use client";
 
+import { useEditShortcuts } from "@/lib/useEditShortcuts";
+import { Kbd } from "@/components/Kbd";
 import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useState } from "react";
-import { Download, Eye, Loader2, Pencil, Plus, Upload, Save, ScrollText, Trash2 } from "lucide-react";
+import { Download, Loader2, Pencil, Plus, Upload, Save, ScrollText, Trash2 } from "lucide-react";
 import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -179,6 +181,10 @@ export default function Skills() {
   const canSave = dirty && nameOk && !nameTaken && fieldsOk && !saving;
 
   const save = async () => {
+    if (!dirty && !creating && editMode) {
+      setEditMode(false); // 変更が無ければ保存せず閲覧に戻る
+      return;
+    }
     if (!canSave) return;
     setSaving(true);
     try {
@@ -189,6 +195,7 @@ export default function Skills() {
       setSaved(d);
       setDraft(d);
       await refresh();
+      setEditMode(false);
       toast.success(t("保存しました。"));
     } catch (e) {
       toast.error(reportError(e));
@@ -215,17 +222,8 @@ export default function Skills() {
     }
   };
 
-  // Cmd/Ctrl+Sで保存
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-        e.preventDefault();
-        save();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
+  // `e`で編集、Cmd/Ctrl+Sで保存
+  useEditShortcuts({ canEdit: open, editMode, onEdit: () => setEditMode(true), onSave: save });
 
   const count = (s: string) => [...s].length;
 
@@ -296,13 +294,14 @@ export default function Skills() {
                 {dirty && <StatusPill on>{t("未保存")}</StatusPill>}
               </span>
               <div className="flex shrink-0 gap-2">
-                <Button size="sm" variant="outline" onClick={() => setEditMode((v) => !v)}>
-                  {editMode ? <Eye /> : <Pencil />}
-                  {editMode ? t("プレビュー") : t("編集")}
-                </Button>
+                {!editMode && (
+                  <Button size="sm" variant="outline" onClick={() => setEditMode(true)}>
+                    <Pencil /> {t("編集")} <Kbd>E</Kbd>
+                  </Button>
+                )}
                 <Button size="sm" disabled={!canSave} onClick={save}>
                   {saving ? <Loader2 className="animate-spin" /> : <Save />}
-                  {t("保存")}
+                  {t("保存")} <Kbd>⌘S</Kbd>
                 </Button>
                 {!creating && (
                   <Button size="sm" variant="ghost" className="text-destructive" onClick={remove}>
