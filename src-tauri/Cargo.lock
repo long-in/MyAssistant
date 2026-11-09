@@ -105,6 +105,7 @@ dependencies = [
  "aws-sdk-bedrock",
  "aws-sdk-bedrockruntime",
  "aws-sdk-sts",
+ "aws-smithy-http-client",
  "aws-smithy-types",
  "aws-types",
  "base64 0.23.1",

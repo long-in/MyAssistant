@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{
-    batch, chat_session, debug_log, global_settings, leader, profile, proofread, prompts, agent_data, skills, stt, tuning, voicevox, wake, workspace,
+    batch, chat_session, debug_log, global_settings, leader, profile, proofread, proxy, prompts, agent_data, skills, stt, tuning, voicevox, wake, workspace,
 };
 
 /// 設定の保存先。
@@ -98,6 +98,10 @@ pub const ALL: &[Setting] = &[
     global(profile::KEY, Some(Kind::Profile)),
     global(batch::BATCH_INTERVAL_KEY, Some(Kind::Interval)),
     global(workspace::WORK_ENABLED_KEY, None),
+    // 通信のプロキシ。端末ごとの設定(認証情報を含みうる)なので、バックアップの対象外
+    global(proxy::ENABLED_KEY, None),
+    global(proxy::URL_KEY, None),
+    global(proxy::USERNAME_KEY, None),
 ];
 
 /// キーの定義。一覧に無ければ`None`。
@@ -155,9 +159,9 @@ mod tests {
     }
 
     #[test]
-    fn global_backup_covers_all_global_keys_except_work_toggle() {
+    fn global_backup_covers_all_global_keys_except_device_local_ones() {
         let exported: Vec<_> = transferable(Scope::Global).map(|(k, _)| k).collect();
-        let expected: Vec<_> = keys(Scope::Global).filter(|k| *k != workspace::WORK_ENABLED_KEY).collect();
+        let expected: Vec<_> = keys(Scope::Global).filter(|k| !matches!(*k, workspace::WORK_ENABLED_KEY | proxy::ENABLED_KEY | proxy::URL_KEY | proxy::USERNAME_KEY)).collect();
         assert_eq!(exported, expected);
     }
 }

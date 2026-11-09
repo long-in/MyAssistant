@@ -2,7 +2,7 @@
 import { LANGS, setLang, tr, useLang, useT, type Lang } from "@/lib/i18n";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Archive, AudioLines, Bell, BrainCircuit, Copy, BookOpen, Keyboard, Pencil, Share2, HardDriveDownload, Volume2, Briefcase, ClipboardList, Download, FolderKanban, Languages, Link2, ListOrdered, Loader2, Mic, Plus, ScrollText, Send, Settings2, ShieldCheck, SlidersHorizontal, Square, Timer, Upload, UserRound, X, type LucideIcon } from "lucide-react";
+import { Archive, AudioLines, Bell, BrainCircuit, Copy, BookOpen, Keyboard, Pencil, Share2, HardDriveDownload, Volume2, Briefcase, ClipboardList, Download, FolderKanban, Globe, Languages, Link2, ListOrdered, Loader2, Mic, Plus, ScrollText, Send, Settings2, ShieldCheck, SlidersHorizontal, Square, Timer, Upload, UserRound, X, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import HelpDrawer from "@/components/HelpDrawer";
 import BackupPasswordModal from "@/components/BackupPasswordModal";
 import { ensureOsPermission, osNotificationsEnabled, setOsNotificationsEnabled, syncOsNotifications } from "@/lib/osNotify";
 import NotePanel from "@/components/NotePanel";
-import { getSharedData, saveSharedData, LEADER_COLOR, LEADER_ID, createLeader, errorMessage, leaderExists, setWorkEnabled, workEnabled, setGlobalLanguage, exportGlobalSettings, importGlobalSettings, backupCreate, restorePrepare, restoreApply, restoreDiscard, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, getBatchInterval, setBatchInterval, type WakeConfig, reportError, type AppError, saveBaseInstructions, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
+import { getSharedData, saveSharedData, LEADER_COLOR, LEADER_ID, createLeader, errorMessage, leaderExists, setWorkEnabled, workEnabled, setGlobalLanguage, getProxySettings, setProxySettings, type ProxySettings, exportGlobalSettings, importGlobalSettings, backupCreate, restorePrepare, restoreApply, restoreDiscard, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, getBatchInterval, setBatchInterval, type WakeConfig, reportError, type AppError, saveBaseInstructions, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
 
 /** 見出しの左に出すアイコン(英字の見出しごと)。無いものは歯車。 */
 const HEADING_ICONS: Record<string, LucideIcon> = {
@@ -31,6 +31,7 @@ const HEADING_ICONS: Record<string, LucideIcon> = {
   Backup: Archive,
   Work: Briefcase,
   "OS Notifications": Bell,
+  Proxy: Globe,
   "Leader Prompt": ClipboardList,
   "Agent Data": FolderKanban,
   "AI Link": Link2,
@@ -335,6 +336,96 @@ export function OsNotifications() {
         </span>
         <Switch checked={on} onCheckedChange={(v) => void change(v)} />
       </label>
+    </section>
+  );
+}
+
+/** 通信のプロキシ。無効にしても設定は残り、再び有効にすると保持した設定で使える。端末ごとの設定で、バックアップには含めない。 */
+export function ProxyPanel() {
+  const t = useT();
+  const [saved, setSaved] = useState<ProxySettings | null>(null);
+  const [url, setUrl] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const apply = (s: ProxySettings) => {
+    setSaved(s);
+    setUrl(s.url);
+    setUsername(s.username);
+    setPassword("");
+  };
+  useEffect(() => {
+    getProxySettings().then(apply).catch((e) => toast.error(reportError(e)));
+  }, []);
+  const persist = async (enabled: boolean, pw?: string) => {
+    const trimmed = url.trim();
+    if (trimmed && !/^https?:\/\/[^\s/@]+(\/)?$/i.test(trimmed)) {
+      toast.error(t("プロキシのURLは http://ホスト:ポート の形式で入力してください(ユーザー名・パスワードは別の欄に入力します)。"));
+      return;
+    }
+    if (enabled && !trimmed) {
+      toast.error(t("有効にするには、プロキシのURLを入力してください。"));
+      return;
+    }
+    setBusy(true);
+    try {
+      apply(await setProxySettings(enabled, trimmed, username.trim(), pw ?? (password || undefined)));
+      toast.success(enabled ? t("プロキシを有効にしました。") : t("プロキシ設定を保存しました。"));
+    } catch (e) {
+      toast.error(reportError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const on = saved?.enabled ?? false;
+  const dirty = !!saved && (url.trim() !== saved.url || username.trim() !== saved.username || password !== "");
+  return (
+    <section className="hud-panel hud-accent px-5 py-4">
+      <Heading title="Proxy" help={t("プロキシ")} status={<StatusPill on={on}>{on ? t("オン") : t("オフ")}</StatusPill>}>
+        <p>{t("このアプリの外向きの通信(AI・音声・モデルの取得・AWS)を、プロキシ経由にします。")}</p>
+        <ul>
+          <li>{t("無効にするとプロキシは使いませんが、URL・ユーザー名・パスワードは保持します。再び有効にすると、保持した設定で使えます。")}</li>
+          <li>{t("保存すると、次の通信から反映されます(再起動は不要です)。")}</li>
+          <li>{t("localhost宛て(VOICEVOXやローカルLLM)は、常にプロキシを通しません。")}</li>
+          <li>{t("パスワードは端末内に保存し、画面には表示しません。設定のバックアップにも含まれません。")}</li>
+        </ul>
+      </Heading>
+      <label className="flex items-center justify-between gap-4 text-sm">
+        <span className="text-xs text-muted-foreground">{t("通信をプロキシ経由にする")}</span>
+        <Switch checked={on} disabled={!saved || busy} onCheckedChange={(v) => void persist(v)} />
+      </label>
+      <div className="mt-3 flex flex-col gap-3">
+        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+          {t("プロキシのURL")}
+          <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://proxy.example.com:8080" autoComplete="off" spellCheck={false} />
+        </label>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            {t("ユーザー名(任意)")}
+            <Input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" spellCheck={false} />
+          </label>
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            {t("パスワード(任意)")}
+            <Input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder={saved?.has_password ? t("登録済み(変更するときだけ入力)") : ""}
+              autoComplete="new-password"
+            />
+          </label>
+        </div>
+        <div className="flex items-center justify-end gap-2">
+          {saved?.has_password && (
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => void persist(on, "")}>
+              {t("パスワードを削除")}
+            </Button>
+          )}
+          <Button size="sm" disabled={busy || !dirty} onClick={() => void persist(on)}>
+            {t("保存")}
+          </Button>
+        </div>
+      </div>
     </section>
   );
 }

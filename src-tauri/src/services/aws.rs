@@ -417,11 +417,13 @@ impl Failure {
 }
 
 async fn assume_role(a: &AssumeRole, region: &str, code: Option<&str>) -> Result<(Keys, SystemTime), Failure> {
-    let conf = aws_sdk_sts::Config::builder()
+    let mut conf = aws_sdk_sts::Config::builder()
         .behavior_version_latest()
         .region(Region::new(region.to_owned()))
         .credentials_provider(a.source.credentials())
-        .build();
+        ;
+    conf.set_http_client(super::proxy::aws_http_client());
+    let conf = conf.build();
     let mut req = aws_sdk_sts::Client::from_conf(conf)
         .assume_role()
         .role_arn(&a.role_arn)
@@ -575,11 +577,13 @@ async fn invoke_once(
 ) -> Result<Value, Failure> {
     let mut body = request.clone();
     body["anthropic_version"] = json!("bedrock-2023-05-31");
-    let conf = aws_sdk_bedrockruntime::Config::builder()
+    let mut conf = aws_sdk_bedrockruntime::Config::builder()
         .behavior_version_latest()
         .region(Region::new(region.to_owned()))
         .credentials_provider(keys.credentials())
-        .build();
+        ;
+    conf.set_http_client(super::proxy::aws_http_client());
+    let conf = conf.build();
     let out = tokio::time::timeout(
         timeout,
         aws_sdk_bedrockruntime::Client::from_conf(conf)
@@ -611,11 +615,13 @@ pub async fn fetch_global_models(ctx: &WorkspaceCtx) -> Result<Vec<String>, AppE
 
 async fn list_global_profiles(keys: &Keys, region: &str) -> Result<Vec<String>, Failure> {
     use aws_sdk_bedrock::types::InferenceProfileType;
-    let conf = aws_sdk_bedrock::Config::builder()
+    let mut conf = aws_sdk_bedrock::Config::builder()
         .behavior_version_latest()
         .region(Region::new(region.to_owned()))
         .credentials_provider(keys.credentials())
-        .build();
+        ;
+    conf.set_http_client(super::proxy::aws_http_client());
+    let conf = conf.build();
     let client = aws_sdk_bedrock::Client::from_conf(conf);
     let mut ids = Vec::new();
     let mut token: Option<String> = None;

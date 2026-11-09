@@ -62,7 +62,7 @@ pub async fn transcribe(ctx: &WorkspaceCtx, samples: &[f32], language: &str) -> 
 /// `auto`は言語指定をAPIの自動判定に任せる。
 async fn transcribe_inner(ctx: &WorkspaceCtx, samples: &[f32], language: &str) -> Result<String, AppError> {
     let key = ctx.secrets.get_aqua_key()?.ok_or_else(|| AppError::KeyMissing("aqua".into()))?;
-    let client = reqwest::Client::builder().timeout(TIMEOUT).build().map_err(|_| AppError::Network)?;
+    let client = super::proxy::client_builder().timeout(TIMEOUT).build().map_err(|_| AppError::Network)?;
     let url = format!("{BASE_URL}/audio/transcriptions");
     let wav = to_wav(samples);
     let wav_len = wav.len();
@@ -94,7 +94,7 @@ pub async fn verify_key(key: &str) -> Result<(), AppError> {
 }
 
 async fn verify_key_inner(key: &str) -> Result<(), AppError> {
-    let client = reqwest::Client::builder().timeout(TIMEOUT).build().map_err(|_| AppError::Network)?;
+    let client = super::proxy::client_builder().timeout(TIMEOUT).build().map_err(|_| AppError::Network)?;
     let file = Part::bytes(to_wav(&[0.0; 1600]))
         .file_name("audio.wav")
         .mime_str("audio/wav")

@@ -162,7 +162,7 @@ pub async fn complete_with_tools(
             _ => {
                 let key = ctx.secrets.get_key(provider)?
                     .ok_or_else(|| AppError::KeyMissing(provider.as_str().to_owned()))?;
-                let client = reqwest::Client::builder()
+                let client = super::proxy::client_builder()
                     .timeout(TASK_TIMEOUT)
                     .build()
                     .map_err(|_| AppError::Network)?;
@@ -273,7 +273,7 @@ async fn complete_inner(
         Provider::Anthropic => {
             let key = ctx.secrets.get_key(provider)?
                 .ok_or_else(|| AppError::KeyMissing(provider.as_str().to_owned()))?;
-            let client = reqwest::Client::builder()
+            let client = super::proxy::client_builder()
                 .timeout(Duration::from_secs(60))
                 .build()
                 .map_err(|_| AppError::Network)?;

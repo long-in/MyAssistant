@@ -12,6 +12,7 @@ import {
   AppBackup,
   LanguageSetting,
   OsNotifications,
+  ProxyPanel,
   PersonalData,
   TuningPanel,
   VOICE_FIELDS,
@@ -137,6 +138,7 @@ export default function GlobalSettings() {
             <BatchInterval />
             <LanguageSetting />
             <OsNotifications />
+            <ProxyPanel />
             <GlobalBackup />
             <AppBackup />
           </TabsContent>
