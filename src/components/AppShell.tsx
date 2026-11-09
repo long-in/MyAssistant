@@ -48,7 +48,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const lang = useLang();
   const [debug, setDebug] = useState(false);
   const [chatReady, setChatReady] = useState(false);
-  const [modelSlot, setModelSlot] = useState<HTMLElement | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const onChat = pathname === "/";
@@ -196,7 +195,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         {[...MAIN_NAV, ...(debug ? [DEBUG_NAV] : [])].map((n) => navLink(n))}
         <div className="my-2 h-px w-full bg-border" />
         {[ALL_KNOWLEDGE_NAV, GLOBAL_NAV, HELP_NAV].map((n) => navLink(n, true))}
-        <div ref={setModelSlot} className={cn("mt-auto hidden px-1 pt-4", !collapsed && "md:block")} />
         <button
           type="button"
           onClick={toggleCollapsed}
@@ -214,7 +212,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <main className="min-w-0 flex-1 overflow-hidden">
         {chatReady && (
           <div className={cn("h-full", !onChat && "hidden")}>
-            <Chat key={workspaceId} workspaceId={workspaceId} active={onChat} modelSlot={modelSlot} />
+            <Chat key={workspaceId} workspaceId={workspaceId} active={onChat} />
           </div>
         )}
         {!onChat && <div key={`${workspaceId}:${settingsVersion}`} className="h-full">{children}</div>}

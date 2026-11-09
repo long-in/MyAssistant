@@ -12,13 +12,17 @@ type Props = {
   models: ModelInfo[];
   keyStatus: Partial<KeyStatus>;
   onChange: (route: Route) => void;
+  /** 入力欄の中に置く小さな見た目(枠なし)。 */
+  compact?: boolean;
+  /** 応答の生成中など、切り替えさせないとき。 */
+  disabled?: boolean;
 };
 
 /**
  * チャットのモデル切り替え。VS Codeの拡張機能のチャットのように、現在のモデルを示すボタンを押すと、
  * プロバイダごとに分けたモデルの一覧が開き、選ぶとすぐ切り替わる。
  */
-export default function ModelPicker({ route, models, keyStatus, onChange }: Props) {
+export default function ModelPicker({ route, models, keyStatus, onChange, compact, disabled }: Props) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState<DOMRect | null>(null);
@@ -58,8 +62,12 @@ export default function ModelPicker({ route, models, keyStatus, onChange }: Prop
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={t("モデル")}
+        disabled={disabled}
         onClick={toggle}
-        className="flex w-full items-center gap-2 rounded-md border bg-background/60 px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-accent/50"
+        className={cn(
+          "flex items-center gap-1.5 text-left text-xs transition-colors hover:bg-accent/50 disabled:pointer-events-none disabled:opacity-50",
+          compact ? "max-w-full rounded-md px-2 py-1 text-muted-foreground hover:text-foreground" : "w-full rounded-md border bg-background/60 px-2.5 py-1.5",
+        )}
       >
         <Sparkles className="size-3.5 shrink-0 text-primary" />
         <span className="min-w-0 flex-1 truncate">{current?.label ?? route.model}</span>

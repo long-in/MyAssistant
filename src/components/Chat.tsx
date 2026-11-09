@@ -8,7 +8,6 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { approvalLine } from "@/components/AttentionToasts";
 import { notifyOsIfBackground } from "@/lib/osNotify";
-import { createPortal } from "react-dom";
 import ModelPicker from "./ModelPicker";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -134,8 +133,8 @@ const sessionOf = (workspaceId: string) => {
   return s;
 };
 
-/** `active`は対話画面を表示中かどうか。`modelSlot`はモデル選択を表示する左メニュー下部の要素。他の画面へ移動しても`Chat`は`AppShell`に残り、進行中の処理や待機を続ける。 */
-export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: string; active: boolean; modelSlot: HTMLElement | null }) {
+/** `active`は対話画面を表示中かどうか。他の画面へ移動しても`Chat`は`AppShell`に残り、進行中の処理や待機を続ける。 */
+export default function Chat({ workspaceId, active }: { workspaceId: string; active: boolean }) {
   const t = useT();
   const activeRef = useRef(active);
   useEffect(() => {
@@ -964,7 +963,6 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
   return (
     <div className="relative flex h-full flex-col">
       <WorkspaceBadge className="pointer-events-none absolute top-4 right-4 z-10" />
-      {modelSlot && createPortal(<ModelPicker route={route} models={models} keyStatus={keyStatus} onChange={changeRoute} />, modelSlot)}
       {setup && (
         <div className="mx-6 mt-4 flex flex-col gap-2 empty:hidden">
           {!Object.values(keyStatus).some(Boolean) && Object.keys(keyStatus).length > 0 && <SetupNotice text={t("APIキーが未登録のため、AIが応答できません。")} action={t("設定を開く")} onAction={() => router.push("/setup")} />}
@@ -1085,12 +1083,13 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
             {speakReply ? <Volume2 /> : <VolumeX />}
           </Button>
           <form
-            className="flex min-w-0 flex-1 items-stretch gap-2"
+            className="min-w-0 flex-1"
             onSubmit={(e) => {
               e.preventDefault();
               submitDraft();
             }}
           >
+            <div className="flex flex-col rounded-lg border border-primary/30 bg-background/60 focus-within:border-primary">
             <Textarea
               value={draft}
               rows={3}
@@ -1104,18 +1103,25 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
               disabled={busy || needModel}
               placeholder={status}
               aria-label={t("メッセージ")}
-              className="max-h-48 min-h-20 resize-none border-primary/30 bg-background/60 focus-visible:border-primary"
+              className="max-h-48 min-h-20 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
-            <Button
-              type="submit"
-              variant="outline"
-              aria-label={t("送信")}
-              title={t("送信")}
-              disabled={!draft.trim() || busy || needModel || mic !== "idle"}
-              className="h-auto w-14 shrink-0 flex-col [&_svg]:size-5"
-            >
-              <Send />
-            </Button>
+            <div className="flex items-center justify-between gap-2 px-2 pb-2">
+              <div className="min-w-0 max-w-64">
+                <ModelPicker compact disabled={busy} route={route} models={models} keyStatus={keyStatus} onChange={changeRoute} />
+              </div>
+              <Button
+                type="submit"
+                size="icon-sm"
+                variant="outline"
+                aria-label={t("送信")}
+                title={t("送信")}
+                disabled={!draft.trim() || busy || needModel || mic !== "idle"}
+                className="shrink-0"
+              >
+                <Send />
+              </Button>
+            </div>
+            </div>
           </form>
         </div>
       </div>
