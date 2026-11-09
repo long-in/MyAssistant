@@ -1,6 +1,9 @@
 //! スキル画面から呼ぶコマンド。保存先は、そのエージェントのナレッジ配下(`services::skills`)。
 use serde::Serialize;
 
+use super::settings_transfer::json_path;
+use crate::services::settings_transfer::MAX_FILE_BYTES;
+
 use crate::{
     services::{
         batch,
@@ -51,4 +54,35 @@ pub fn load_skills_route(ctx: Ctx) -> Option<Route> {
 #[tauri::command]
 pub fn save_skills_route(ctx: Ctx, route: Route) -> Result<(), AppError> {
     skills::save_route(&ctx, &route)
+}
+
+/// 全スキルを`dest`のJSONファイルへ書き出す。件数を返す。
+#[tauri::command]
+pub fn export_skills(ctx: Ctx, dest: String) -> Result<usize, AppError> {
+    let dest = json_path(&dest)?;
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let (json, n) = skills::export_json(&batch::knowledge_root(&ctx)?, now)?;
+    std::fs::write(&dest, json).map_err(|e| AppError::Io(e.to_string()))?;
+    Ok(n)
+}
+
+fn read_import(src: &str) -> Result<String, AppError> {
+    let src = json_path(src)?;
+    let meta = std::fs::metadata(&src).map_err(|e| AppError::Io(e.to_string()))?;
+    if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
+        return Err(AppError::InvalidSkill("ファイルが大きすぎます。".into()));
+    }
+    std::fs::read_to_string(&src).map_err(|e| AppError::Io(e.to_string()))
+}
+
+/// 取り込み前の確認。件数と、上書きになる名前を返す。何も変更しない。
+#[tauri::command]
+pub fn preview_import_skills(ctx: Ctx, src: String) -> Result<skills::ImportPreview, AppError> {
+    skills::preview_import(&batch::knowledge_root(&ctx)?, &read_import(&src)?)
+}
+
+/// 書き出したファイルを取り込む。不正な項目が1つでもあれば何も変更しない。同名は`overwrite`なら上書き、そうでなければ飛ばす。
+#[tauri::command]
+pub fn import_skills(ctx: Ctx, src: String, overwrite: bool) -> Result<skills::ImportReport, AppError> {
+    skills::import_json(&batch::knowledge_root(&ctx)?, &read_import(&src)?, overwrite)
 }

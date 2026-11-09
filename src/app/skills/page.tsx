@@ -2,8 +2,8 @@
 
 import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useState } from "react";
-import { Eye, Loader2, Pencil, Plus, Save, ScrollText, Trash2 } from "lucide-react";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { Download, Eye, Loader2, Pencil, Plus, Upload, Save, ScrollText, Trash2 } from "lucide-react";
+import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
@@ -22,10 +22,13 @@ import {
   type Skill,
   createSkill,
   deleteSkill,
+  exportSkills,
   getKeyStatus,
+  importSkills,
   listModels,
   listSkills,
   loadSkillsRoute,
+  previewImportSkills,
   reportError,
   saveSkillsRoute,
   updateSkill,
@@ -62,6 +65,7 @@ export default function Skills() {
   const [route, setRoute] = useState<Route | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [keyStatus, setKeyStatus] = useState<Partial<KeyStatus>>({});
+  const [transferring, setTransferring] = useState(false);
 
   const refresh = useCallback(
     () =>
@@ -129,6 +133,57 @@ export default function Skills() {
     setSaved(EMPTY);
     setDraft(EMPTY);
     setEditMode(false);
+  };
+
+  const exportJson = async () => {
+    const stamp = new Date().toISOString().slice(0, 10);
+    const dest = await saveDialog({
+      title: t("スキルのエクスポート"),
+      defaultPath: `myassistant-skills-${stamp}.json`,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (!dest) return;
+    setTransferring(true);
+    try {
+      const n = await exportSkills(dest);
+      toast.success(t("{n}件のスキルを書き出しました。", { n }));
+    } catch (e) {
+      toast.error(reportError(e));
+    } finally {
+      setTransferring(false);
+    }
+  };
+
+  // 同名のスキルがあるときは、上書きするか、飛ばすかを取り込み前に確認する
+  const importJson = async () => {
+    if (!(await confirmDiscard())) return;
+    const src = await openDialog({
+      title: t("スキルのインポート"),
+      multiple: false,
+      directory: false,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (typeof src !== "string") return;
+    setTransferring(true);
+    try {
+      const p = await previewImportSkills(src);
+      let overwrite = false;
+      if (p.conflicts.length > 0) {
+        const shown = p.conflicts.slice(0, 5).join("、") + (p.conflicts.length > 5 ? t("、ほか{n}件", { n: p.conflicts.length - 5 }) : "");
+        overwrite = await ask(
+          t("同じ名前のスキルが{n}件あります({names})。上書きしますか?「飛ばす」を選ぶと、同名のスキルは取り込みません。", { n: p.conflicts.length, names: shown }),
+          { title: t("インポートの確認"), kind: "warning", okLabel: t("上書きする"), cancelLabel: t("飛ばす") },
+        );
+      }
+      const r = await importSkills(src, overwrite);
+      close();
+      await refresh();
+      toast.success(t("{added}件を追加、{updated}件を上書き、{skipped}件を飛ばしました。", { added: r.added, updated: r.updated, skipped: r.skipped }));
+    } catch (e) {
+      toast.error(reportError(e));
+    } finally {
+      setTransferring(false);
+    }
   };
 
   const skill = toSkill(draft);
@@ -239,6 +294,14 @@ export default function Skills() {
           <Button size="sm" className="w-full" onClick={startCreate}>
             <Plus /> {t("新しいスキル")}
           </Button>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <Button size="sm" variant="outline" disabled={transferring} onClick={importJson}>
+              <Upload /> {t("インポート")}
+            </Button>
+            <Button size="sm" variant="outline" disabled={transferring || skills.length === 0} onClick={exportJson}>
+              <Download /> {t("エクスポート")}
+            </Button>
+          </div>
           <p className="mt-2 text-xs text-muted-foreground">
             {t("会話から作ることもできます。「〜をスキルにして」のように「スキル」と言って頼んでください。")}
           </p>

@@ -288,6 +288,96 @@ pub fn delete(root: &Path, name: &str) -> Result<(), AppError> {
     fs::remove_file(write_dir(root)?.join(format!("{name}.md"))).map_err(io)
 }
 
+// ---------- エクスポート・インポート ----------
+
+/// 書き出しファイルの形式の版。
+const TRANSFER_VERSION: u32 = 1;
+
+/// 書き出し・取り込みのJSONファイル。
+#[derive(Debug, Serialize, Deserialize)]
+struct TransferFile {
+    version: u32,
+    #[serde(default)]
+    exported_at: String,
+    skills: Vec<Skill>,
+}
+
+/// 取り込み前の確認結果。
+#[derive(Debug, Serialize)]
+pub struct ImportPreview {
+    /// ファイル内のスキル数。
+    pub total: usize,
+    /// 既に同名(大文字小文字を区別しない)があり、上書きになるスキルの名前。
+    pub conflicts: Vec<String>,
+}
+
+/// 取り込みの結果。
+#[derive(Debug, Serialize)]
+pub struct ImportReport {
+    pub added: usize,
+    pub updated: usize,
+    pub skipped: usize,
+}
+
+/// 全スキルをJSON文字列にする。取り込みにそのまま使える形式。
+pub fn export_json(root: &Path, exported_at: String) -> Result<(String, usize), AppError> {
+    let skills = list(root);
+    let n = skills.len();
+    let file = TransferFile { version: TRANSFER_VERSION, exported_at, skills };
+    let json = serde_json::to_string_pretty(&file).map_err(|e| invalid(e.to_string()))?;
+    Ok((json, n))
+}
+
+/// 取り込むJSONを読み、全件を検証する。1件でも不正なら全体を拒否する。ファイル内の同名(大文字小文字を区別しない)は後の項目を採る。
+fn parse_import(text: &str) -> Result<Vec<Skill>, AppError> {
+    let file: TransferFile = serde_json::from_str(text).map_err(|_| invalid("スキルの書き出しファイルではありません。"))?;
+    if file.version != TRANSFER_VERSION {
+        return Err(invalid("このファイルの形式には対応していません。"));
+    }
+    let mut out: Vec<Skill> = Vec::new();
+    for skill in file.skills {
+        let skill = normalize(skill);
+        validate(&skill)?;
+        let lower = skill.name.to_lowercase();
+        out.retain(|s| s.name.to_lowercase() != lower);
+        out.push(skill);
+    }
+    Ok(out)
+}
+
+/// 取り込み前に、件数と上書きになるスキルを調べる。何も変更しない。
+pub fn preview_import(root: &Path, text: &str) -> Result<ImportPreview, AppError> {
+    let incoming = parse_import(text)?;
+    let existing = list(root);
+    let conflicts = incoming
+        .iter()
+        .filter(|s| existing.iter().any(|e| e.name.to_lowercase() == s.name.to_lowercase()))
+        .map(|s| s.name.clone())
+        .collect();
+    Ok(ImportPreview { total: incoming.len(), conflicts })
+}
+
+/// 取り込む。同名は`overwrite`なら既存のファイル名のまま上書きし、そうでなければ飛ばす。
+pub fn import_json(root: &Path, text: &str, overwrite: bool) -> Result<ImportReport, AppError> {
+    let incoming = parse_import(text)?;
+    let mut report = ImportReport { added: 0, updated: 0, skipped: 0 };
+    for skill in incoming {
+        let existing = list(root).into_iter().find(|e| e.name.to_lowercase() == skill.name.to_lowercase());
+        match existing {
+            None => {
+                create(root, skill)?;
+                report.added += 1;
+            }
+            Some(_) if !overwrite => report.skipped += 1,
+            Some(e) => {
+                update(root, Skill { name: e.name, ..skill })?;
+                report.updated += 1;
+            }
+        }
+    }
+    Ok(report)
+}
+
 // ---------- 選定 ----------
 
 /// 選定に渡す1行。呼び出し語があれば添える。
@@ -547,6 +637,46 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("knowledge");
         (dir, root)
+    }
+
+    #[test]
+    fn export_import_round_trip_and_conflicts() {
+        let (_d, src) = root();
+        create(&src, skill("朝の報告")).unwrap();
+        create(&src, skill("weekly")).unwrap();
+        let (json, n) = export_json(&src, "2026-01-01T00:00:00Z".into()).unwrap();
+        assert_eq!(n, 2);
+
+        let (_d2, dst) = root();
+        let p = preview_import(&dst, &json).unwrap();
+        assert_eq!((p.total, p.conflicts.len()), (2, 0));
+        let r = import_json(&dst, &json, false).unwrap();
+        assert_eq!((r.added, r.updated, r.skipped), (2, 0, 0));
+        assert_eq!(list(&dst), list(&src));
+
+        // 同名: 上書きしないなら飛ばし、上書きするなら置き換える
+        let mut changed = skill("WEEKLY");
+        changed.body = "新しい本文".into();
+        let text = json.replace("\"weekly\"", "\"WEEKLY\"").replace(&skill("x").body.replace('\n', "\\n"), "新しい本文");
+        assert_eq!(preview_import(&dst, &text).unwrap().conflicts.len(), 2);
+        let r = import_json(&dst, &text, false).unwrap();
+        assert_eq!((r.added, r.updated, r.skipped), (0, 0, 2));
+        let r = import_json(&dst, &text, true).unwrap();
+        assert_eq!((r.added, r.updated, r.skipped), (0, 2, 0));
+        assert_eq!(get(&dst, "weekly").unwrap().body, changed.body);
+        assert!(list(&dst).iter().all(|s| s.name != "WEEKLY"));
+    }
+
+    #[test]
+    fn import_rejects_everything_when_one_is_invalid() {
+        let (_d, dst) = root();
+        let text = r#"{"version":1,"skills":[
+            {"name":"ok","description":"d","triggers":[],"body":"b"},
+            {"name":"bad/name","description":"d","triggers":[],"body":"b"}]}"#;
+        assert!(import_json(&dst, text, true).is_err());
+        assert!(list(&dst).is_empty());
+        assert!(import_json(&dst, "{}", true).is_err());
+        assert!(import_json(&dst, r#"{"version":2,"skills":[]}"#, true).is_err());
     }
 
     #[test]
