@@ -95,7 +95,7 @@ export default function ChatThread({
           <div key={turn.userAt.getTime()} className="flex flex-col gap-2">
             {isLast && editing !== null ? (
               <form
-                className="flex w-full max-w-xl items-center gap-1.5 self-end"
+                className="flex w-full max-w-3xl items-center gap-1.5 self-end"
                 onSubmit={(e) => {
                   e.preventDefault();
                   void save();
@@ -110,7 +110,7 @@ export default function ChatThread({
                 </Button>
               </form>
             ) : (
-              <div className="group flex items-start gap-1 self-end">
+              <div className="group flex max-w-full items-start gap-1 self-end">
                 {isLast && !busy && (
                   <Button
                     type="button"
@@ -124,7 +124,7 @@ export default function ChatThread({
                     <Pencil />
                   </Button>
                 )}
-                <p className="max-w-[min(36rem,85%)] min-w-0 rounded-2xl rounded-br-sm bg-primary/10 px-4 py-2 text-sm leading-6 break-words whitespace-pre-wrap">{turn.user}</p>
+                <p className="max-w-3xl min-w-0 rounded-2xl rounded-br-sm bg-primary/10 px-4 py-2 text-sm leading-6 break-words whitespace-pre-wrap">{turn.user}</p>
               </div>
             )}
             {turn.log && <TurnLog log={turn.log} running={running} onCancel={onCancelTask} />}
