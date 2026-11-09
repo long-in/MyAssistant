@@ -203,7 +203,7 @@ fn walk(root: &Path, dir: &Path, depth: u8, out: &mut Vec<KnowledgeFile>) -> Res
     }
     for entry in fs::read_dir(dir).map_err(io)? {
         let entry = entry.map_err(io)?;
-        // `.`始まり(`.my-assistant`のスキル・コマンド権限、Obsidianの設定など)はノートではない
+        // `.`始まり(`.my-assistant`のコマンド権限、Obsidianの設定など)はノートではない
         if entry.file_name().to_string_lossy().starts_with('.') {
             continue;
         }
@@ -356,13 +356,13 @@ pub fn import(root: &Path, src: &Path) -> Result<TransferReport, AppError> {
 }
 
 /// ナレッジ内のMarkdownをすべて削除し、空になったフォルダを片付ける。
-/// 保存先がObsidianのvault等でも、Markdown以外のファイルや設定には触れない。
+/// 保存先がObsidianのvault等でも、Markdown以外のファイルや設定には触れない。スキル(`Skills/`)は残す。
 pub fn reset(root: &Path) -> Result<TransferReport, AppError> {
     let mut report = TransferReport::default();
     if !root.exists() {
         return Ok(report);
     }
-    for f in list(root)? {
+    for f in list(root)?.into_iter().filter(|f| !super::skills::is_skill(&f.path)) {
         fs::remove_file(resolve_existing(root, &f.path)?).map_err(io)?;
         report.files += 1;
     }
@@ -483,7 +483,7 @@ pub fn recent_context(root: &Path, max_files: usize, max_chars: usize) -> Result
             f.path != CORRECTIONS_PATH
                 && f.category != CAPTURE_CATEGORY
                 && !super::memory::is_memory(&f.path)
-                && !super::harness::is_harness(&f.path)
+                && !super::skills::is_skill(&f.path)
         })
         .take(max_files)
     {
@@ -759,16 +759,21 @@ mod tests {
     }
 
     #[test]
-    fn dot_folders_are_not_notes_and_survive_reset() {
+    fn dot_folders_are_not_notes_and_skills_survive_reset() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("knowledge");
         create_file(&root, "Dev/a.md", "2026-10-29T00:00:00Z").unwrap();
-        fs::create_dir_all(root.join(".my-assistant/skills")).unwrap();
-        fs::write(root.join(".my-assistant/skills/daily.md"), "---\ndescription: \"d\"\n---\n手順").unwrap();
-        let paths: Vec<_> = list(&root).unwrap().into_iter().map(|f| f.path).collect();
-        assert_eq!(paths, ["Dev/a.md"], "スキルはノートの一覧に出ない");
+        fs::create_dir_all(root.join(".my-assistant")).unwrap();
+        fs::write(root.join(".my-assistant/note.md"), "x").unwrap();
+        fs::create_dir_all(root.join("Skills/daily")).unwrap();
+        fs::write(root.join("Skills/daily/SKILL.md"), "---\ndescription: \"d\"\n---\n手順").unwrap();
+        let mut paths: Vec<_> = list(&root).unwrap().into_iter().map(|f| f.path).collect();
+        paths.sort();
+        assert_eq!(paths, ["Dev/a.md", "Skills/daily/SKILL.md"], "`.`始まりはノートではなく、スキルはノートとして見える");
         reset(&root).unwrap();
-        assert!(root.join(".my-assistant/skills/daily.md").is_file(), "初期化はスキルを消さない");
+        assert!(root.join(".my-assistant/note.md").is_file());
+        assert!(root.join("Skills/daily/SKILL.md").is_file(), "初期化はスキルを消さない");
+        assert!(!root.join("Dev").exists());
     }
 
     #[test]

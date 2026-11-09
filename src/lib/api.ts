@@ -65,7 +65,6 @@ export const ERROR_MESSAGES: Record<string, string> = {
   invalid_backup: "バックアップファイルを使えません。このアプリが書き出した、壊れていない新しすぎないzipを選んでください。",
   // エージェント(ワークスペースの管理)の画面に出る文言。表記は言語設定に従う
   invalid_agent_data: "指示は2,000文字以内で、< > と制御文字を含めずに入力してください。",
-  invalid_harness: "ハーネスの内容を確認してください。名前は英数字・日本語・「_」「-」のみ40文字以内、説明は100文字以内(「<」「>」不可)、参照範囲はナレッジ直下からの相対フォルダ、使えるツールは一覧にあるもの、最大ステップ数は1〜40、本文は3,000文字以内で、同じ名前は使えません。",
   invalid_skill: "スキルの内容を確認してください。名前は英数字・日本語・「_」「-」のみ40文字以内、説明は100文字以内(「<」「>」不可)、本文は3,000文字以内で、同じ名前は使えません。",
   invalid_agent: "エージェントの名称(1〜40文字)またはイメージカラーが正しくありません。",
   reserved_name: "その名称は予約されています。別のエージェント名にしてください。",
@@ -176,12 +175,12 @@ export const loadRouting = () => invoke<Route | null>("load_routing");
 export const saveRouting = (route: Route) => invoke<void>("save_routing", { route });
 /**
  * Claudeを選んでいるときはナレッジのファイル操作も行い、その進捗を`onEvent`へ流す。
- * `harness`はハーネスの名前。省略(`null`)なら、発話に合うものを自動で選ぶ。
+ * `skill`は入力欄で指定したスキルの名前。指定すると選定を省いて、その手順で進める。`null`なら発話に合うものを自動で選ぶ。
  */
-export const sendChat = (sessionId: string, text: string, route: Route, harness: string | null, onEvent: (e: TaskEvent) => void) => {
+export const sendChat = (sessionId: string, text: string, route: Route, skill: string | null, onEvent: (e: TaskEvent) => void) => {
   const channel = new Channel<TaskEvent>();
   channel.onmessage = onEvent;
-  return invoke<ChatReply>("send_chat", { sessionId, text, route, harness, onEvent: channel });
+  return invoke<ChatReply>("send_chat", { sessionId, text, route, skill, onEvent: channel });
 };
 
 /** 承認の種類。file=ファイル作成、plan=作業計画、command=計画外・破壊的なコマンドの個別承認、allow_command=許可リストにないコマンドを許可に加えて実行、skill_update=スキルの上書き、skill_delete=スキルの削除。 */
@@ -753,30 +752,6 @@ export const importSkills = (src: string, overwrite: boolean) => invoke<SkillImp
 export const loadSkillsRoute = () => invoke<Route | null>("load_skills_route");
 export const saveSkillsRoute = (route: Route) => invoke<void>("save_skills_route", { route });
 
-/** ハーネス(タスクごとの進め方の定義)。ナレッジ直下の`Harness/<name>.md`に、エージェントごとに保存される。 */
-export type Harness = {
-  name: string;
-  description: string;
-  triggers: string[];
-  /** 参照してよいナレッジの範囲(ナレッジ直下からの相対フォルダ)。空なら制限しない。 */
-  paths: string[];
-  /** 使えるツール。空なら制限しない。 */
-  tools: string[];
-  /** LLMを呼ぶ回数の上限。未指定なら既定。 */
-  max_steps: number | null;
-  /** 出力形式の指示。 */
-  output: string;
-  body: string;
-};
-/** ハーネスの一覧と、定義として使えなかったファイル(理由つき)。 */
-export type HarnessOverview = { harnesses: Harness[]; broken: { name: string; error: string }[] };
-export const HARNESS_LIMITS = { name: 40, description: 100, body: 3000, triggers: 10, trigger: 20, paths: 10, path: 100, output: 300, maxSteps: [1, 40] } as const;
-/** `tools`に書けるツール名。 */
-export const HARNESS_TOOLS = ["list_files", "read_file", "search_files", "remember", "forget", "create_file", "propose_plan", "run_command", "web_search", "web_fetch"] as const;
-export const listHarnesses = () => invoke<HarnessOverview>("list_harnesses");
-export const createHarness = (harness: Harness) => invoke<Harness>("create_harness", { harness });
-export const updateHarness = (harness: Harness) => invoke<Harness>("update_harness", { harness });
-export const deleteHarness = (name: string) => invoke<void>("delete_harness", { name });
 
 export const loadBatchRoute = () => invoke<Route | null>("load_batch_route");
 export const saveBatchRoute = (route: Route) => invoke<void>("save_batch_route", { route });

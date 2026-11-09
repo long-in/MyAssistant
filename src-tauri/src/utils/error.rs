@@ -96,9 +96,6 @@ pub enum AppError {
     /// スキルの不備(名前・長さ・同名・見つからない、など)。メッセージは利用者(とLLM)に見せる文面。
     #[error("invalid skill: {0}")]
     InvalidSkill(String),
-    /// ハーネスの不備(名前・長さ・参照範囲・ツール名・同名・見つからない、など)。メッセージは利用者に見せる文面。
-    #[error("invalid harness: {0}")]
-    InvalidHarness(String),
     /// 貼り付けたAWS設定の不備(プロファイルが無い、キーが無い、MFAコードの形式不正など)。
     #[error("{0}")]
     AwsConfig(String),
@@ -190,7 +187,6 @@ impl AppError {
             Self::InvalidProfile(_) => "invalid_profile",
             Self::InvalidAgentData(_) => "invalid_agent_data",
             Self::InvalidSkill(_) => "invalid_skill",
-            Self::InvalidHarness(_) => "invalid_harness",
             Self::AwsConfig(_) => "aws_config_error",
             Self::MfaRequired => "mfa_required",
             Self::InvalidAgent(_) => "invalid_agent",
