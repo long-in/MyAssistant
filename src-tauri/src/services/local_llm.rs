@@ -563,7 +563,7 @@ async fn download(
     on_progress: &(impl Fn(Progress) + Sync),
 ) -> Result<(), AppError> {
     let io = |e: std::io::Error| AppError::Io(e.to_string());
-    let client = reqwest::Client::builder().connect_timeout(Duration::from_secs(30)).build().map_err(|_| AppError::Network)?;
+    let client = super::proxy::client_builder().connect_timeout(Duration::from_secs(30)).build().map_err(|_| AppError::Network)?;
     let mut res = client.get(url).send().await.map_err(AppError::from_reqwest)?;
     if !res.status().is_success() {
         return Err(AppError::from_status(res.status().as_u16()));

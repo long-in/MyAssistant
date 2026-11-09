@@ -64,7 +64,7 @@ async fn transcribe_inner(ctx: &WorkspaceCtx, samples: &[f32], language: &str) -
         return Err(AppError::TooLong);
     }
     let key = ctx.secrets.get_tts_key()?.ok_or_else(|| AppError::KeyMissing("google_tts".into()))?;
-    let client = reqwest::Client::builder()
+    let client = super::proxy::client_builder()
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|_| AppError::Network)?;

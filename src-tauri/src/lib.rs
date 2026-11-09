@@ -73,6 +73,8 @@ pub fn run() {
       commands::global_settings::get_global_prefs,
       commands::global_settings::set_global_language,
       commands::global_settings::set_global_os_notifications,
+      commands::proxy::get_proxy_settings,
+      commands::proxy::set_proxy_settings,
       commands::chat::add_stt_correction,
       commands::chat::list_models,
       commands::chat::load_routing,
@@ -217,6 +219,10 @@ pub fn run() {
       // 全体設定は、初回だけパーソナルの現在値を初期値として取り込む
       if let Err(e) = personal.global.migrate_from(&personal.db) {
         log::warn!("global settings migration failed: {e}");
+      }
+      // 通信のプロキシは、保存済みの設定を使い始める
+      if let Err(e) = services::proxy::init(&dir, &personal.global) {
+        log::warn!("proxy init failed: {e}");
       }
       app.manage(services::workspace::Workspaces::new(&dir, personal));
       app.manage(commands::chat::SessionContexts::default());

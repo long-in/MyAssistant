@@ -147,7 +147,7 @@ pub fn installed(app_data: &Path) -> bool {
 
 /// `url`を`dest`へ保存する。一時ファイル経由で置き、`min_bytes`未満(途中切れ)は失敗にする。
 async fn download(url: &str, dest: &Path, min_bytes: u64) -> Result<(), AppError> {
-    let mut res = reqwest::get(url).await.map_err(AppError::from_reqwest)?;
+    let mut res = super::proxy::get(url).await?;
     if !res.status().is_success() {
         return Err(AppError::from_status(res.status().as_u16()));
     }

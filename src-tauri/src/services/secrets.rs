@@ -55,6 +55,9 @@ const TTS_ACCOUNT: &str = "google_tts";
 /// Aqua Voice API用のキー。
 const AQUA_ACCOUNT: &str = "aqua";
 
+/// 通信のプロキシのパスワード(`proxy.rs`専用の保管庫に置く)。
+const PROXY_PASSWORD_ACCOUNT: &str = "proxy_password";
+
 /// AWS Bedrock用。`~/.aws/config`と`~/.aws/credentials`の貼り付け内容をそのまま保持する。
 const AWS_CONFIG_ACCOUNT: &str = "aws_config";
 const AWS_CREDENTIALS_ACCOUNT: &str = "aws_credentials";
@@ -206,6 +209,23 @@ impl Secrets {
         self.delete_secret(TTS_ACCOUNT)
     }
 
+    pub fn has_proxy_password(&self) -> Result<bool, AppError> {
+        Ok(self.get_secret(PROXY_PASSWORD_ACCOUNT)?.is_some())
+    }
+
+    /// Rust内部のプロキシ設定専用。コマンドとして公開しないこと。
+    pub(crate) fn get_proxy_password(&self) -> Result<Option<String>, AppError> {
+        self.get_secret(PROXY_PASSWORD_ACCOUNT)
+    }
+
+    pub fn set_proxy_password(&self, password: &str) -> Result<(), AppError> {
+        self.set_secret(PROXY_PASSWORD_ACCOUNT, password)
+    }
+
+    pub fn delete_proxy_password(&self) -> Result<(), AppError> {
+        self.delete_secret(PROXY_PASSWORD_ACCOUNT)
+    }
+
     pub fn has_aqua_key(&self) -> Result<bool, AppError> {
         Ok(self.get_secret(AQUA_ACCOUNT)?.is_some())
     }
@@ -318,7 +338,7 @@ async fn verify_tts_key_inner(key: &str) -> Result<(), AppError> {
 }
 
 fn http_client() -> Result<reqwest::Client, AppError> {
-    reqwest::Client::builder()
+    super::proxy::client_builder()
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|_| AppError::Network)

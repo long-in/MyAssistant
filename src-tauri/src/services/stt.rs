@@ -83,7 +83,7 @@ pub async fn download_model(path: &Path, revision: &str) -> Result<(), AppError>
         .ok_or_else(|| AppError::Stt("unknown model file".into()))?;
     let dir = path.parent().ok_or_else(|| AppError::Stt("invalid model path".into()))?;
     tokio::fs::create_dir_all(dir).await.map_err(|e| AppError::Stt(e.to_string()))?;
-    let mut res = reqwest::get(model.url(revision)).await.map_err(AppError::from_reqwest)?;
+    let mut res = super::proxy::get(&model.url(revision)).await?;
     if !res.status().is_success() {
         return Err(AppError::from_status(res.status().as_u16()));
     }

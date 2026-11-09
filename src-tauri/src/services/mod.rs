@@ -30,6 +30,7 @@ pub mod memory;
 pub mod proofread;
 pub mod prompts;
 pub mod profile;
+pub mod proxy;
 pub mod pronunciation;
 pub mod stt;
 pub mod stt_aqua;
