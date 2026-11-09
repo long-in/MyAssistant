@@ -125,6 +125,14 @@ const MIGRATIONS: &[&str] = &[
     UPDATE OR IGNORE app_settings SET key = 'agent_data' WHERE key = 'space_data';
     DELETE FROM app_settings WHERE key = 'space_data';
     ",
+    // 版5: 発話ごとの実行ログ(ツール呼び出しとコマンドの出力)。ユーザー発話の行IDに結び付け、会話の再開時に画面へ戻す
+    "
+    CREATE TABLE turn_events (
+        user_log_id TEXT PRIMARY KEY,
+        events TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+    ",
 ];
 
 /// 最新の版。

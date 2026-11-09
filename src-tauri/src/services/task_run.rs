@@ -227,6 +227,11 @@ impl TaskState {
         }
     }
 
+    /// いま記録している進捗(実行ログの保存に使う)。
+    pub fn events(&self) -> Vec<TaskEvent> {
+        lock(&self.inner).events.clone()
+    }
+
     /// 回答待ちの承認(あれば)。
     pub fn pending_approval(&self) -> Option<Approval> {
         lock(&self.inner).pending.clone()

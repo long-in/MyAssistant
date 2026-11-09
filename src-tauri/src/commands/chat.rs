@@ -20,7 +20,7 @@ use crate::{
         knowledge, leader,
         llm_router::{self, ModelInfo, Route},
         memory,
-        profile, prompts,
+        chat_session, profile, prompts,
         secrets::Provider,
         skills,
         agent_data, tuning,
@@ -268,6 +268,8 @@ pub async fn run_recorded(
 ) -> Result<ChatReply, AppError> {
     let session = session_id.clone();
     let result = send_chat_inner(app, ctx, contexts, graphs, session_id, text, route).await;
+    // 発話ごとの実行ログを残す。再起動後の再開で、画面に同じログを戻す
+    chat_session::record_events(&ctx.db, &session, &ctx.shared.task.events());
     // リーダーから配布した依頼なら、終わったことを台帳へ残す(後で別の依頼に置き換わっても、結果が分かるように)
     if let Some(leader) = app.try_state::<Workspaces>().and_then(|ws| ws.leader()) {
         let status = if result.is_ok() { leader::STATUS_DONE } else { leader::STATUS_FAILED };

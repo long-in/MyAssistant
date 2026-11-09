@@ -5,6 +5,7 @@ pub mod audio;
 pub mod backup;
 pub mod aws;
 pub mod batch;
+pub mod chat_session;
 pub mod cancel;
 pub mod command_policy;
 pub mod legacy_data;
