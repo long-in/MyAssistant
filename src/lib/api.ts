@@ -778,20 +778,14 @@ export const getBatchInterval = () => invoke<number>("get_batch_interval");
 export const setBatchInterval = (minutes: number) => invoke<void>("set_batch_interval", { minutes });
 export const runBatch = () => invoke<BatchReport | null>("run_batch");
 
-/** 覚えておくこと1件。`inferred`は会話から推測して覚えたもの(確定・削除できる)。 */
-export type MemoryPin = { text: string; date: string; inferred: boolean };
-/** エージェントの記憶(覚えておくこと・担当の理解)。 */
-export type MemoryView = { pins: MemoryPin[]; understanding: string };
-/** 会話の合間の更新で新しく覚えたこと(`memory-updated`イベント)。 */
-export type MemoryUpdated = { workspace_id: string; added: string[] };
+/** 覚えておくこと1件。 */
+export type MemoryPin = { text: string; date: string };
+/** エージェントの記憶(覚えておくこと)。 */
+export type MemoryView = { pins: MemoryPin[] };
 /** 記憶のファイル(ナレッジ内の相対パス)。編集は通常のノートと同じ画面で行う。 */
 export const MEMORY_PINNED_PATH = "Memory/pinned.md";
-export const MEMORY_UNDERSTANDING_PATH = "Memory/understanding.md";
 export const memoryView = () => invoke<MemoryView>("memory_view");
-export const memoryConfirm = (text: string) => invoke<boolean>("memory_confirm", { text });
 export const memoryForget = (text: string) => invoke<boolean>("memory_forget", { text });
-export const loadMemoryRoute = () => invoke<Route | null>("load_memory_route");
-export const saveMemoryRoute = (route: Route) => invoke<void>("save_memory_route", { route });
 
 export type SettingsTransferReport = { applied: number; skipped: number };
 /** 設定をJSONファイルへ書き出す。APIキーは含まれない。 */
@@ -924,7 +918,7 @@ export const leaderOverview = () => invoke<LeaderOverview>("leader_overview");
 export const leaderSetConfirmed = (id: string, confirmed: boolean) => invoke<void>("leader_set_confirmed", { id, confirmed });
 
 /** LLMへ渡すプロンプトを持つ機能。 */
-export type PromptId = "chat" | "summary" | "proofread" | "organize" | "memory" | "skills" | "suggest";
+export type PromptId = "chat" | "summary" | "proofread" | "organize" | "skills" | "suggest";
 export type PromptInfo = {
   id: PromptId;
   /** いま使われる文章。 */

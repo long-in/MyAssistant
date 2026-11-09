@@ -14,13 +14,11 @@ import {
   listModels,
   listPrompts,
   loadBatchRoute,
-  loadMemoryRoute,
   loadProofreadRoute,
   loadSkillsRoute,
   reportError,
   resetPrompt,
   saveBatchRoute,
-  saveMemoryRoute,
   saveProofreadRoute,
   savePrompt,
   saveSkillsRoute,
@@ -38,7 +36,6 @@ type RouteApi = { load: () => Promise<Route | null>; save: (r: Route | null) => 
 const ROUTES: Partial<Record<PromptId, RouteApi>> = {
   proofread: { load: loadProofreadRoute, save: saveProofreadRoute, optional: true },
   organize: { load: loadBatchRoute, save: (r) => saveBatchRoute(r as Route) },
-  memory: { load: loadMemoryRoute, save: (r) => saveMemoryRoute(r as Route) },
   skills: { load: loadSkillsRoute, save: (r) => saveSkillsRoute(r as Route) },
 };
 
@@ -50,7 +47,6 @@ const FEATURES: (Feature & { only?: "leader" | "agent" })[] = [
   { id: "summary", title: "会話の要約", description: "長くなった会話を畳み込むときの指示です。要約にはチャットと同じモデルを使います。" },
   { id: "proofread", title: "文字起こしの校正", description: "音声認識の結果を、直近の会話と訂正履歴から校正する指示です。モデルを選ぶとオンになります。", modelLabel: "校正に使うモデル" },
   { id: "organize", title: "ナレッジの整理", description: "会話ログをトピックごとに分類・要約してナレッジにする指示です。", modelLabel: "整理に使うモデル" },
-  { id: "memory", title: "記憶の更新", description: "会話から覚えておくことと担当の理解を更新する指示です。", modelLabel: "記憶の更新に使うモデル", only: "agent" },
   { id: "skills", title: "スキルの選定", description: "発話に合うスキルを選ぶ指示です。選定のたびに送られます。", modelLabel: "発話に合うスキルを選ぶモデル", only: "agent" },
   { id: "suggest", title: "宛先の提案", description: "指示の配布先を、過去の履歴から提案する指示です。軽量なモデルを自動で選びます。", only: "leader" },
 ];

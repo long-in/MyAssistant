@@ -168,10 +168,7 @@ pub fn run() {
       commands::knowledge::load_batch_route,
       commands::knowledge::save_batch_route,
       commands::knowledge::memory_view,
-      commands::knowledge::memory_confirm,
       commands::knowledge::memory_forget,
-      commands::knowledge::load_memory_route,
-      commands::knowledge::save_memory_route,
       commands::workspace::list_agents,
       commands::workspace::list_agent_colors,
       commands::workspace::get_active_workspace,
@@ -261,10 +258,6 @@ pub fn run() {
       tauri::async_runtime::spawn(async move {
         let run = async {
           for ctx in handle.state::<services::workspace::Workspaces>().all() {
-            // 会話の合間に反映しきれなかった分を、記憶へ反映してから整理する
-            if let Err(e) = services::memory::update_guarded(&ctx).await {
-              log::warn!("exit memory update failed ({}): {e}", ctx.id);
-            }
             if let Err(e) = services::batch::run_guarded(&ctx).await {
               log::warn!("exit batch failed ({}): {e}", ctx.id);
             }

@@ -150,33 +150,16 @@ pub fn save_batch_route(ctx: Ctx, route: Route) -> Result<(), AppError> {
     ctx.db.set_setting(batch::BATCH_ROUTE_KEY, &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?)
 }
 
-/// 記憶(覚えておくこと・担当の理解)。
+/// 記憶(覚えておくこと)。
 #[tauri::command]
 pub fn memory_view(ctx: Ctx) -> Result<MemoryView, AppError> {
     Ok(memory::view(&batch::knowledge_root(&ctx)?))
-}
-
-/// 推定で覚えたことを確定にする。見つからなければ`false`。
-#[tauri::command]
-pub fn memory_confirm(ctx: Ctx, text: String) -> Result<bool, AppError> {
-    memory::confirm(&batch::knowledge_root(&ctx)?, &text, &now())
 }
 
 /// 覚えていることを外す。外したら`true`。画面からは一覧の文面そのものを渡す。
 #[tauri::command]
 pub fn memory_forget(ctx: Ctx, text: String) -> Result<bool, AppError> {
     Ok(matches!(memory::forget(&batch::knowledge_root(&ctx)?, &text, &now())?, Forgot::Removed(_)))
-}
-
-/// 記憶の更新に使うモデル指定。未設定・使用不可なら軽量モデル(無ければ既定)を返す。
-#[tauri::command]
-pub fn load_memory_route(ctx: Ctx) -> Result<Option<Route>, AppError> {
-    memory::effective_route(&ctx, &batch::available_providers(&ctx.secrets))
-}
-
-#[tauri::command]
-pub fn save_memory_route(ctx: Ctx, route: Route) -> Result<(), AppError> {
-    ctx.db.set_setting(memory::ROUTE_KEY, &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?)
 }
 
 /// 絶対パスのフォルダのみ受け付ける(ダイアログで選ばれたフォルダを想定)。

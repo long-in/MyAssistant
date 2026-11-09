@@ -21,15 +21,6 @@ pub struct PendingLog {
     pub created_at: String,
 }
 
-/// 記憶の更新が読む会話。`seq`はrowidで、どこまで反映したかの目印にする。
-#[derive(Debug, Clone)]
-pub struct MemoryLog {
-    pub seq: i64,
-    pub role: String,
-    pub content: String,
-    pub created_at: String,
-}
-
 impl Db {
     /// 保存した行のIDを返す。
     pub fn insert_log(
@@ -108,51 +99,6 @@ impl Db {
         let mut stmt = conn.prepare("SELECT session_id, MAX(is_processed = 0) FROM conversation_logs GROUP BY session_id")?;
         let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)))?.collect::<Result<_, _>>()?;
         Ok(rows)
-    }
-
-    /// 記憶の更新が`seq`(rowid)より後に読むべき会話(user/assistantのみ)を、古い順に`limit`件返す。
-    pub fn logs_after(&self, seq: i64, limit: u32) -> Result<Vec<MemoryLog>, AppError> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT rowid, role, content, created_at FROM conversation_logs
-             WHERE rowid > ?1 AND role IN ('user', 'assistant') ORDER BY rowid LIMIT ?2",
-        )?;
-        let rows = stmt
-            .query_map(params![seq, limit], |r| {
-                Ok(MemoryLog { seq: r.get(0)?, role: r.get(1)?, content: r.get(2)?, created_at: r.get(3)? })
-            })?
-            .collect::<Result<_, _>>()?;
-        Ok(rows)
-    }
-
-    /// `seq`より後のユーザー発話の数(記憶の更新を急ぐかの判断)。
-    pub fn user_logs_after(&self, seq: i64) -> Result<usize, AppError> {
-        Ok(self.conn().query_row(
-            "SELECT COUNT(*) FROM conversation_logs WHERE rowid > ?1 AND role = 'user'",
-            [seq],
-            |r| r.get::<_, i64>(0),
-        )? as usize)
-    }
-
-    /// 直近`keep`件の会話だけが`seq`より後になる位置。会話が`keep`件に満たなければ0(すべて)。
-    /// 記憶の更新を初めて行うとき、過去の会話をすべて読み直さないために使う。
-    pub fn seq_before_last(&self, keep: u32) -> Result<i64, AppError> {
-        let conn = self.conn();
-        let found: Option<i64> = conn
-            .query_row(
-                "SELECT rowid FROM conversation_logs WHERE role IN ('user', 'assistant')
-                 ORDER BY rowid DESC LIMIT 1 OFFSET ?1",
-                [keep.saturating_sub(1)],
-                |r| r.get(0),
-            )
-            .map(Some)
-            .or_else(|e| if matches!(e, rusqlite::Error::QueryReturnedNoRows) { Ok(None) } else { Err(e) })?;
-        Ok(found.map_or(0, |seq| seq - 1))
-    }
-
-    /// 会話ログの最大のrowid。ログが無ければ0。
-    pub fn max_log_seq(&self) -> Result<i64, AppError> {
-        Ok(self.conn().query_row("SELECT COALESCE(MAX(rowid), 0) FROM conversation_logs", [], |r| r.get(0))?)
     }
 
     pub fn mark_processed(&self, ids: &[String]) -> Result<(), AppError> {

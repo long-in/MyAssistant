@@ -114,9 +114,7 @@ erDiagram
 | `tuning` | 上限の調整項目(JSON) | 下表 | Limits |
 | `batch_route` | `Route`(JSON) | 既定 | ナレッジ画面 |
 | `proofread_route` | `Route`(JSON)。空は校正オフ | オフ | Proofread(設定の音声タブ) |
-| `memory_route` | `Route`(JSON) | 軽量モデル | ナレッジ画面([memory.md](memory.md)) |
 | `skills_route` | `Route`(JSON) | 軽量モデル | スキル画面([skills.md](skills.md))。設定のエクスポートの対象外 |
-| `memory_upto` | 記憶へ反映した会話の目印(rowid。コピー・エクスポートの対象外) | 直近 20 件の前 | なし(自動) |
 | `debug_mode` | `0` / `1` | 無効 | Debug Mode |
 | `agent_data` | エージェントデータ(JSON `{enabled, text}`。エージェントのみ。コピー・エクスポートの対象外) | 有効・空 | Agent Data |
 | `knowledge_dir` | 絶対パス(空なら既定) | 既定 | ナレッジ画面 |
@@ -156,7 +154,7 @@ erDiagram
 
 ### 対象
 
-- `app_settings` のうち、キーの一覧(`settings_registry`)で書き出しの対象にした**設定項目**(`routing`・`web_access`・`shell_access`・`stt_engine`・`stt_language`・`tts_engine`・`voicevox_style`・`tuning`・`batch_route`・`proofread_route`・`memory_route`・`debug_mode`。全体設定の項目は含まない)と、**コマンド権限**(`command-policy.json`)。
+- `app_settings` のうち、キーの一覧(`settings_registry`)で書き出しの対象にした**設定項目**(`routing`・`web_access`・`shell_access`・`stt_engine`・`stt_language`・`tts_engine`・`voicevox_style`・`tuning`・`batch_route`・`proofread_route`・`debug_mode`。全体設定の項目は含まない)と、**コマンド権限**(`command-policy.json`)。
 - **含まない**: API キー、エージェントデータ(`agent_data`)、端末ごとに異なるナレッジ・デバッグログの保存先(`knowledge_dir` / `debug_log_dir`)、取得する配布物の版(`whisper_revision` / `voicevox_versions`)、リーダーの設定、会話ごとの要約、会話の履歴。
 - 全体設定の項目(ベースプロンプト・パーソナルデータ・起動ワード・音声入力の待ち時間・ナレッジ整理の間隔・表示言語・OS通知)は含まない。全体設定には別のエクスポート/インポートがある([global-settings.md](global-settings.md))。
 - 書き出し・取り込みの対象は、選択中のワークスペースの設定。ワークスペース間で設定を写すには、各エージェントの設定の「その他」にある設定のコピーを使う([workspace.md](workspace.md))。

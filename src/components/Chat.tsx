@@ -4,7 +4,6 @@ import { useT } from "@/lib/i18n";
 import { useEffect, useRef, useState } from "react";
 import { MessageSquarePlus } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { approvalLine } from "@/components/AttentionToasts";
 import { notifyOsIfBackground } from "@/lib/osNotify";
@@ -31,7 +30,6 @@ import {
   type TaskEvent,
   type DispatchDraft,
   type KeyStatus,
-  type MemoryUpdated,
   type ModelInfo,
   type Route,
   type RunSnapshot,
@@ -361,17 +359,6 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     taskEventRef.current = onTaskEvent;
     restoreRef.current = restoreRun;
   });
-
-  // 会話の合間の更新で、このワークスペースが新しく覚えたことを知らせる(推測なので、違えば言ってもらう)
-  useEffect(() => {
-    const un = listen<MemoryUpdated>("memory-updated", ({ payload }) => {
-      if (payload.workspace_id !== workspaceId) return;
-      for (const text of payload.added) toast.info(t("覚えておきます: {text}", { text }), { description: t("違えば言ってください。") });
-    });
-    return () => {
-      un.then((f) => f());
-    };
-  }, [workspaceId, t]);
 
   // このワークスペースを開いたとき、前回までの会話を戻し、実行中だった依頼の続きを受け取る。離れるときは、依頼を止めずに接続だけ外す
   useEffect(() => {
