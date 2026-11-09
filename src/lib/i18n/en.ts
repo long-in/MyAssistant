@@ -831,4 +831,6 @@ export const EN: Record<string, string> = {
   "会話": "Conversation",
   "話しかけるか、メッセージを入力してください。": "Speak or type a message.",
   "処理を中断": "Stop processing",
+  "{n}往復": "{n} exchanges",
+  "情報": "Info",
 };

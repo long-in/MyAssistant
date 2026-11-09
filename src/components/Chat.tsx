@@ -18,6 +18,7 @@ import ApprovalModal, { type Approval, type Listening } from "./ApprovalModal";
 import SwitchConfirm from "./SwitchConfirm";
 import DispatchDraftCard from "./DispatchDraftCard";
 import LeaderLedger from "./LeaderLedger";
+import InfoCard from "./InfoCard";
 import { applyTaskEvent, emptyLog } from "./ExecutionLog";
 import { type Turn } from "./Reply";
 import OrbReadout, { type Phase } from "./OrbReadout";
@@ -1030,7 +1031,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
           <section
             className={cn(
               "hud-panel hud-accent relative flex min-h-0 w-full items-center justify-center px-4 py-3 [container-type:size]",
-              workspaceId === LEADER_ID ? "flex-1 md:h-[45%] md:flex-none" : "flex-1",
+              "flex-1 md:h-[45%] md:flex-none",
             )}
             aria-label={t("音声")}
           >
@@ -1039,7 +1040,15 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
               <OrbReadout phase={phase} />
             </div>
           </section>
-          {workspaceId === LEADER_ID && <LeaderLedger active={active} className={cn("hud-panel hud-accent hidden min-h-0 flex-1 md:flex", `${SMALL}:hidden`)} />}
+          {workspaceId === LEADER_ID ? (
+            <LeaderLedger active={active} className={cn("hud-panel hud-accent hidden min-h-0 flex-1 md:flex", `${SMALL}:hidden`)} />
+          ) : (
+            <InfoCard
+              turns={turns.length}
+              modelLabel={models.find((m) => m.provider === route?.provider && m.id === route?.model)?.label}
+              className={cn("hidden flex-1 md:flex", `${SMALL}:hidden`)}
+            />
+          )}
         </div>
       </div>
 
