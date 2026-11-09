@@ -327,6 +327,7 @@ cargo test -- --ignored
 
 [MIT](LICENSE)
 
-- 同梱モデルの表記: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+- 同梱モデル・フォント等の表記: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+- 依存ライブラリのライセンス一覧: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 - 貢献の方法: [CONTRIBUTING.md](CONTRIBUTING.md)
 - 脆弱性の報告: [SECURITY.md](SECURITY.md)

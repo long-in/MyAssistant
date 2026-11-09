@@ -33,7 +33,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["resources/ggml-silero-v5.1.2.bin"],
+    "resources": {
+      "resources/ggml-silero-v5.1.2.bin": "resources/ggml-silero-v5.1.2.bin",
+      "../LICENSE": "LICENSE",
+      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
+      "../THIRD_PARTY_LICENSES.md": "THIRD_PARTY_LICENSES.md"
+    },
     "macOS": {
       "minimumSystemVersion": "26.2"
     },
