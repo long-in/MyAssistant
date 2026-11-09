@@ -208,7 +208,7 @@ fn start_dispatch(
     tauri::async_runtime::spawn(async move {
         let contexts = app.state::<SessionContexts>();
         let graphs = app.state::<GraphCache>();
-        if let Err(e) = chat::run_recorded(&app, &ctx, &contexts, &graphs, session_id, &text, route).await {
+        if let Err(e) = chat::run_recorded(&app, &ctx, &contexts, &graphs, session_id, &text, route, None).await {
             log::info!("dispatched run failed: {e}");
         }
     });

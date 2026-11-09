@@ -17,6 +17,7 @@ use crate::{
         batch, compact,
         global_settings::SettingsStore,
         graph::{self, GraphCache},
+        harness,
         knowledge, leader,
         llm_router::{self, ModelInfo, Route},
         memory,
@@ -244,6 +245,7 @@ pub async fn send_chat(
     session_id: String,
     text: String,
     route: Route,
+    harness: Option<String>,
     on_event: Channel<TaskEvent>,
 ) -> Result<ChatReply, AppError> {
     let text = text.trim();
@@ -252,7 +254,7 @@ pub async fn send_chat(
     }
     // 進捗・承認待ち・結果は、ワークスペースごとの記録にも残す。切り替えても依頼は止まらず、戻ったときに続きから再開できる
     ctx.shared.task.begin(&session_id, text, on_event);
-    run_recorded(&app, &ctx.0, &contexts, &graphs, session_id, text, route).await
+    run_recorded(&app, &ctx.0, &contexts, &graphs, session_id, text, route, harness).await
 }
 
 /// 記録(`TaskState::begin`か`try_begin_detached`)を始めた依頼を実行し、結果を記録して、裏のエージェントなら知らせる。
@@ -265,9 +267,10 @@ pub async fn run_recorded(
     session_id: String,
     text: &str,
     route: Route,
+    harness: Option<String>,
 ) -> Result<ChatReply, AppError> {
     let session = session_id.clone();
-    let result = send_chat_inner(app, ctx, contexts, graphs, session_id, text, route).await;
+    let result = send_chat_inner(app, ctx, contexts, graphs, session_id, text, route, harness).await;
     // 発話ごとの実行ログを残す。再起動後の再開で、画面に同じログを戻す
     chat_session::record_events(&ctx.db, &session, &ctx.shared.task.events());
     // リーダーから配布した依頼なら、終わったことを台帳へ残す(後で別の依頼に置き換わっても、結果が分かるように)
@@ -299,6 +302,7 @@ async fn send_chat_inner(
     session_id: String,
     text: &str,
     route: Route,
+    harness: Option<String>,
 ) -> Result<ChatReply, AppError> {
     let available: Vec<Provider> = Provider::ALL
         .into_iter()
@@ -328,7 +332,25 @@ async fn send_chat_inner(
     let root = batch::knowledge_root(&ctx)?;
     // 「はい」などの返事でも管理ツールを渡し続けるため、直近の会話(今回の発話を除く4件)でスキルに触れていたかも見る
     let recent_mention = window.recent.iter().rev().skip(1).take(4).any(|r| skills::mentions_skills(&r.content));
-    let prepared = skills::prepare(&ctx, &root, text, previous, ctx.id != workspace::LEADER_ID, recent_mention).await;
+    // ハーネスは、チャットでの指定を優先し、無ければ発話から選ぶ。リーダーには使わない
+    let harness = if ctx.id == workspace::LEADER_ID {
+        None
+    } else {
+        harness::resolve(&ctx, &root, harness.as_deref(), text, previous).await?
+    };
+    if let Some(h) = &harness {
+        // 選ばれたハーネスを実行ログへ残す(自動選定の結果も、利用者が確かめられるように)
+        let id = "harness".to_owned();
+        ctx.shared.task.emit(TaskEvent::ToolCall { id: id.clone(), name: "harness".into(), input: json!({ "name": h.name }) });
+        ctx.shared.task.emit(TaskEvent::ToolResult { id, ok: true, preview: format!("ハーネス「{}」で進めます", h.name) });
+    }
+    let limits = harness.as_ref().map(harness::Harness::limits).unwrap_or_default();
+    // ツールを絞るハーネスでは、スキルの選定も行わない(スキルのツールを渡せないため。トークンも使わない)
+    let prepared = if limits.restricts_tools() {
+        skills::Prepared::default()
+    } else {
+        skills::prepare(&ctx, &root, text, previous, ctx.id != workspace::LEADER_ID, recent_mention).await
+    };
     // 基本情報は設定の変更を次の発話から反映するため、セッションのキャッシュに入れず毎回読む
     // パーソナルはパーソナルデータ、エージェントは共通データとエージェントデータ(どちらもユーザーが書いた指示)を渡す。エージェントにパーソナルデータは渡さない
     // リーダーはリーダープロンプトだけを渡す(パーソナルデータ・共通データ・エージェントデータは渡さない)
@@ -346,7 +368,8 @@ async fn send_chat_inner(
         Ok(root) if ctx.id != workspace::LEADER_ID => (memory::pinned_block(&root), memory::understanding_block(&root)),
         _ => (None, None),
     };
-    let instructions: Vec<String> = instructions.into_iter().chain(pinned).collect();
+    let instructions: Vec<String> =
+        instructions.into_iter().chain(pinned).chain(harness.as_ref().map(harness::instruction_block)).collect();
     let base = if instructions.is_empty() { base } else { format!("{base}\n\n{}", instructions.join("\n\n")) };
     let reference: Vec<String> = personal
         .into_iter()
@@ -383,6 +406,7 @@ async fn send_chat_inner(
         shell_access(&ctx.db)?,
         host,
         prepared.access,
+        limits,
         prior,
         text,
         &|event| {

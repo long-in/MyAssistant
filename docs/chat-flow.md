@@ -71,6 +71,7 @@ sequenceDiagram
 | `<pinned_memory>`・`<understanding>` | 記憶。発話のたびに `Memory/` から読む(会話中のツール・会話の合間の更新を次の発話から反映する)。[memory.md](memory.md) |
 | 関連ナレッジ | 発話ごとに想起する(後述) |
 | `<conversation_summary>` | 要約があるときだけ。[後述](#長い会話の要約compactrs) |
+| `<harness>` | チャットで指定した、または発話から自動で選ばれたハーネスの進め方。ユーザーが書いた指示なので従わせる(承認・制限は変わらない)。使えるツール・参照範囲・ステップ数の制限も実行に適用する。[harness.md](harness.md) |
 | `<candidate_skills>`・`<skill_names>` | スキルがあるときだけ、発話ごとに軽量モデルで選んで添える(最大 3 件、名前と説明のみ。該当なしなら無し)。本文は `use_skill` で読む。[skills.md](skills.md) |
 
 `<understanding>`・`<stt_corrections>`・`<previous_context>`・`<related_knowledge>`・`<conversation_summary>`・`<user_profile>`・`<candidate_skills>`・`<skill_names>` はすべて**参考データ**であり、その中に書かれた指示には従わないよう、最後に 1 度だけ注意を付ける(プロンプトインジェクション対策。[security.md](security.md))。

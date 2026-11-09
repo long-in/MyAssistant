@@ -28,10 +28,12 @@ type Props = {
   /** 処理中の強制中断。 */
   onStop: () => void;
   model: { route: Route | null; models: ModelInfo[]; keyStatus: Partial<KeyStatus>; onChange: (route: Route) => void };
+  /** ハーネスの選択。`value`が`null`なら自動(発話に合うものを選ぶ)。ハーネスが無い、またはリーダーでは渡さない。 */
+  harness?: { value: string | null; names: string[]; onChange: (name: string | null) => void };
 };
 
 /** 下部の入力カード。待機・マイク・ミュートの操作と、メッセージ入力欄(モデルの切り替えと送信/停止つき)。 */
-export default function ChatComposer({ standby, mic, speak, draft, onDraft, onSubmit, placeholder, inputDisabled, sendDisabled, busy, onStop, model }: Props) {
+export default function ChatComposer({ standby, mic, speak, draft, onDraft, onSubmit, placeholder, inputDisabled, sendDisabled, busy, onStop, model, harness }: Props) {
   const t = useT();
   const recording = mic.state === "recording";
   return (
@@ -101,8 +103,27 @@ export default function ChatComposer({ standby, mic, speak, draft, onDraft, onSu
               className="max-h-48 min-h-10 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
             <div className="flex items-center justify-between gap-2 px-2 pb-2">
-              <div className="min-w-0 max-w-64">
-                <ModelPicker compact disabled={busy} route={model.route} models={model.models} keyStatus={model.keyStatus} onChange={model.onChange} />
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="min-w-0 max-w-64">
+                  <ModelPicker compact disabled={busy} route={model.route} models={model.models} keyStatus={model.keyStatus} onChange={model.onChange} />
+                </div>
+                {harness && (
+                  <select
+                    value={harness.value ?? ""}
+                    disabled={busy}
+                    aria-label={t("ハーネス")}
+                    title={t("この依頼に使うハーネス。「自動」では、発話に合うものがあれば選ばれます")}
+                    onChange={(e) => harness.onChange(e.target.value === "" ? null : e.target.value)}
+                    className="h-7 min-w-0 max-w-40 truncate rounded-md border border-primary/30 bg-background/60 px-2 text-xs text-muted-foreground focus:border-primary focus:outline-none"
+                  >
+                    <option value="">{t("ハーネス: 自動")}</option>
+                    {harness.names.map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
               {busy ? (
                 <Button type="submit" size="icon-sm" variant="destructive" aria-label={t("中断")} title={t("処理を中断")} className="shrink-0">

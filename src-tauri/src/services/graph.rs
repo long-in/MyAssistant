@@ -146,6 +146,7 @@ fn is_excluded(path: &str, category: &str) -> bool {
     EXCLUDED_PATHS.contains(&path)
         || category == CAPTURE_CATEGORY
         || super::memory::is_memory(path)
+        || super::harness::is_harness(path)
         || path.split('/').any(|p| p.starts_with('.'))
 }
 

@@ -95,6 +95,13 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
     - 読み取り系以外のコマンドは、ナレッジのディレクトリ内でしか実行できません。
   - 許可・拒否・都度承認のコマンドは、設定画面の Command Policy で編集できます(実体はナレッジ内の `.my-assistant/command-policy.json`)。
 
+### ハーネス
+
+- **タスクごとの進め方の定義** ([harness.md](docs/harness.md))
+  - 参照してよいナレッジの範囲・使えるツール・最大ステップ数・出力形式・進め方の指示を、ナレッジの「Harness」フォルダのMarkdownとして登録します。権限を絞る方向にだけ働きます。
+  - チャットの入力欄で選ぶか、「自動」のままにすると、発話に合うものを軽量モデルが選びます。
+  - ハーネス画面(左メニューの「Harness」)で、一覧・追加・編集・削除ができます。
+
 ### スキル
 
 - **決まった依頼への対応手順** ([skills.md](docs/skills.md))
@@ -220,7 +227,7 @@ npm run tauri build
 
 ```text
 src/                    Next.js フロントエンド
-  app/                  画面 (対話 / knowledge / skills / setup / shortcuts / debug)
+  app/                  画面 (対話 / knowledge / skills / harness / setup / shortcuts / debug)
   components/           UI コンポーネント (shadcn/ui は components/ui)
   lib/                  Tauri 呼び出し、音声での承認・切り替えの判定、
                         字幕の同期、ショートカット、料金計算

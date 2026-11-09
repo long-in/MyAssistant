@@ -7,6 +7,7 @@ pub mod command_policy;
 pub mod debug;
 pub mod global_settings;
 pub mod knowledge;
+pub mod harness;
 pub mod knowledge_all;
 pub mod leader;
 pub mod profile;
