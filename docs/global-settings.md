@@ -11,7 +11,7 @@
 
 ## 画面の構成(タブ)
 
-- **AIの動作**: ベースプロンプト、パーソナルデータ。
+- **AIの動作**: ベースプロンプト、共通データ、パーソナルデータ。
 - **音声**: 起動ワード、音声入力の待ち時間。
 - **アプリ**: ナレッジ整理の間隔、表示言語、OS通知、全体設定のバックアップ。
 - **ワーク**: ワークの有効化・無効化(`work_enabled`。バックアップ・設定のコピーの対象外。[workspace.md](workspace.md))。`/global#work` で、このタブを開く。
@@ -25,6 +25,7 @@
 | 表示言語 | Language | `language` | `ja` / `en`。音声認識の言語(`stt_language`)はエージェントごとのまま |
 | 音声入力の待ち時間 | Voice Timing | `voice_timing` | `voice_idle_secs` / `utterance_silence_secs` / `release_tail_secs`。Limits(検索回数など)はエージェントごと |
 | 起動ワード | Wake Words | `wake_enabled` / `wake_words` | |
+| 共通データ | Shared Data | (`workspaces/shared_data.json`) | 全エージェントで1つ。**渡す先はエージェントのみ**。パーソナルには渡さない([workspace.md](workspace.md)) |
 | パーソナルデータ | Personal Data | `user_profile` | **渡す先は従来どおりパーソナルのみ**。エージェントには渡さない([user-profile.md](user-profile.md)) |
 | ナレッジ整理の間隔 | Knowledge Interval | `batch_interval_minutes` | 定期バッチは、全エージェント同じ間隔で動く |
 
