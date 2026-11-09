@@ -738,6 +738,13 @@ export const listSkills = () => invoke<SkillsOverview>("list_skills");
 export const createSkill = (skill: Skill) => invoke<Skill>("create_skill", { skill });
 export const updateSkill = (skill: Skill) => invoke<Skill>("update_skill", { skill });
 export const deleteSkill = (name: string) => invoke<void>("delete_skill", { name });
+export type SkillImportPreview = { total: number; conflicts: string[] };
+export type SkillImportReport = { added: number; updated: number; skipped: number };
+/** 全スキルをJSONファイルへ書き出す。件数を返す。 */
+export const exportSkills = (dest: string) => invoke<number>("export_skills", { dest });
+/** 取り込み前の確認(件数と、上書きになる名前)。何も変更しない。 */
+export const previewImportSkills = (src: string) => invoke<SkillImportPreview>("preview_import_skills", { src });
+export const importSkills = (src: string, overwrite: boolean) => invoke<SkillImportReport>("import_skills", { src, overwrite });
 /** 選定に使うモデル。未設定なら既定(Haiku)。使えるモデルが無ければ`null`。 */
 export const loadSkillsRoute = () => invoke<Route | null>("load_skills_route");
 export const saveSkillsRoute = (route: Route) => invoke<void>("save_skills_route", { route });
