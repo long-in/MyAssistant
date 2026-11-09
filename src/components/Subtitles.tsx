@@ -73,7 +73,7 @@ export default function Subtitles({
         const el = e.currentTarget;
         follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
       }}
-      className="flex min-h-0 w-full max-w-3xl flex-col items-center gap-1.5 overflow-y-auto text-center [mask-image:linear-gradient(to_bottom,transparent,black_2rem)]"
+      className="flex min-h-0 w-full flex-col items-start gap-1.5 overflow-y-auto text-left [mask-image:linear-gradient(to_bottom,transparent,black_2rem)]"
       aria-live="polite"
     >
       <div className="flex-1" aria-hidden />
@@ -148,7 +148,7 @@ export default function Subtitles({
 function PastTurn({ turn, onToggle }: { turn: Turn; onToggle: () => void }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className={`flex w-full flex-col items-center gap-1 opacity-60 transition-opacity hover:opacity-100`}>
+    <div className={`flex w-full flex-col items-start gap-1 opacity-60 transition-opacity hover:opacity-100`}>
       <p className="max-w-full truncate text-xs text-muted-foreground">
         <span className="text-primary">&#9656;</span> {turn.user}
       </p>
@@ -160,7 +160,7 @@ function PastTurn({ turn, onToggle }: { turn: Turn; onToggle: () => void }) {
             onToggle();
             setOpen((o) => !o);
           }}
-          className={`cursor-pointer rounded-sm bg-background/40 px-4 py-1 text-sm leading-5 text-foreground ${open ? "" : "line-clamp-3"}`}
+          className={`cursor-pointer rounded-sm bg-background/40 px-4 py-1 text-sm leading-5 text-foreground ${open ? "" : "line-clamp-6"} text-left`}
         >
           {turn.reply}
         </button>

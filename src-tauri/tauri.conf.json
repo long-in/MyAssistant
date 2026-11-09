@@ -35,7 +35,7 @@
     ],
     "resources": ["resources/ggml-silero-v5.1.2.bin"],
     "macOS": {
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "26.2"
     },
     "android": {
       "debugApplicationIdSuffix": ".debug"

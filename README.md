@@ -9,7 +9,7 @@
 | --- | --- |
 | フロントエンド | Next.js 16 (静的エクスポート) / React 19 / Tailwind CSS 4 / shadcn/ui |
 | バックエンド | Tauri 2 (Rust) |
-| 対応 OS | **macOS 専用(11.0 以上)** |
+| 対応 OS | **macOS 専用(26.2 以上)** |
 
 Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音声認識が Metal 前提のため)。
 
@@ -172,7 +172,7 @@ npm run tauri build
 ```
 
 - 成果物は `src-tauri/target/release/bundle/` 配下に出力されます。
-- macOS の最小対応バージョンは 11.0 です([src-tauri/tauri.conf.json](src-tauri/tauri.conf.json))。
+- macOS の最小対応バージョンは 26.2 です(入力欄の自動伸縮に使う CSS `field-sizing` が WebKit 26.2 以降のため)([src-tauri/tauri.conf.json](src-tauri/tauri.conf.json))。
 - whisper.cpp のビルドには macOS 10.15 以上のデプロイターゲットが必要なため、この値を下げないでください。
 
 ## 初期設定
