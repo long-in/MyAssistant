@@ -11,13 +11,13 @@ flowchart LR
   DB -->|"整理バッチ(LLM)"| N["トピック別ノート<br/>カテゴリ/ファイル.md"]
   N -->|"全ログを整理できたら"| X["キャプチャを削除"]
   N --> G["グラフ索引 → 想起"]
-  T -->|"会話の合間・軽量モデル"| M["Memory/<br/>覚えておくこと・担当の理解"]
+  T -->|"remember / 画面"| M["Memory/<br/>覚えておくこと"]
 ```
 
 1. **キャプチャ**: 応答のたびに、確認なしで会話をそのまま書き出す(LLM は使わない)。整理前の生の記録で、ユーザーが後から読み返せる。
 2. **整理バッチ**: 未処理のログを LLM でトピック別に分類・要約し、ノートへ追記する。
 3. **想起**: ノートを索引にして、会話に関連するものをシステムプロンプトへ渡す([knowledge-graph.md](knowledge-graph.md))。
-4. **記憶**: 覚えておくことと担当の理解を、会話の合間に更新し、毎回の会話で渡す([memory.md](memory.md))。整理バッチとは別に動く。
+4. **記憶**: 覚えておくことを、頼まれたときに記録し、毎回の会話で渡す([memory.md](memory.md))。整理バッチとは別に動く。
 
 ## 保存先
 
@@ -58,7 +58,7 @@ source_log_ids: ["<会話ログID>", "…"]
 | パス | 内容 |
 | --- | --- |
 | `Captures/` | 会話のキャプチャ(`日付_セッションID先頭8文字.md`)。整理後に削除される。整理の追記先候補・グラフ索引には含めない |
-| `Memory/pinned.md`・`Memory/understanding.md` | 記憶([memory.md](memory.md))。グラフ索引・直近の文脈・整理の追記先には含めず、専用の節として渡す |
+| `Memory/pinned.md` | 記憶([memory.md](memory.md))。グラフ索引・直近の文脈・整理の追記先には含めず、専用の節として渡す |
 | `Preferences/stt_corrections.md` | 聞き取りの訂正履歴([voice-input.md](voice-input.md))。グラフ索引には含めず、専用の節として渡す |
 | `.my-assistant/command-policy.json` | コマンドの権限([command-policy.md](command-policy.md))。隠しフォルダのため LLM のファイルツールから見えない |
 | `Skills/<名前>/SKILL.md` | スキル([skills.md](skills.md))。通常のノートとして一覧に出るが、整理バッチ・グラフ・直近の文脈・初期化の対象にはしない。LLM の `create_file` では作れない |
@@ -133,6 +133,6 @@ flowchart TD
 ## 画面
 
 - ノートの一覧と本文表示、タグ表示(Frontmatter を分離して表示)。
-- 「Memory」欄(記憶の件数、記憶の更新に使うモデル、「記憶を見る」。[memory.md](memory.md))。
+- 「Memory」欄(記憶の件数、「記憶を見る」。[memory.md](memory.md))。
 - 「今すぐ整理」、整理に使うモデルの選択、エクスポート・インポート・初期化、保存先の表示と変更。整理の間隔は設定画面の Knowledge Interval。
 - 会話のたびに `knowledge-updated` イベントを受けて一覧を更新する。

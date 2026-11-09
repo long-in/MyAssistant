@@ -147,7 +147,7 @@ where
             let stamp = now();
             let mut written = 0;
             for e in &out.entries {
-                // 記憶のフォルダへは書かせない(覚えておくこと・担当の理解は会話の合間の更新が担う)。スキルの定義も同様に、人が書いたものを整理で変えない
+                // 記憶のフォルダへは書かせない(覚えておくことはrememberと画面が担う)。スキルの定義も同様に、人が書いたものを整理で変えない
                 if e.content.trim().is_empty()
                     || memory::is_memory(e.category.trim())
                     || super::skills::is_skill(e.category.trim())

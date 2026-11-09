@@ -43,7 +43,7 @@ sequenceDiagram
 
 - 自動ルーティングは無く、ユーザーが画面(`ModelSelector`)で選んだ `Route` を使う。選択は `app_settings.routing` に保存する。
 - 保存済みの選択が使えない(キーを削除した等)ときは既定へ戻す。既定は、Claude が使えれば Sonnet、なければ使えるプロバイダーのカタログ先頭。
-- 整理バッチ(`batch_route`)、記憶の更新(`memory_route`。既定は軽量モデル)、スキルの選定(`skills_route`。既定は軽量モデル)、音声認識の校正(`proofread_route`)は、対話とは別に、エージェントごとにモデルを指定できる。
+- 整理バッチ(`batch_route`)、スキルの選定(`skills_route`。既定は軽量モデル)、音声認識の校正(`proofread_route`)は、対話とは別に、エージェントごとにモデルを指定できる。
 
 ## システムプロンプトの構成
 
@@ -57,7 +57,6 @@ sequenceDiagram
 <pinned_memory>                    覚えておくこと(リーダー以外。あるとき。ユーザーの指示)
 <変わりにくい参考データ(順に)>
   <user_profile>                   パーソナルデータ(パーソナルのみ。有効かつ入力があるとき)
-  <understanding>                  担当の理解(リーダー以外。あるとき)
   <stt_corrections>                聞き取りの訂正履歴
   <conversation_summary>           古い会話の要約
 <ツールの使い方>                    TOOL_GUIDE + 作業実行 + Web 検索 + スキル(commands/task.rs で追加)
@@ -88,13 +87,13 @@ sequenceDiagram
 | ベース指示 | 音声対話向けの既定文。設定の Base Prompt で上書きでき、空にすると既定へ戻る。一問一答で終わらせず会話を重ねること、結論から一〜三文で答えること、読み上げに不要な記号(Markdown・URL・絵文字)を使わないことなどを指示する |
 | `<user_profile>` | 設定の内容から**毎回**生成する(変更を次の発話から反映するためキャッシュしない)。[user-profile.md](user-profile.md) |
 | `<stt_corrections>` | `Preferences/stt_corrections.md` の直近 30 件(「誤」→「正」)。会話の最初の発話で 1 回だけ読んで使い回す。訂正を保存すると次の発話から反映される |
-| `<pinned_memory>`・`<understanding>` | 記憶。発話のたびに `Memory/` から読む(会話中のツール・会話の合間の更新を次の発話から反映する)。[memory.md](memory.md) |
+| `<pinned_memory>` | 記憶。発話のたびに `Memory/` から読む(会話中のツール・画面での編集を次の発話から反映する)。[memory.md](memory.md) |
 | 関連ナレッジ | 発話ごとに想起する(後述) |
 | `<conversation_summary>` | 要約があるときだけ。[後述](#長い会話の要約compactrs) |
 | `<skill>` | 入力欄で指定したスキルの手順。ユーザーが登録して指定した手順なので従わせる(承認・制限は変わらない)。指定したときは候補の選定を行わない。[skills.md](skills.md) |
 | `<candidate_skills>`・`<skill_names>` | スキルがあるときだけ、発話ごとに軽量モデルで選んで添える(最大 3 件、名前と説明のみ。該当なしなら無し)。本文は `use_skill` で読む。[skills.md](skills.md) |
 
-`<understanding>`・`<stt_corrections>`・`<previous_context>`・`<related_knowledge>`・`<conversation_summary>`・`<user_profile>`・`<candidate_skills>`・`<skill_names>` はすべて**参考データ**であり、その中に書かれた指示には従わないよう、可変部分で 1 度だけ注意を付ける(プロンプトインジェクション対策。[security.md](security.md))。
+`<stt_corrections>`・`<previous_context>`・`<related_knowledge>`・`<conversation_summary>`・`<user_profile>`・`<candidate_skills>`・`<skill_names>` はすべて**参考データ**であり、その中に書かれた指示には従わないよう、可変部分で 1 度だけ注意を付ける(プロンプトインジェクション対策。[security.md](security.md))。
 
 ### 関連ナレッジの想起
 

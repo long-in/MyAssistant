@@ -20,7 +20,6 @@ import {
   type KnowledgeFile,
   type MemoryView,
   memoryView,
-  memoryConfirm,
   memoryForget,
   knowledgeDir,
   listKnowledge,
@@ -46,7 +45,7 @@ const isNote = (path: string) => path.endsWith(".md");
 
 export default function Knowledge() {
   const t = useT();
-  // リーダーは記憶を持たない(会話の合間の更新もしない)
+  // リーダーは記憶を持たない
   const hasMemory = useWorkspace().active.id !== LEADER_ID;
   const [files, setFiles] = useState<KnowledgeFile[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -58,7 +57,7 @@ export default function Knowledge() {
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
   const [dir, setDir] = useState("");
-  const [memory, setMemory] = useState<MemoryView>({ pins: [], understanding: "" });
+  const [memory, setMemory] = useState<MemoryView>({ pins: [] });
   // 記憶の表示中(ノートを開くと閉じる)
   const [showMemory, setShowMemory] = useState(false);
 
@@ -87,15 +86,6 @@ export default function Knowledge() {
       un.then((f) => f());
     };
   }, [refresh]);
-
-  const confirmPin = async (text: string) => {
-    try {
-      await memoryConfirm(text);
-      await refresh();
-    } catch (e) {
-      toast.error(reportError(e));
-    }
-  };
 
   const forgetPin = async (text: string) => {
     const ok = await ask(t("「{text}」を忘れます。この操作は元に戻せません。続行しますか?", { text }), {
@@ -344,7 +334,6 @@ export default function Knowledge() {
           <p className="hud-label mb-2">Memory</p>
           <p className="mb-2 text-xs text-muted-foreground">
             {t("覚えておくこと {n}件", { n: memory.pins.length })}
-            {memory.pins.some((p) => p.inferred) && ` · ${t("推定 {n}件", { n: memory.pins.filter((p) => p.inferred).length })}`}
           </p>
           <Button size="sm" variant={showMemory ? "default" : "outline"} className="mt-2 w-full" onClick={() => setShowMemory(true)}>
             <Brain /> {t("記憶を見る")}
@@ -396,7 +385,7 @@ export default function Knowledge() {
       </aside>
       <article className="flex min-w-0 flex-1 flex-col">
         {showMemory && hasMemory ? (
-          <MemoryPanel memory={memory} onConfirm={confirmPin} onForget={forgetPin} onEdit={open} />
+          <MemoryPanel memory={memory} onForget={forgetPin} onEdit={open} />
         ) : doc && selected ? (
           <>
             <div className="flex items-center justify-between gap-3 border-b px-4 py-2">

@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{
-    batch, chat_session, debug_log, global_settings, leader, memory, profile, proofread, prompts, agent_data, skills, stt, tuning, voicevox, wake, workspace,
+    batch, chat_session, debug_log, global_settings, leader, profile, proofread, prompts, agent_data, skills, stt, tuning, voicevox, wake, workspace,
 };
 
 /// 設定の保存先。
@@ -69,12 +69,10 @@ pub const ALL: &[Setting] = &[
     agent(tuning::KEY, Some(Kind::Json)),
     agent(batch::BATCH_ROUTE_KEY, Some(Kind::Json)),
     agent(proofread::ROUTE_KEY, Some(Kind::Json)),
-    agent(memory::ROUTE_KEY, Some(Kind::Json)),
     agent(prompts::CHAT_KEY, Some(Kind::Text)),
     agent(prompts::SUMMARY_KEY, Some(Kind::Text)),
     agent(prompts::PROOFREAD_KEY, Some(Kind::Text)),
     agent(prompts::ORGANIZE_KEY, Some(Kind::Text)),
-    agent(prompts::MEMORY_KEY, Some(Kind::Text)),
     agent(prompts::SKILLS_KEY, Some(Kind::Text)),
     agent(prompts::SUGGEST_KEY, Some(Kind::Text)),
     agent(debug_log::ENABLED_KEY, Some(Kind::Flag)),
@@ -86,7 +84,6 @@ pub const ALL: &[Setting] = &[
     agent(agent_data::KEY, None),
     agent(leader::PROMPT_KEY, None),
     agent(leader::LIMIT_KEY, None),
-    agent(memory::CURSOR_KEY, None),
     // 現在の会話のID。端末の履歴(DB)と対なので、書き出し・コピーの対象外
     agent(chat_session::KEY, None),
     // スキルの選定モデル。スキル自体を設定の書き出しに含めないので、これも対象外
