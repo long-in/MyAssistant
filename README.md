@@ -35,6 +35,7 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
 
 - **LLM 対話** ([chat-flow.md](docs/chat-flow.md))
   - Anthropic / Amazon Bedrock(Claude)に対応し、チャットのモデルは左下のピッカーで切り替えます。
+  - 端末内で動くローカル LLM(Qwen 2.5 7B)も選べます。キー不要・無料で、会話の内容は端末の外へ出ません。設定画面からダウンロードします(約4.7GB。[local-llm.md](docs/local-llm.md))。
   - 校正・ナレッジ整理・スキル選定のモデルと、LLM に渡すプロンプト(全文を編集でき、初期値へ戻せる)は、エージェントの設定の「AI Settings」にまとまっています。
   - 応答は読み上げ向けの短い話し言葉です。
   - 読み上げ後は自動で音声入力が再開し、会話を続けられます。
@@ -257,6 +258,7 @@ npm run tauri build
 | Claude(Bedrock 経由) | `~/.aws/config` と `~/.aws/credentials` の中身(設定画面へそのまま貼り付け)。MFA 付きのスイッチロール(`role_arn` + `source_profile` + `mfa_serial`)に対応。Web 検索・ページ取得は使えない |
 | 音声出力 / Google STT | Google Cloud API キー |
 | Aqua Voice(STT) | Aqua Voice API キー |
+| ローカル LLM(Qwen 2.5 7B) | キー不要。設定画面の「AI Link」からダウンロードする。Web 検索・ページ取得は使えない。メモリ 16GB 以上を推奨 |
 
 ### 2. 音声まわりを準備する
 
@@ -279,9 +281,10 @@ npm run tauri build
 | `workspaces/` | ワークのエージェント。`registry.json`(一覧)と、エージェントごとの `<UUID>/`(`timeline.db`・`secrets.json`・`knowledge/` などをパーソナルと同じ構成で持つ) |
 | `models/` | Whisper モデル |
 | `voicevox/` | VOICEVOX CORE・辞書・音声モデル(任意) |
+| `llm/` | ローカル LLM の llama-server と Qwen のモデル(任意) |
 | `voice/` | 定型音声 |
 
-`timeline.db`・`secrets.json`・ナレッジはワークスペースごとに分かれます。上の表はパーソナルの場所で、`models/`・`voicevox/`・`voice/` は共有します。
+`timeline.db`・`secrets.json`・ナレッジはワークスペースごとに分かれます。上の表はパーソナルの場所で、`models/`・`voicevox/`・`llm/`・`voice/` は共有します。
 
 ナレッジの Markdown は、既定ではアプリデータ配下に保存されます。設定画面またはナレッジ画面で任意のディレクトリに変更できます(既存のノートは移動しません)。ほかのワークスペースの保存先と重なる場所は選べません。
 

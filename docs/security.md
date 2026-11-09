@@ -87,9 +87,11 @@
 | Anthropic(Web 検索・取得) | 検索語・URL(ナレッジや会話の内容を含めないよう指示) |
 | Google Cloud | 応答テキスト(TTS)、録音(Google STT を選んだときのみ) |
 | Aqua Voice | 録音(Aqua を選んだときのみ) |
-| GitHub(`github.com`) | VOICEVOX の取得時のみ。CORE・ONNX Runtime・辞書・音声モデルのダウンロード要求(送信する内容はない) |
+| GitHub(`github.com`) | VOICEVOX・ローカル LLM(llama.cpp)の取得時のみ。ダウンロード要求(送信する内容はない) |
+| Hugging Face(`huggingface.co`) | Whisper・ローカル LLM(Qwen)のモデルの取得時のみ。ダウンロード要求(送信する内容はない) |
 
 - ローカル Whisper を選べば、録音は端末の外へ出ない。読み上げに VOICEVOX を選べば、応答テキストも端末の外へ出ない。
+- LLM にローカル(Qwen)を選べば、その用途の会話の内容は端末の外へ出ない。llama-server は `127.0.0.1` だけで待ち受け、起動ごとの使い捨てトークンで守る。取得物は版と SHA-256 を固定して検証する([local-llm.md](local-llm.md))。
 - 常時待機中は、起動ワードを含まない発話を LLM へ送らない([wake-standby.md](wake-standby.md))。
 - **デバッグモード**を有効にすると、各 API のリクエスト・レスポンス(会話の内容を含む)と文字起こしを、ナレッジ配下にファイルとして保存する。ナレッジを同期・共有している場合は注意する([debug-log.md](debug-log.md))。
 - 設定のエクスポートにはパーソナルデータとコマンド権限が含まれるため、ファイルの扱いに注意する。

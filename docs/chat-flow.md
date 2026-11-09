@@ -27,7 +27,7 @@ sequenceDiagram
 2. **発話の保存**: `conversation_logs` に `user` として保存する。
 3. **会話の用意**: 往復数が上限(調整項目 `history_exchanges`、既定 10)を超えていれば、古い分を要約して「要約 + 直近の会話」だけを LLM へ渡す(後述)。
 4. **システムプロンプトの組み立て**(後述)。
-5. **LLM 呼び出し**: ファイル操作・コマンド実行・Web 検索(Bedrock は除く)のツールを付けたループ(`commands/task.rs::run_with_tools`)で呼ぶ。
+5. **LLM 呼び出し**: ファイル操作・コマンド実行・Web 検索(Bedrock とローカルは除く)のツールを付けたループ(`commands/task.rs::run_with_tools`)で呼ぶ。
 6. **後処理**: 応答を `assistant` として保存し、1 往復をナレッジの「キャプチャ」へ追記して `knowledge-updated` を通知する。LLM を使う整理はここでは行わない([knowledge.md](knowledge.md))。会話が途切れたら裏で記憶を更新するよう予約する([memory.md](memory.md))。
 
 使用量(入力・出力トークン)は LLM 呼び出しごとに `usage_logs` へ記録する。途中で失敗しても、そこまでに使った分は残る。
@@ -40,9 +40,10 @@ sequenceDiagram
   | --- | --- |
   | Anthropic | `claude-haiku-5-5`、`claude-sonnet-5-5`、`claude-opus-5-5` |
   | Amazon Bedrock | 利用者が設定画面で登録したモデル ID(認証は [security.md](security.md) の「AWS 認証」) |
+  | ローカル | `qwen2.5-7b-instruct`(取得済みのときだけ。カタログの末尾。[local-llm.md](local-llm.md)) |
 
 - 自動ルーティングは無く、ユーザーが画面(`ModelSelector`)で選んだ `Route` を使う。選択は `app_settings.routing` に保存する。
-- 保存済みの選択が使えない(キーを削除した等)ときは既定へ戻す。既定は、Claude が使えれば Sonnet、なければ使えるプロバイダーのカタログ先頭。
+- 保存済みの選択が使えない(キーを削除した、ローカルのモデルを削除した等)ときは既定へ戻す。既定は、Claude が使えれば Sonnet、なければ使えるプロバイダーのカタログ先頭。
 - 整理バッチ(`batch_route`)、スキルの選定(`skills_route`。既定は軽量モデル)、音声認識の校正(`proofread_route`)は、対話とは別に、エージェントごとにモデルを指定できる。
 
 ## システムプロンプトの構成

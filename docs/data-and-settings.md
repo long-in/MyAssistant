@@ -4,7 +4,7 @@
 
 すべてアプリデータディレクトリ(識別子 `MyAssistant`)に保存され、リポジトリには含まれない。macOS では `~/Library/Application Support/MyAssistant/`。
 
-下の表の `timeline.db`・`secrets.json`・ナレッジは**ワークスペースごと**に持つ。パーソナルは下記のとおりアプリデータ直下、ワークのエージェントは `workspaces/<UUID>/` 配下に同じ構成で置く([workspace.md](workspace.md))。`models/`・`voice/`・`voicevox/` は端末で共有する。
+下の表の `timeline.db`・`secrets.json`・ナレッジは**ワークスペースごと**に持つ。パーソナルは下記のとおりアプリデータ直下、ワークのエージェントは `workspaces/<UUID>/` 配下に同じ構成で置く([workspace.md](workspace.md))。`models/`・`voice/`・`voicevox/`・`llm/` は端末で共有する。
 
 | パス | 内容 |
 | --- | --- |
@@ -13,6 +13,7 @@
 | `models/` | Whisper モデル(`ggml-large-v3-turbo-q5_0.bin` / `ggml-small.bin`) |
 | `voice/` | 定型音声(`<id>-<ハッシュ>.mp3` / `.wav`。声ごとに別ファイル) |
 | `voicevox/` | VOICEVOX CORE・ONNX Runtime・OpenJTalk 辞書・音声モデル(設定画面から取得) |
+| `llm/` | ローカル LLM の llama-server(`bin/`)・Qwen のモデル(`models/`)・取得の記録・サーバーのログ(設定画面から取得。[local-llm.md](local-llm.md)) |
 | ナレッジ | 既定ではアプリデータ配下(`knowledge/`)。設定で任意のフォルダへ変更できる([knowledge.md](knowledge.md)) |
 | `tts_dictionary.json` | 読み上げ辞書(ユーザー登録分) |
 | `workspaces/registry.json` | ワークのエージェント一覧(id・名称・イメージカラー・作成日時) |
