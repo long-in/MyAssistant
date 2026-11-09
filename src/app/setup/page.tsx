@@ -1446,8 +1446,6 @@ export default function Setup() {
             </div>
           </section>
 
-          <AiSettings keyStatus={status} leader={active.id === LEADER_ID} />
-
           {/* モデルの取得元 */}
           <section className="hud-panel hud-accent px-5 py-4">
             <Heading title="Model Sources" help={t("モデルの取得元")}>
@@ -1476,6 +1474,7 @@ export default function Setup() {
             store={setTuning}
             defaults={DEFAULT_TUNING}
           />}
+          <AiSettings keyStatus={status} leader={active.id === LEADER_ID} />
           </TabsContent>
 
           {active.id !== LEADER_ID && (
