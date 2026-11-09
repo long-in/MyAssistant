@@ -479,7 +479,12 @@ pub fn recent_context(root: &Path, max_files: usize, max_chars: usize) -> Result
     // 訂正履歴と記憶は専用の枠でシステムプロンプトへ入れるため、ここでは除く
     for f in list(root)?
         .into_iter()
-        .filter(|f| f.path != CORRECTIONS_PATH && f.category != CAPTURE_CATEGORY && !super::memory::is_memory(&f.path))
+        .filter(|f| {
+            f.path != CORRECTIONS_PATH
+                && f.category != CAPTURE_CATEGORY
+                && !super::memory::is_memory(&f.path)
+                && !super::harness::is_harness(&f.path)
+        })
         .take(max_files)
     {
         if left == 0 {

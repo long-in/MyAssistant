@@ -81,6 +81,51 @@ impl ToolTurn {
     }
 }
 
+/// ツール使用APIへ渡すシステムプロンプト。プロンプトキャッシュが効くよう、変わりにくい部分と発話ごとに変わる部分に分ける。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SystemPrompt {
+    /// 会話中ほぼ変わらない前置き。末尾までをキャッシュの対象にする。
+    pub stable: String,
+    /// 発話ごとに変わる部分(関連ナレッジ・スキル候補・ハーネスなど)。キャッシュの後ろに置く。
+    pub volatile: String,
+}
+
+fn cache_control() -> Value {
+    json!({ "type": "ephemeral" })
+}
+
+/// システムプロンプトをブロックの配列にする。固定部分にだけキャッシュ点を置き、可変部分が空なら送らない。
+fn system_blocks(system: &SystemPrompt) -> Value {
+    let mut blocks = vec![json!({ "type": "text", "text": system.stable, "cache_control": cache_control() })];
+    if !system.volatile.trim().is_empty() {
+        blocks.push(json!({ "type": "text", "text": system.volatile }));
+    }
+    Value::Array(blocks)
+}
+
+/// 送信用に、最後のユーザーメッセージの最後のブロックへキャッシュ点を置いた複製を返す。
+/// ツールループの次のステップで、ここまでの履歴をキャッシュから読ませる。元の履歴は変えない。
+/// 最後が`assistant`(`pause_turn`の続き)なら置かない。サーバーツールのブロックへ付けるのを避けるため。
+fn with_cache_point(messages: &[Value]) -> Vec<Value> {
+    let mut out = messages.to_vec();
+    let Some(last) = out.last_mut().filter(|m| m.get("role").and_then(Value::as_str) == Some("user")) else {
+        return out;
+    };
+    match last.get_mut("content") {
+        Some(Value::String(s)) if !s.is_empty() => {
+            let text = std::mem::take(s);
+            last["content"] = json!([{ "type": "text", "text": text, "cache_control": cache_control() }]);
+        }
+        Some(Value::Array(blocks)) => {
+            if let Some(b) = blocks.last_mut().and_then(Value::as_object_mut) {
+                b.insert("cache_control".into(), cache_control());
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
 fn parse_tool_turn(body: &Value) -> Option<ToolTurn> {
     Some(ToolTurn {
         content: body.get("content")?.as_array()?.clone(),
@@ -90,11 +135,13 @@ fn parse_tool_turn(body: &Value) -> Option<ToolTurn> {
 
 /// ツール使用API(Anthropic / Bedrock)。`messages`と`tools`はMessages APIのJSON形式のまま渡す。
 /// Bedrockはサーバーツール(検索・ページ取得)を持たないため、`tools`にはClient側ツールだけを渡すこと。
+/// キャッシュ点はシステムプロンプトの固定部分の末尾(`tools`を含む)と、最後のユーザーメッセージの2か所に置く。
+/// キャッシュの最小トークン数に満たないときは、キャッシュされないだけで結果は変わらない。
 pub async fn complete_with_tools(
     ctx: &WorkspaceCtx,
     provider: Provider,
     model: &str,
-    system: &str,
+    system: &SystemPrompt,
     messages: &[Value],
     tools: &[Value],
 ) -> Result<ToolTurn, AppError> {
@@ -102,8 +149,8 @@ pub async fn complete_with_tools(
         let request = json!({
             "model": model,
             "max_tokens": TASK_MAX_TOKENS,
-            "system": system,
-            "messages": messages,
+            "system": system_blocks(system),
+            "messages": with_cache_point(messages),
             "tools": tools,
         });
         let body = match provider {
@@ -267,5 +314,49 @@ mod tests {
             [ToolCall { id: "t1".into(), name: "list_files".into(), input: json!({ "path": "" }) }]
         );
         assert!(parse_tool_turn(&json!({ "content": [] })).is_none());
+    }
+
+    #[test]
+    fn system_blocks_cache_only_the_stable_part() {
+        let both = SystemPrompt { stable: "固定".into(), volatile: "可変".into() };
+        assert_eq!(
+            system_blocks(&both),
+            json!([
+                { "type": "text", "text": "固定", "cache_control": { "type": "ephemeral" } },
+                { "type": "text", "text": "可変" }
+            ])
+        );
+        // 可変部分が空なら固定部分の1ブロックだけ
+        let stable_only = SystemPrompt { stable: "固定".into(), volatile: " \n".into() };
+        assert_eq!(system_blocks(&stable_only).as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn cache_point_goes_on_the_last_user_block_of_a_copy() {
+        let cc = json!({ "type": "ephemeral" });
+        // 文字列の内容はテキストブロックへ変える。元の履歴は変えない
+        let history = vec![
+            json!({ "role": "user", "content": "前の発話" }),
+            json!({ "role": "assistant", "content": "前の応答" }),
+            json!({ "role": "user", "content": "今回の発話" }),
+        ];
+        let sent = with_cache_point(&history);
+        assert_eq!(sent[2]["content"], json!([{ "type": "text", "text": "今回の発話", "cache_control": cc }]));
+        assert_eq!(sent[0], history[0]);
+        assert_eq!(history[2]["content"], json!("今回の発話"));
+
+        // ツール結果の配列は最後のブロックにだけ付ける
+        let results = vec![json!({ "role": "user", "content": [
+            { "type": "tool_result", "tool_use_id": "a", "content": "1" },
+            { "type": "tool_result", "tool_use_id": "b", "content": "2" }
+        ] })];
+        let sent = with_cache_point(&results);
+        assert!(sent[0]["content"][0].get("cache_control").is_none());
+        assert_eq!(sent[0]["content"][1]["cache_control"], cc);
+
+        // 最後が応答(pause_turnの続き)なら付けない
+        let paused = vec![json!({ "role": "assistant", "content": [{ "type": "server_tool_use", "id": "s" }] })];
+        assert_eq!(with_cache_point(&paused), paused);
+        assert!(with_cache_point(&[]).is_empty());
     }
 }
