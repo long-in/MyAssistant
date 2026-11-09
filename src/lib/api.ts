@@ -345,6 +345,12 @@ export type GlobalPrefs = { language: "ja" | "en" | null; os_notifications: bool
 export const getGlobalPrefs = () => invoke<GlobalPrefs>("get_global_prefs");
 export const setGlobalLanguage = (language: "ja" | "en") => invoke<void>("set_global_language", { language });
 export const setGlobalOsNotifications = (enabled: boolean) => invoke<void>("set_global_os_notifications", { enabled });
+/** 通信のプロキシ設定。パスワードは返さず、登録の有無だけ。 */
+export type ProxySettings = { enabled: boolean; url: string; username: string; has_password: boolean };
+export const getProxySettings = () => invoke<ProxySettings>("get_proxy_settings");
+/** 保存して次の通信から反映する。passwordはundefinedなら据え置き、空文字なら削除。無効にしてもURLなどは残る。 */
+export const setProxySettings = (enabled: boolean, url: string, username: string, password?: string) =>
+  invoke<ProxySettings>("set_proxy_settings", { enabled, url, username, password: password ?? null });
 export const getTuning = () => invoke<Tuning>("get_tuning");
 /** 保存し、範囲内へ丸めた実際の値を返す。 */
 export const setTuning = (tuning: Tuning) => invoke<Tuning>("set_tuning", { tuning });
