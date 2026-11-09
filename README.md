@@ -9,7 +9,7 @@
 | --- | --- |
 | フロントエンド | Next.js 16 (静的エクスポート) / React 19 / Tailwind CSS 4 / shadcn/ui |
 | バックエンド | Tauri 2 (Rust) |
-| 対応 OS | **macOS 専用(11.0 以上)** |
+| 対応 OS | **macOS 専用(26.2 以上)** |
 
 Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音声認識が Metal 前提のため)。
 
@@ -33,7 +33,8 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
 ### 対話
 
 - **LLM 対話** ([chat-flow.md](docs/chat-flow.md))
-  - Anthropic / Amazon Bedrock(Claude)に対応し、使うモデルは画面で選びます。
+  - Anthropic / Amazon Bedrock(Claude)に対応し、チャットのモデルは左下のピッカーで切り替えます。
+  - 校正・ナレッジ整理・記憶の更新・スキル選定のモデルと、LLM に渡すプロンプト(全文を編集でき、初期値へ戻せる)は、エージェントの設定の「AI Settings」にまとまっています。
   - 応答は読み上げ向けの短い話し言葉です。
   - 読み上げ後は自動で音声入力が再開し、会話を続けられます。
 - **会話の継続と切り替え** ([conversation-session.md](docs/conversation-session.md))
@@ -54,7 +55,7 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
   - Whisper のモデルは `ggml-large-v3-turbo-q5_0.bin`(約574MB)または `ggml-small.bin`(約466MB)です。
   - Silero VAD で声のない入力を除き、無音への幻聴を防ぎます。
 - **文字起こしの校正(オプション)**
-  - エージェントの設定(音声タブ)でモデルを選ぶと(エージェントごとに指定)、会話の文脈と訂正履歴から聞き間違いを直してから送信します。
+  - エージェントの設定の「AI Settings」でモデルを選ぶと(エージェントごとに指定)、会話の文脈と訂正履歴から聞き間違いを直してから送信します。
   - 字幕から聞き取りを手で訂正すると、ナレッジに記録されて次の発話から反映されます。
 - **音声出力 (TTS)** ([voice-output.md](docs/voice-output.md))
   - 次から選べます。
@@ -171,7 +172,7 @@ npm run tauri build
 ```
 
 - 成果物は `src-tauri/target/release/bundle/` 配下に出力されます。
-- macOS の最小対応バージョンは 11.0 です([src-tauri/tauri.conf.json](src-tauri/tauri.conf.json))。
+- macOS の最小対応バージョンは 26.2 です(入力欄の自動伸縮に使う CSS `field-sizing` が WebKit 26.2 以降のため)([src-tauri/tauri.conf.json](src-tauri/tauri.conf.json))。
 - whisper.cpp のビルドには macOS 10.15 以上のデプロイターゲットが必要なため、この値を下げないでください。
 
 ## 初期設定

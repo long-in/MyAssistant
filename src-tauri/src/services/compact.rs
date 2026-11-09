@@ -4,6 +4,7 @@
 //! 要約は会話ごとにDBへ保存し、以降は「要約 + 要約後の会話」だけをLLMへ渡す。
 
 use super::{
+    prompts::{self, PromptId},
     llm_client::{self, ChatMessage},
     secrets::Provider,
     workspace::WorkspaceCtx,
@@ -13,7 +14,7 @@ use crate::{
     utils::error::AppError,
 };
 
-const SYSTEM: &str = "\
+pub const DEFAULT_SYSTEM: &str = "\
 あなたは会話の要約者です。<summary>(これまでの要約。なければ空)と<conversation>(その後の会話)を1つの要約にまとめてください。\n\
 - 決まったこと、ユーザーの目的・好み・前提、固有名詞、数値、未解決の質問や保留中の作業を残してください。\n\
 - 挨拶、相槌、言い換え、AIの長い説明は省き、日本語の箇条書き(各行は「- 」で始める)で800文字以内にしてください。\n\
@@ -71,7 +72,8 @@ async fn summarize(
     rows: &[LogRow],
 ) -> Result<String, AppError> {
     let msg = [ChatMessage { role: "user".into(), content: prompt(previous, rows) }];
-    let done = llm_client::complete(ctx, provider, model, Some(SYSTEM), &msg).await?;
+    let system = prompts::load(&ctx.db, PromptId::Summary)?;
+    let done = llm_client::complete(ctx, provider, model, Some(&system), &msg).await?;
     let text: String = done.text.trim().chars().take(SUMMARY_MAX_CHARS).collect();
     if text.is_empty() { Err(AppError::Db("empty summary".into())) } else { Ok(text) }
 }

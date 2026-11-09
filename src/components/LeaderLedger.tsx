@@ -71,8 +71,8 @@ export default function LeaderLedger({ active, className }: { active: boolean; c
   };
 
   return (
-    <aside className={cn("flex min-h-0 flex-col border-l bg-sidebar/40", className)} aria-label={t("台帳")}>
-      <div className="px-4 pt-14 pb-2">
+    <aside className={cn("flex min-h-0 flex-col border-t bg-sidebar/40", className)} aria-label={t("台帳")}>
+      <div className="px-4 pt-3 pb-2">
         <p className="hud-label">{"// Ledger"}</p>
         <h2 className="text-sm font-semibold">{t("台帳")}</h2>
         <p className="mt-1 text-xs text-muted-foreground">{t("配布した指示ごとの、宛先の状態です。「確認済み」は、自分で付ける区切りです。")}</p>

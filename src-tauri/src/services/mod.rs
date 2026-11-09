@@ -25,6 +25,7 @@ pub mod llm_client;
 pub mod llm_router;
 pub mod memory;
 pub mod proofread;
+pub mod prompts;
 pub mod profile;
 pub mod pronunciation;
 pub mod stt;

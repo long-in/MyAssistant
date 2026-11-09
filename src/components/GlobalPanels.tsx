@@ -2,7 +2,7 @@
 import { LANGS, setLang, tr, useLang, useT, type Lang } from "@/lib/i18n";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Archive, AudioLines, Bell, Copy, BookOpen, Keyboard, Pencil, Share2, HardDriveDownload, Volume2, Briefcase, ClipboardList, Download, FolderKanban, Languages, Link2, ListOrdered, Loader2, Mic, Plus, ScrollText, Send, Settings2, ShieldCheck, SlidersHorizontal, SpellCheck, Square, Timer, Upload, UserRound, X, type LucideIcon } from "lucide-react";
+import { Archive, AudioLines, Bell, BrainCircuit, Copy, BookOpen, Keyboard, Pencil, Share2, HardDriveDownload, Volume2, Briefcase, ClipboardList, Download, FolderKanban, Languages, Link2, ListOrdered, Loader2, Mic, Plus, ScrollText, Send, Settings2, ShieldCheck, SlidersHorizontal, Square, Timer, Upload, UserRound, X, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
@@ -12,12 +12,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { refreshWorkspace, switchTo } from "@/lib/workspace";
-import ModelSelector from "@/components/ModelSelector";
 import HelpDrawer from "@/components/HelpDrawer";
 import BackupPasswordModal from "@/components/BackupPasswordModal";
 import { ensureOsPermission, osNotificationsEnabled, setOsNotificationsEnabled, syncOsNotifications } from "@/lib/osNotify";
 import NotePanel from "@/components/NotePanel";
-import { getSharedData, saveSharedData, LEADER_COLOR, LEADER_ID, createLeader, errorMessage, leaderExists, setWorkEnabled, workEnabled, type KeyStatus, setGlobalLanguage, exportGlobalSettings, importGlobalSettings, backupCreate, restorePrepare, restoreApply, restoreDiscard, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, getBatchInterval, setBatchInterval, listModels, loadProofreadRoute, saveProofreadRoute, type ModelInfo, type Route, type WakeConfig, reportError, type AppError, saveBaseInstructions, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
+import { getSharedData, saveSharedData, LEADER_COLOR, LEADER_ID, createLeader, errorMessage, leaderExists, setWorkEnabled, workEnabled, setGlobalLanguage, exportGlobalSettings, importGlobalSettings, backupCreate, restorePrepare, restoreApply, restoreDiscard, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, getBatchInterval, setBatchInterval, type WakeConfig, reportError, type AppError, saveBaseInstructions, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
 
 /** 見出しの左に出すアイコン(英字の見出しごと)。無いものは歯車。 */
 const HEADING_ICONS: Record<string, LucideIcon> = {
@@ -25,7 +24,7 @@ const HEADING_ICONS: Record<string, LucideIcon> = {
   "Personal Data": UserRound,
   "Knowledge Interval": Timer,
   Language: Languages,
-  Proofread: SpellCheck,
+  "AI Settings": BrainCircuit,
   "Wake Words": Mic,
   "Voice Timing": AudioLines,
   Limits: SlidersHorizontal,
@@ -502,72 +501,6 @@ export function BaseInstructions() {
           {t("既定に戻す")}
         </Button>
       </div>
-    </section>
-  );
-}
-
-/** 文字起こし後の校正に使うモデルの登録。オフの間は校正せず、そのまま送信する。 */
-export function Proofread({ keyStatus }: { keyStatus: Partial<KeyStatus> }) {
-  const t = useT();
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [route, setRoute] = useState<Route | null>(null);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    Promise.all([listModels(), loadProofreadRoute()])
-      .then(([m, r]) => {
-        setModels(m);
-        setRoute(r);
-      })
-      .catch((e) => toast.error(reportError(e)));
-  }, [keyStatus]);
-
-  const usable = models.filter((m) => keyStatus[m.provider]);
-  const save = async (next: Route | null) => {
-    setBusy(true);
-    try {
-      await saveProofreadRoute(next);
-      setRoute(next);
-    } catch (e) {
-      toast.error(reportError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  // 校正は短い文を毎回処理するため、有効化時は軽量モデルを初期値にする
-  const initial = usable.find((m) => m.tier === "light") ?? usable[0];
-
-  return (
-    <section className="hud-panel hud-accent px-5 py-4">
-      <Heading title="Proofread" help={t("文字起こしの校正")}>
-        <p>{t("音声認識の結果を、直近の会話と過去の訂正履歴を手がかりにAIで校正してから送信します。")}</p>
-        <ul>
-          <li>{t("発話のたびに選んだモデルが呼ばれ、トークン課金の対象になります。")}</li>
-          <li>{t("校正は軽量モデルが向いています。")}</li>
-          <li>{t("失敗時は校正前の文章をそのまま使います。")}</li>
-        </ul>
-      </Heading>
-      <div className="flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium">{t("文字起こしを文脈から校正する")}</div>
-          <div className="text-xs text-muted-foreground">
-            {t("認識結果をAIで校正してから送信します(発話ごとに課金)。")}
-          </div>
-        </div>
-        <Switch
-          aria-label={t("文字起こしの校正")}
-          checked={!!route}
-          disabled={busy || (!route && !initial)}
-          onCheckedChange={(on) => save(on && initial ? { provider: initial.provider, model: initial.id } : null)}
-        />
-      </div>
-      {route && (
-        <div className="mt-3">
-          <ModelSelector route={route} models={models} keyStatus={keyStatus} onChange={save} />
-        </div>
-      )}
-      {!route && !initial && (
-        <p className="mt-2 text-xs text-muted-foreground">{t("先にAIのAPIキーを接続してください。")}</p>
-      )}
     </section>
   );
 }

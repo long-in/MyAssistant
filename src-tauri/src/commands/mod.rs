@@ -9,6 +9,7 @@ pub mod knowledge;
 pub mod knowledge_all;
 pub mod leader;
 pub mod profile;
+pub mod prompts;
 pub mod settings;
 pub mod settings_transfer;
 pub mod skills;

@@ -8,8 +8,7 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { approvalLine } from "@/components/AttentionToasts";
 import { notifyOsIfBackground } from "@/lib/osNotify";
-import { createPortal } from "react-dom";
-import ModelSelector from "./ModelSelector";
+import ModelPicker from "./ModelPicker";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import WorkspaceBadge from "@/components/WorkspaceBadge";
@@ -124,7 +123,6 @@ type Heard = { text: string } | "retry" | "stop";
 /** 高さ40rem未満または幅40rem未満のウィンドウでは、波形以外の補助表示を隠す。 */
 const HIDE_WHEN_SMALL = "[@media(max-height:40rem),(max-width:40rem)]:hidden";
 const HIDE_WHEN_SMALL_FLEX = "flex [@media(max-height:40rem),(max-width:40rem)]:hidden";
-const SMALL_COLLAPSE_SUBTITLES = "h-[clamp(9rem,26vh,14rem)] [@media(max-height:40rem),(max-width:40rem)]:h-auto";
 
 /** ワークスペースごとの現在の会話のセッション。リロード・再起動で新しくなる。切り替えて戻っても、同じ会話の続きになる。 */
 const sessions = new Map<string, { id: string }>();
@@ -134,8 +132,8 @@ const sessionOf = (workspaceId: string) => {
   return s;
 };
 
-/** `active`は対話画面を表示中かどうか。`modelSlot`はモデル選択を表示する左メニュー下部の要素。他の画面へ移動しても`Chat`は`AppShell`に残り、進行中の処理や待機を続ける。 */
-export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: string; active: boolean; modelSlot: HTMLElement | null }) {
+/** `active`は対話画面を表示中かどうか。他の画面へ移動しても`Chat`は`AppShell`に残り、進行中の処理や待機を続ける。 */
+export default function Chat({ workspaceId, active }: { workspaceId: string; active: boolean }) {
   const t = useT();
   const activeRef = useRef(active);
   useEffect(() => {
@@ -964,7 +962,6 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
   return (
     <div className="relative flex h-full flex-col">
       <WorkspaceBadge className="pointer-events-none absolute top-4 right-4 z-10" />
-      {modelSlot && createPortal(<ModelSelector route={route} models={models} keyStatus={keyStatus} onChange={changeRoute} />, modelSlot)}
       {setup && (
         <div className="mx-6 mt-4 flex flex-col gap-2 empty:hidden">
           {!Object.values(keyStatus).some(Boolean) && Object.keys(keyStatus).length > 0 && <SetupNotice text={t("APIキーが未登録のため、AIが応答できません。")} action={t("設定を開く")} onAction={() => router.push("/setup")} />}
@@ -982,26 +979,22 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
         </div>
       )}
 
-      {/* リーダーのときだけ、右に台帳を置く(円形波形は左のカラムの中央になる) */}
-      <div className="flex min-h-0 flex-1">
-      {/* 中央: 読み上げ音声の円形波形 */}
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-4 px-6 py-4">
-        {/* 利用できる幅・高さのうち小さい方に合わせて、円形波形を正方形で最大化する */}
-        <div className="flex min-h-0 w-full flex-1 items-center justify-center [container-type:size]">
-          <div className="relative size-[min(100cqmin,40rem)] @container">
-            <VoiceOrb phase={phase} micActive={recording} thinking={busy} className="size-full" />
-            <OrbReadout phase={phase} />
-          </div>
+      {/* 確認UIは、ウィンドウが小さくて回答を畳んでいるときも残す */}
+      {switching && (
+        <div className="flex shrink-0 justify-center px-6 pt-3">
+          <SwitchConfirm listening={switchListening} onAnswer={answerSwitch} />
         </div>
-        {/* 右下: 処理が始まったら現れる強制中断。どの状態からでもすぐ押せるよう大きく目立たせる */}
-        {isWorking && <AbortButton onAbort={abortAll} />}
-        {/* 左上: 新しい会話ボタンと、その下に実行ログ */}
-        <div className={cn("pointer-events-none absolute top-4 left-4 z-10 w-[26rem] max-w-[calc(100%-2rem)] xl:w-[34rem] flex-col gap-3", HIDE_WHEN_SMALL_FLEX)}>
+      )}
+      {/* 左: 回答(広く使う)。右: 円形波形。リーダーは、その下に台帳を縦に並べる。狭いときは波形を回答の上に小さく出す */}
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+      <div className={cn("relative min-h-0 min-w-0 flex-1 flex-col gap-3 px-6 py-4", HIDE_WHEN_SMALL_FLEX)}>
+        {/* 上: 新しい会話ボタンと、その下に実行ログ */}
+        <div className="flex max-h-[40%] shrink-0 flex-col gap-3 overflow-y-auto">
           <Button
             type="button"
             variant="outline"
             size="sm"
-            className="hud-label pointer-events-auto self-start border-primary/40 bg-background/80 backdrop-blur hover:border-primary"
+            className="hud-label self-start border-primary/40 bg-background/80 backdrop-blur hover:border-primary"
             title={t("これまでの会話の流れを引き継がず、新しい会話を始める")}
             onClick={() => startNewConversation(true)}
           >
@@ -1010,23 +1003,33 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
           </Button>
           <ExecutionLog log={log} busy={busy} onCancel={cancelTask} onClose={() => setLog(emptyLog)} />
         </div>
-        {/* 字幕は固定高の領域に収め、長文は領域内でスクロールさせる(円形波形の大きさを変えない) */}
-        {/* ウィンドウが小さいときは字幕などを畳み、円形波形を大きく保つ(確認UIだけは残す) */}
-        <div className={cn("flex w-full shrink-0 flex-col items-center justify-end gap-1.5", SMALL_COLLAPSE_SUBTITLES)}>
-          <div className={cn("w-full flex-col items-center gap-1.5", HIDE_WHEN_SMALL_FLEX)}>
-            {busy && activity && !approval && (
-              <p className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                <Loader2 className="size-3.5 animate-spin" /> {activity}
-              </p>
-            )}
-          </div>
-          {switching && <SwitchConfirm listening={switchListening} onAnswer={answerSwitch} />}
-          <div className={cn("flex min-h-0 w-full flex-1 flex-col items-center justify-end", HIDE_WHEN_SMALL)}>
-            <Subtitles turns={turns} pending={busy} speaking={speaking} onSpeak={ttsReady ? (text) => void speakOnDemand(text) : undefined} onStop={stopSpeech} onCorrected={(text) => setTurns((ts) => ts.map((x, i) => (i === ts.length - 1 ? { ...x, user: text } : x)))} />
+        {busy && activity && !approval && (
+          <p className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="size-3.5 animate-spin" /> {activity}
+          </p>
+        )}
+        {/* 回答は残りの高さをすべて使い、長文は領域内でスクロールさせる */}
+        <div className="flex min-h-0 w-full flex-1 flex-col justify-end">
+          <Subtitles turns={turns} pending={busy} speaking={speaking} onSpeak={ttsReady ? (text) => void speakOnDemand(text) : undefined} onStop={stopSpeech} onCorrected={(text) => setTurns((ts) => ts.map((x, i) => (i === ts.length - 1 ? { ...x, user: text } : x)))} />
+        </div>
+        {/* 右下: 処理が始まったら現れる強制中断。どの状態からでもすぐ押せるよう大きく目立たせる */}
+        {isWorking && <AbortButton onAbort={abortAll} />}
+      </div>
+      <div
+        className={cn(
+          "order-first flex h-44 shrink-0 flex-col md:order-last md:h-auto md:w-[30%] md:max-w-[28rem] md:min-w-64 md:pt-14",
+          "[@media(max-height:40rem),(max-width:40rem)]:h-auto [@media(max-height:40rem),(max-width:40rem)]:w-full [@media(max-height:40rem),(max-width:40rem)]:max-w-none [@media(max-height:40rem),(max-width:40rem)]:flex-1 [@media(max-height:40rem),(max-width:40rem)]:pt-4",
+        )}
+      >
+        {/* 利用できる幅・高さのうち小さい方に合わせて、円形波形を正方形で最大化する */}
+        <div className={cn("relative flex min-h-0 w-full items-center justify-center px-4 py-2 [container-type:size]", workspaceId === LEADER_ID ? "flex-1 md:h-[45%] md:flex-none" : "flex-1")}>
+          <div className="relative size-[min(100cqmin,40rem)] @container">
+            <VoiceOrb phase={phase} micActive={recording} thinking={busy} className="size-full" />
+            <OrbReadout phase={phase} />
           </div>
         </div>
+        {workspaceId === LEADER_ID && <LeaderLedger active={active} className={cn("hidden min-h-0 flex-1 md:flex", HIDE_WHEN_SMALL)} />}
       </div>
-      {workspaceId === LEADER_ID && <LeaderLedger active={active} className={cn("w-72 shrink-0 xl:w-[26rem]", HIDE_WHEN_SMALL)} />}
       </div>
 
       {approval &&<ApprovalModal approval={approval} listening={listening} onAnswer={answerApproval} />}
@@ -1085,15 +1088,16 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
             {speakReply ? <Volume2 /> : <VolumeX />}
           </Button>
           <form
-            className="flex min-w-0 flex-1 items-stretch gap-2"
+            className="min-w-0 flex-1"
             onSubmit={(e) => {
               e.preventDefault();
               submitDraft();
             }}
           >
+            <div className="flex flex-col rounded-lg border border-primary/30 bg-background/60 focus-within:border-primary">
             <Textarea
               value={draft}
-              rows={3}
+              rows={1}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 // Enterで送信、Shift+Enterで改行。日本語入力の変換確定のEnterでは送らない
@@ -1104,18 +1108,25 @@ export default function Chat({ workspaceId, active, modelSlot }: { workspaceId: 
               disabled={busy || needModel}
               placeholder={status}
               aria-label={t("メッセージ")}
-              className="max-h-48 min-h-20 resize-none border-primary/30 bg-background/60 focus-visible:border-primary"
+              className="max-h-48 min-h-10 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
-            <Button
-              type="submit"
-              variant="outline"
-              aria-label={t("送信")}
-              title={t("送信")}
-              disabled={!draft.trim() || busy || needModel || mic !== "idle"}
-              className="h-auto w-14 shrink-0 flex-col [&_svg]:size-5"
-            >
-              <Send />
-            </Button>
+            <div className="flex items-center justify-between gap-2 px-2 pb-2">
+              <div className="min-w-0 max-w-64">
+                <ModelPicker compact disabled={busy} route={route} models={models} keyStatus={keyStatus} onChange={changeRoute} />
+              </div>
+              <Button
+                type="submit"
+                size="icon-sm"
+                variant="outline"
+                aria-label={t("送信")}
+                title={t("送信")}
+                disabled={!draft.trim() || busy || needModel || mic !== "idle"}
+                className="shrink-0"
+              >
+                <Send />
+              </Button>
+            </div>
+            </div>
           </form>
         </div>
       </div>

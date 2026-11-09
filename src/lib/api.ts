@@ -918,3 +918,20 @@ export const leaderDispatch = (text: string, agentIds: string[]) =>
   invoke<DispatchResult[]>("leader_dispatch", { text, agentIds });
 export const leaderOverview = () => invoke<LeaderOverview>("leader_overview");
 export const leaderSetConfirmed = (id: string, confirmed: boolean) => invoke<void>("leader_set_confirmed", { id, confirmed });
+
+/** LLMへ渡すプロンプトを持つ機能。 */
+export type PromptId = "chat" | "summary" | "proofread" | "organize" | "memory" | "skills" | "suggest";
+export type PromptInfo = {
+  id: PromptId;
+  /** いま使われる文章。 */
+  text: string;
+  /** 「初期値へ戻す」で戻る文章。 */
+  default: string;
+  /** このエージェントで上書きしているか。 */
+  custom: boolean;
+};
+export const PROMPT_MAX_CHARS = 20000;
+export const listPrompts = () => invoke<PromptInfo[]>("list_prompts");
+/** 空、または既定と同じ文章は上書きなしになる。保存後の状態を返す。 */
+export const savePrompt = (id: PromptId, text: string) => invoke<PromptInfo>("save_prompt", { id, text });
+export const resetPrompt = (id: PromptId) => invoke<PromptInfo>("reset_prompt", { id });

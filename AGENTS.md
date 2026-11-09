@@ -47,7 +47,7 @@ Tauri 2 (Rust) + Next.js 静的エクスポート(`output: "export"`)のデス�
 
 ```bash
 npm run tauri dev      # 開発
-npm run tauri build    # ビルド(macOS 最小バージョンは tauri.conf.json で 11.0)
+npm run tauri build    # ビルド(macOS 最小バージョンは tauri.conf.json で 26.2)
 npm run lint
 cd src-tauri && cargo test
 ```
