@@ -15,6 +15,7 @@
 | `voicevox/` | VOICEVOX CORE・ONNX Runtime・OpenJTalk 辞書・音声モデル(設定画面から取得) |
 | `llm/` | ローカル LLM の llama-server(`bin/`)・Qwen のモデル(`models/`)・取得の記録・サーバーのログ(設定画面から取得。[local-llm.md](local-llm.md)) |
 | ナレッジ | 既定ではアプリデータ配下(`knowledge/`)。設定で任意のフォルダへ変更できる([knowledge.md](knowledge.md)) |
+| `proxy/secrets.json` | 通信のプロキシのパスワード(権限 0600。ワークスペースを問わず1つ。[proxy.md](proxy.md)) |
 | `tts_dictionary.json` | 読み上げ辞書(ユーザー登録分) |
 | `workspaces/registry.json` | ワークのエージェント一覧(id・名称・イメージカラー・作成日時) |
 | `workspaces/<UUID>/` | エージェントのデータ。`timeline.db`・`secrets.json`・`knowledge/`・`tts_dictionary.json` をパーソナルと同じ名前で持つ |
@@ -122,7 +123,7 @@ erDiagram
 | `debug_log_dir` | デバッグログの出力先(空なら既定) | 既定 | Debug Mode |
 | `leader_prompt` / `leader_max_active` | リーダーの指示(JSON)と同時に動かす依頼の上限(リーダーのみ) | 既定 | リーダーの設定 |
 
-**全体設定に移した項目**(ベースプロンプト `base_instructions`、OS通知、表示言語、音声入力の待ち時間 `voice_timing`、起動ワード `wake_enabled` / `wake_words`、パーソナルデータ `user_profile`、ナレッジ整理の間隔 `batch_interval_minutes`)は、`app_settings` ではなく `workspaces/global_settings.json` に保存する。エージェントのDBに残った同名の古い値は、全体設定の取り込みが済んだあとにDBを開いたとき消す([global-settings.md](global-settings.md))。
+**全体設定に移した項目**(ベースプロンプト `base_instructions`、OS通知、表示言語、音声入力の待ち時間 `voice_timing`、起動ワード `wake_enabled` / `wake_words`、パーソナルデータ `user_profile`、ナレッジ整理の間隔 `batch_interval_minutes`、通信のプロキシ `proxy_enabled` / `proxy_url` / `proxy_username`)は、`app_settings` ではなく `workspaces/global_settings.json` に保存する。エージェントのDBに残った同名の古い値は、全体設定の取り込みが済んだあとにDBを開いたとき消す([global-settings.md](global-settings.md))。
 
 **キーの一覧(`services/settings_registry.rs`)**: すべての設定キーについて、保存先(エージェントのDB / 全体設定)と、書き出し・コピーの対象かどうか(と検証方法)をここで決める。書き出しの項目、全体設定のバックアップの項目、初回の取り込み・古い値の削除の対象は、この一覧から作る。保存先の取り違えを防ぐため、DBは全体設定のキーを、全体設定はエージェントのキーを書き込みで拒否する。新しい設定を足すときは、この一覧にも登録する。
 
