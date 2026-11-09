@@ -20,7 +20,7 @@ use crate::{
         knowledge, leader,
         llm_router::{self, ModelInfo, Route},
         memory,
-        profile,
+        profile, prompts,
         secrets::Provider,
         skills,
         agent_data, tuning,
@@ -44,7 +44,7 @@ pub const CORRECTIONS_MAX: usize = 30;
 
 /// 音声での会話を前提とした、常にシステムプロンプトの先頭へ置く基本指示。
 /// 応答はそのまま音声合成され、読み上げ後は自動で音声入力が再開する。読み上げに不要な記号を含めない。
-const DEFAULT_BASE_INSTRUCTIONS: &str = "\
+pub const DEFAULT_BASE_INSTRUCTIONS: &str = "\
 あなたは音声対話アシスタントです。ユーザーの発話は音声認識の文字起こしで、回答はそのまま読み上げられ、読み上げ後はユーザーが続けて話せます。一問一答で終わらせず、会話を重ねて一緒に進めてください。\n\
 \n\
 会話の進め方\n\
@@ -63,7 +63,7 @@ const DEFAULT_BASE_INSTRUCTIONS: &str = "\
 - 数式・記号・英略語は読み上げて自然な言い方にする。話し言葉で、一文を短く。";
 
 /// 画面から登録されたベース指示。未登録(空白のみ含む)なら既定値。
-fn base_instructions(db: &impl SettingsStore) -> Result<String, AppError> {
+pub fn base_instructions(db: &impl SettingsStore) -> Result<String, AppError> {
     Ok(match db.get_setting(BASE_INSTRUCTIONS_KEY)? {
         Some(v) if !v.trim().is_empty() => v,
         _ => DEFAULT_BASE_INSTRUCTIONS.to_string(),
@@ -313,7 +313,7 @@ async fn send_chat_inner(
         .or_insert_with(|| restore_corrections(&ctx))
         .clone();
     let tuning = tuning::load(&ctx.db)?;
-    let base = base_instructions(&*ctx.global)?;
+    let base = prompts::load_chat(&ctx.db, &*ctx.global)?;
     ctx.db.insert_log(&session_id, "user", text, None, None)?;
     // 往復数が上限を超えていれば古い分を要約し、LLMへは「要約 + 直近の会話」だけを渡す
     let window = compact::prepare(&ctx, &session_id, tuning.history_exchanges, target.provider, &target.model).await?;

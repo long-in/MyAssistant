@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{
-    batch, debug_log, global_settings, leader, memory, profile, proofread, agent_data, skills, stt, tuning, voicevox, wake, workspace,
+    batch, debug_log, global_settings, leader, memory, profile, proofread, prompts, agent_data, skills, stt, tuning, voicevox, wake, workspace,
 };
 
 /// 設定の保存先。
@@ -70,6 +70,13 @@ pub const ALL: &[Setting] = &[
     agent(batch::BATCH_ROUTE_KEY, Some(Kind::Json)),
     agent(proofread::ROUTE_KEY, Some(Kind::Json)),
     agent(memory::ROUTE_KEY, Some(Kind::Json)),
+    agent(prompts::CHAT_KEY, Some(Kind::Text)),
+    agent(prompts::SUMMARY_KEY, Some(Kind::Text)),
+    agent(prompts::PROOFREAD_KEY, Some(Kind::Text)),
+    agent(prompts::ORGANIZE_KEY, Some(Kind::Text)),
+    agent(prompts::MEMORY_KEY, Some(Kind::Text)),
+    agent(prompts::SKILLS_KEY, Some(Kind::Text)),
+    agent(prompts::SUGGEST_KEY, Some(Kind::Text)),
     agent(debug_log::ENABLED_KEY, Some(Kind::Flag)),
     // ---- エージェントごと(対象外: 端末ごとに異なるもの、エージェント固有のもの) ----
     agent(batch::KNOWLEDGE_DIR_KEY, None),

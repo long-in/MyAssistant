@@ -8,6 +8,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::{
+    prompts::{self, PromptId},
     tool_loop::{TaskEvent, DraftTarget},
     task_run::RunStatus,
     llm_client::{self, ChatMessage},
@@ -165,7 +166,7 @@ pub fn overview(
 
 // ---- 宛先の提案 ----
 
-const SYSTEM: &str = "\
+pub const DEFAULT_SYSTEM: &str = "\
 あなたは、利用者が書いた指示を、どのエージェントへ配布するかを提案する補助です。\n\
 - <agents>は宛先にできるエージェントの名称の一覧、<history>は、過去に配布した指示とその宛先の履歴、<instruction>は、これから配布する指示です。\n\
 - 履歴の傾向から、<instruction>と同じ種類の指示が、過去にどのエージェントへ配布されたかを根拠に、宛先として推奨するエージェントを選んでください。\n\
@@ -199,10 +200,10 @@ pub fn prompt_block(prompt: &Note) -> Option<String> {
     prompt.prompt_block("leader_prompt", "リーダーの行動原理と役割として、利用者が設定した指示です。従ってください。")
 }
 
-fn build_system(prompt: &Note) -> String {
+fn build_system(system: &str, prompt: &Note) -> String {
     match prompt_block(prompt) {
-        Some(block) => format!("{SYSTEM}\n\n{block}"),
-        None => SYSTEM.to_owned(),
+        Some(block) => format!("{system}\n\n{block}"),
+        None => system.to_owned(),
     }
 }
 
@@ -374,7 +375,7 @@ pub async fn suggest(leader: &WorkspaceCtx, agents: &[Agent], instruction: &str)
     let Some(route) = suggest_route(leader) else { return Ok(Vec::new()) };
     let available: Vec<Provider> = Provider::ALL.into_iter().filter(|p| leader.secrets.has_key(*p).unwrap_or(false)).collect();
     let target = llm_router::resolve(leader, &route, &available)?;
-    let system = build_system(&load_prompt(&leader.db)?);
+    let system = build_system(&prompts::load(&leader.db, PromptId::Suggest)?, &load_prompt(&leader.db)?);
     let msg = [ChatMessage { role: "user".into(), content: build_user_prompt(&render_history(&rows), agents, &instruction) }];
     match llm_client::complete(leader, target.provider, &target.model, Some(&system), &msg).await {
         Ok(done) => {
@@ -515,11 +516,11 @@ mod tests {
 
     #[test]
     fn leader_prompt_is_followed_and_history_is_not() {
-        let with = build_system(&Note { enabled: true, text: "経理案件は必ず経理へ".into() });
+        let with = build_system(DEFAULT_SYSTEM, &Note { enabled: true, text: "経理案件は必ず経理へ".into() });
         assert!(with.contains("<leader_prompt>\n経理案件は必ず経理へ\n</leader_prompt>") && with.contains("参考データです"));
-        let off = build_system(&Note { enabled: false, text: "x".into() });
+        let off = build_system(DEFAULT_SYSTEM, &Note { enabled: false, text: "x".into() });
         assert!(!off.contains("leader_prompt"));
-        assert_eq!(build_system(&Note::default()), SYSTEM);
+        assert_eq!(build_system(DEFAULT_SYSTEM, &Note::default()), DEFAULT_SYSTEM);
     }
 
     #[test]

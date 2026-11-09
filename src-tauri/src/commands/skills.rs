@@ -8,6 +8,7 @@ use crate::{
     services::{
         batch,
         llm_router::Route,
+        prompts::{self, PromptId},
         skills::{self, Skill},
     },
     utils::error::AppError,
@@ -24,7 +25,7 @@ pub struct SkillsOverview {
 #[tauri::command]
 pub fn list_skills(ctx: Ctx) -> Result<SkillsOverview, AppError> {
     let skills = skills::list(&batch::knowledge_root(&ctx)?);
-    let index_tokens = skills::index_tokens(&skills);
+    let index_tokens = skills::index_tokens(&prompts::load(&ctx.db, PromptId::Skills)?, &skills);
     Ok(SkillsOverview { skills, index_tokens })
 }
 

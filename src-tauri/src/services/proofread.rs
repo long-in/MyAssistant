@@ -1,5 +1,6 @@
 //! 音声認識結果を会話の文脈から校正するLLMステップ。
 use super::{
+    prompts::{self, PromptId},
     llm_client::{self, ChatMessage},
     llm_router::{self, Route},
     secrets::Provider,
@@ -14,7 +15,7 @@ const CONTEXT_MESSAGES: u32 = 6;
 /// 校正結果が元の何倍を超えたら、説明文などが混ざったとみなして採用しない。
 const MAX_GROWTH: usize = 3;
 
-const SYSTEM: &str = "\
+pub const DEFAULT_SYSTEM: &str = "\
 あなたは音声認識(文字起こし)結果の校正者です。\n\
 - <transcript>の文章から、同音異義語・固有名詞・専門用語の聞き間違い、誤変換、不自然な区切りだけを直してください。\n\
 - <context>の会話の流れと<stt_corrections>の訂正履歴を手がかりに、話者が意図した表記を推定してください。\n\
@@ -66,7 +67,14 @@ pub async fn proofread(ctx: &WorkspaceCtx, route: &Route, session_id: Option<&st
         }
     };
     let msg = [ChatMessage { role: "user".into(), content: prompt(text, &history, corrections) }];
-    match llm_client::complete(ctx, target.provider, &target.model, Some(SYSTEM), &msg).await {
+    let system = match prompts::load(&ctx.db, PromptId::Proofread) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("proofread skipped: {e}");
+            return text.to_owned();
+        }
+    };
+    match llm_client::complete(ctx, target.provider, &target.model, Some(&system), &msg).await {
         Ok(done) => {
             let out = done.text.trim();
             if acceptable(text, out) { out.to_owned() } else { text.to_owned() }
