@@ -18,16 +18,24 @@ pub enum Provider {
     Anthropic,
     /// AWS Bedrock経由のClaude。認証はAPIキーではなく、貼り付けたAWSの設定ファイル(`aws.rs`)。
     Bedrock,
+    /// 端末内のLLM(`local_llm.rs`)。キーは無く、サーバーとモデルを取得済みなら使える。
+    Local,
 }
 
 impl Provider {
-    pub const ALL: [Provider; 2] = [Provider::Anthropic, Provider::Bedrock];
+    pub const ALL: [Provider; 3] = [Provider::Anthropic, Provider::Bedrock, Provider::Local];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Anthropic => "anthropic",
             Self::Bedrock => "bedrock",
+            Self::Local => "local",
         }
+    }
+
+    /// APIキーを登録して使うプロバイダーか(BedrockはAWSの設定、ローカルは取得物で使う)。
+    pub fn uses_api_key(self) -> bool {
+        self == Self::Anthropic
     }
 }
 
@@ -96,7 +104,7 @@ impl Secrets {
     /// `src`のAPIキー(Anthropic)だけを写す。TTS・音声認識・AWSの設定は写さない。写したら`true`、`src`に無ければ`false`。
     /// 生値はこのモジュールの外へ出さない。リーダーが他のワークスペースのキーを使うときに使う。
     pub fn copy_api_key_from(&self, src: &Secrets, provider: Provider) -> Result<bool, AppError> {
-        if std::ptr::eq(self, src) || provider == Provider::Bedrock {
+        if std::ptr::eq(self, src) || !provider.uses_api_key() {
             return Ok(false);
         }
         match src.get_key(provider)? {
@@ -215,24 +223,26 @@ impl Secrets {
         self.delete_secret(AQUA_ACCOUNT)
     }
 
+    /// そのプロバイダーを使えるか。ローカルはキーではなく、取得済みかどうか(全ワークスペース共通)。
     pub fn has_key(&self, provider: Provider) -> Result<bool, AppError> {
         match provider {
             Provider::Bedrock => self.has_aws(),
+            Provider::Local => Ok(super::local_llm::installed()),
             p => Ok(self.get_secret(p.as_str())?.is_some()),
         }
     }
 
-    /// Rust内部のLLMクライアント専用。コマンドとして公開しないこと。Bedrockは対象外(`get_aws_files`)。
+    /// Rust内部のLLMクライアント専用。コマンドとして公開しないこと。Bedrock(`get_aws_files`)とローカルは対象外。
     pub fn get_key(&self, provider: Provider) -> Result<Option<String>, AppError> {
         match provider {
-            Provider::Bedrock => Ok(None),
+            Provider::Bedrock | Provider::Local => Ok(None),
             p => self.get_secret(p.as_str()),
         }
     }
 
     pub fn set_key(&self, provider: Provider, key: &str) -> Result<(), AppError> {
         match provider {
-            Provider::Bedrock => Err(AppError::InvalidProvider(provider.as_str().to_owned())),
+            Provider::Bedrock | Provider::Local => Err(AppError::InvalidProvider(provider.as_str().to_owned())),
             p => self.set_secret(p.as_str(), key),
         }
     }
@@ -240,6 +250,7 @@ impl Secrets {
     pub fn delete_key(&self, provider: Provider) -> Result<(), AppError> {
         match provider {
             Provider::Bedrock => self.delete_aws(),
+            Provider::Local => Err(AppError::InvalidProvider(provider.as_str().to_owned())),
             p => self.delete_secret(p.as_str()),
         }
     }
@@ -325,7 +336,7 @@ async fn verify_key_inner(provider: Provider, key: &str) -> Result<(), AppError>
             .get("https://api.anthropic.com/v1/models")
             .header("x-api-key", key)
             .header("anthropic-version", "2023-06-01"),
-        Provider::Bedrock => return Err(AppError::InvalidProvider(provider.as_str().to_owned())),
+        Provider::Bedrock | Provider::Local => return Err(AppError::InvalidProvider(provider.as_str().to_owned())),
     };
     let res = req.send().await.map_err(AppError::from_reqwest)?;
     if res.status().is_success() {
@@ -362,6 +373,7 @@ mod tests {
         assert_eq!(leader.get_key(Provider::Anthropic).unwrap().as_deref(), Some("ka")); // 上書き
         assert!(!leader.has_tts_key().unwrap(), "キー以外(TTSなど)は写さない");
         assert!(!leader.copy_api_key_from(&src, Provider::Bedrock).unwrap(), "Bedrockは対象外");
+        assert!(!leader.copy_api_key_from(&src, Provider::Local).unwrap(), "ローカルは対象外");
         assert_eq!(src.get_key(Provider::Anthropic).unwrap().as_deref(), Some("ka")); // コピー元は変えない
     }
 
@@ -416,7 +428,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn invalid_keys_report_their_source() {
-        for p in Provider::ALL.into_iter().filter(|p| *p != Provider::Bedrock) {
+        for p in Provider::ALL.into_iter().filter(|p| p.uses_api_key()) {
             let e = verify_key(p, "invalid-test-key").await.unwrap_err();
             let v = serde_json::to_value(&e).unwrap();
             println!("{} -> {v}", p.as_str());

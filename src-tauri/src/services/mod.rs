@@ -25,6 +25,7 @@ pub mod knowledge;
 pub mod leader;
 pub mod llm_client;
 pub mod llm_router;
+pub mod local_llm;
 pub mod memory;
 pub mod proofread;
 pub mod prompts;

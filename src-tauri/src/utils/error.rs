@@ -60,6 +60,18 @@ pub enum AppError {
     Voicevox(String),
     #[error("VOICEVOX CORE is not installed")]
     VoicevoxMissing,
+    /// 端末内のLLM(llama-serverとモデル)が未取得。
+    #[error("local LLM is not installed")]
+    LocalLlmMissing,
+    /// 端末内のLLMの起動・応答の失敗(原因の文面はllama-serverのログや応答から取る)。
+    #[error("local LLM failed: {0}")]
+    LocalLlm(String),
+    /// 取得したファイルのサイズかSHA-256が、固定した値と一致しない。
+    #[error("downloaded file failed verification")]
+    ChecksumMismatch,
+    /// 取得を中断した。
+    #[error("download was cancelled")]
+    DownloadCancelled,
     #[error("invalid version: {0}")]
     InvalidVersion(String),
     #[error("path is outside the knowledge directory")]
@@ -176,6 +188,10 @@ impl AppError {
             Self::EmptyText => "empty_text",
             Self::Voicevox(_) => "voicevox_error",
             Self::VoicevoxMissing => "voicevox_missing",
+            Self::LocalLlmMissing => "local_llm_missing",
+            Self::LocalLlm(_) => "local_llm_error",
+            Self::ChecksumMismatch => "checksum_mismatch",
+            Self::DownloadCancelled => "download_cancelled",
             Self::InvalidVersion(_) => "invalid_version",
             Self::PathNotAllowed => "path_not_allowed",
             Self::Io(_) => "io_error",
@@ -212,7 +228,7 @@ impl AppError {
 struct ErrorPayload<'a> {
     code: &'a str,
     message: String,
-    /// 発生元API("anthropic" | "bedrock" | "google_tts" | "google_stt" | "aqua_stt" | "voicevox")。不明な場合はnull。
+    /// 発生元API("anthropic" | "bedrock" | "local" | "google_tts" | "google_stt" | "aqua_stt" | "voicevox")。不明な場合はnull。
     source: Option<&'static str>,
 }
 

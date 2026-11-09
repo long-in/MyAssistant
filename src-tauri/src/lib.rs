@@ -51,6 +51,10 @@ pub fn run() {
       commands::settings::get_key_status,
       commands::settings::save_api_key,
       commands::settings::delete_api_key,
+      commands::local_llm::local_llm_status,
+      commands::local_llm::download_local_llm,
+      commands::local_llm::cancel_local_llm_download,
+      commands::local_llm::remove_local_llm,
       commands::profile::get_profile,
       commands::profile::save_profile,
       commands::profile::clear_profile,
@@ -206,6 +210,8 @@ pub fn run() {
         Err(e) => log::warn!("backup restore failed: {e}"),
       }
       services::aws::init(app.handle());
+      // 端末内のLLMは、取得物の場所だけを覚えておき、使うときに起動する
+      services::local_llm::init(&dir);
       // パーソナルは従来どおりアプリデータ直下(`timeline.db` / `secrets.json` / `knowledge`)
       let personal = services::workspace::WorkspaceCtx::open(services::workspace::PERSONAL_ID, &dir)?;
       // 全体設定は、初回だけパーソナルの現在値を初期値として取り込む
@@ -249,6 +255,8 @@ pub fn run() {
     if let RunEvent::Exit = event {
       handle.state::<services::stt::SttEngine>().unload();
       handle.state::<services::vad::VadEngine>().unload();
+      // 終了時の整理バッチが済んでから(Exitは最後に来る)、端末内のLLMのサーバーを止める
+      services::local_llm::shutdown();
     }
     if let RunEvent::ExitRequested { api, .. } = event
       && !flushed.swap(true, Ordering::SeqCst)
