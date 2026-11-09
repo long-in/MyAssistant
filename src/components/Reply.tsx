@@ -3,8 +3,19 @@
 import { useEffect, useState } from "react";
 import { speechProgress } from "@/lib/api";
 import { revealedLength } from "@/lib/speech-sync";
+import type { LogState } from "./ExecutionLog";
 
-export type Turn = { user: string; userAt: Date; reply?: string; replyAt?: Date; via?: string };
+export type Turn = {
+  user: string;
+  userAt: Date;
+  reply?: string;
+  replyAt?: Date;
+  via?: string;
+  /** この発話の実行ログ。 */
+  log?: LogState;
+  /** 前回までの会話から戻したもの。返答をタイプライターで出し直さない。 */
+  restored?: boolean;
+};
 
 /** テキストを1文字ずつ表示する。長文でも約2.5秒で出し切る。 */
 export function useTypewriter(text: string) {

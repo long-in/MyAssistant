@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{
-    batch, debug_log, global_settings, leader, memory, profile, proofread, prompts, agent_data, skills, stt, tuning, voicevox, wake, workspace,
+    batch, chat_session, debug_log, global_settings, leader, memory, profile, proofread, prompts, agent_data, skills, stt, tuning, voicevox, wake, workspace,
 };
 
 /// 設定の保存先。
@@ -87,6 +87,8 @@ pub const ALL: &[Setting] = &[
     agent(leader::PROMPT_KEY, None),
     agent(leader::LIMIT_KEY, None),
     agent(memory::CURSOR_KEY, None),
+    // 現在の会話のID。端末の履歴(DB)と対なので、書き出し・コピーの対象外
+    agent(chat_session::KEY, None),
     // スキルの選定モデル。スキル自体を設定の書き出しに含めないので、これも対象外
     agent(skills::ROUTE_KEY, None),
     // ---- 全体設定 ----

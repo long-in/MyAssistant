@@ -2,6 +2,7 @@ pub mod task;
 pub mod aws;
 pub mod backup;
 pub mod chat;
+pub mod chat_session;
 pub mod command_policy;
 pub mod debug;
 pub mod global_settings;

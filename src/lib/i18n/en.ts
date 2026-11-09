@@ -828,4 +828,9 @@ export const EN: Record<string, string> = {
   "{name}のプロンプト": "{name} prompt",
   "初期値へ戻す": "Reset to default",
   "初期値に戻しました。": "Reset to default.",
+  "会話": "Conversation",
+  "話しかけるか、メッセージを入力してください。": "Speak or type a message.",
+  "処理を中断": "Stop processing",
+  "{n}往復": "{n} exchanges",
+  "情報": "Info",
 };
