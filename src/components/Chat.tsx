@@ -2,24 +2,23 @@
 
 import { useT } from "@/lib/i18n";
 import { useEffect, useRef, useState } from "react";
-import { Download, Ear, Loader2, MessageSquarePlus, Mic, Send, Square, Volume2, VolumeX } from "lucide-react";
+import { MessageSquarePlus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { approvalLine } from "@/components/AttentionToasts";
 import { notifyOsIfBackground } from "@/lib/osNotify";
-import ModelPicker from "./ModelPicker";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import WorkspaceBadge from "@/components/WorkspaceBadge";
 import { VoiceOrb } from "./Waveforms";
-import Subtitles from "./Subtitles";
+import ChatThread from "./ChatThread";
+import ChatComposer from "./ChatComposer";
+import ChatNotices, { type SetupState } from "./ChatNotices";
 import ApprovalModal, { type Approval, type Listening } from "./ApprovalModal";
-import AbortButton from "./AbortButton";
 import SwitchConfirm from "./SwitchConfirm";
 import DispatchDraftCard from "./DispatchDraftCard";
 import LeaderLedger from "./LeaderLedger";
-import ExecutionLog, { applyTaskEvent, emptyLog, type LogState } from "./ExecutionLog";
+import { applyTaskEvent, emptyLog } from "./ExecutionLog";
 import { type Turn } from "./Reply";
 import OrbReadout, { type Phase } from "./OrbReadout";
 import { cn } from "@/lib/utils";
@@ -35,6 +34,9 @@ import {
   type ModelInfo,
   type Route,
   type RunSnapshot,
+  type SessionTurn,
+  chatSessionLoad,
+  chatSessionNew,
   DEFAULT_VOICE_TIMING,
   type VoiceTiming,
   type WakeConfig,
@@ -48,8 +50,6 @@ import {
   getTtsEngine,
   aquaKeyRegistered,
   ttsKeyRegistered,
-  type SttEngine,
-  type TtsEngine,
   getKeyStatus,
   getVoiceTiming,
   getWakeConfig,
@@ -120,18 +120,6 @@ type Capture = "spoke" | "silent" | "lost";
 /** 録音して文字起こしした結果。`retry`は聞き取れなかった、`stop`はマイクが使えない。 */
 type Heard = { text: string } | "retry" | "stop";
 
-/** 高さ40rem未満または幅40rem未満のウィンドウでは、波形以外の補助表示を隠す。 */
-const HIDE_WHEN_SMALL = "[@media(max-height:40rem),(max-width:40rem)]:hidden";
-const HIDE_WHEN_SMALL_FLEX = "flex [@media(max-height:40rem),(max-width:40rem)]:hidden";
-
-/** ワークスペースごとの現在の会話のセッション。リロード・再起動で新しくなる。切り替えて戻っても、同じ会話の続きになる。 */
-const sessions = new Map<string, { id: string }>();
-const sessionOf = (workspaceId: string) => {
-  let s = sessions.get(workspaceId);
-  if (!s) sessions.set(workspaceId, (s = { id: crypto.randomUUID() }));
-  return s;
-};
-
 /** `active`は対話画面を表示中かどうか。他の画面へ移動しても`Chat`は`AppShell`に残り、進行中の処理や待機を続ける。 */
 export default function Chat({ workspaceId, active }: { workspaceId: string; active: boolean }) {
   const t = useT();
@@ -140,7 +128,13 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     activeRef.current = active;
   }, [active]);
   // 会話の切り替えは、ユーザーが明示したときだけ。コマンド実行の依頼・承認や画面移動では切り替えない(再起動後は、バックエンドが前回までの文脈をMarkdownから復元する)
-  const session = useRef(sessionOf(workspaceId));
+  // 現在の会話は、エージェントごとにDBへ保存してあり、アプリを再起動しても続きから再開する(読み込むまでIDは空)
+  const session = useRef({ id: "" });
+  const [sessionReady] = useState(() => {
+    let resolve: () => void = () => {};
+    const promise = new Promise<void>((r) => (resolve = r));
+    return { promise, resolve };
+  });
   // この会話(セッション)のやり取り。最後が現在の1件で、会話を切り替えるまで残す
   const [turns, setTurns] = useState<Turn[]>([]);
   const [busy, setBusy] = useState(false);
@@ -172,7 +166,6 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   // 音声の返答の待ち受けは非同期で動くので、最新の承認要求をrefでも持つ
   const approvalRef = useRef<Approval | null>(null);
   const [listening, setListening] = useState<Listening>("idle");
-  const [log, setLog] = useState<LogState>(emptyLog);
   const [route, setRoute] = useState<Route | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [keyStatus, setKeyStatus] = useState<Partial<KeyStatus>>({});
@@ -190,7 +183,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   const [downloading, setDownloading] = useState(false);
   const [ttsReady, setTtsReady] = useState(false);
   /** 設定不足の案内に使う、読み込み済みの設定の状況。読み込むまでは案内しない。 */
-  const [setup, setSetup] = useState<{ tts: TtsEngine; stt: SttEngine; sttKey: boolean } | null>(null);
+  const [setup, setSetup] = useState<SetupState | null>(null);
   const [voiceReply, setVoiceReply] = useState(true);
   /** Voice Linkのキーが未登録なら読み上げず、字幕だけで応答する。 */
   const speakReply = voiceReply && ttsReady;
@@ -289,7 +282,8 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   // 記憶のツール呼び出し(id → 種類と文面)。結果が成功したら、覚えた・忘れたことを知らせる
   const memoryCalls = useRef(new Map<string, { name: string; text: string }>());
   const onTaskEvent = (e: TaskEvent) => {
-    setLog((l) => applyTaskEvent(l, e));
+    // 実行ログは、いま処理している発話(最後)に結び付ける
+    setTurns((ts) => ts.map((x, i) => (i === ts.length - 1 ? { ...x, log: applyTaskEvent(x.log ?? emptyLog, e) } : x)));
     if (e.type === "tool_call") {
       setActivity(t(TOOL_ACTIVITY[e.name] ?? "ファイルを操作しています…"));
       if ((e.name === "remember" || e.name === "forget") && typeof e.input.text === "string")
@@ -322,18 +316,23 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   /** 切り替えて離れている間の依頼を、続きから再開する(実行中なら進捗と承認待ちを戻し、終わっていれば結果を見せる)。 */
   const restoreRun = (snap: RunSnapshot) => {
     if (!snap.running && !snap.finished) return;
-    const userAt = new Date();
-    const turn: Turn = { user: snap.user_text, userAt };
+    const log = snap.events.reduce(applyTaskEvent, emptyLog);
+    // 発話はDBから戻した会話にもある。返答の無い最後の同じ発話なら、それに実行ログや返答を加える
+    const merge = (ts: Turn[], patch: Partial<Turn>): Turn[] => {
+      const i = ts.length - 1;
+      if (i >= 0 && ts[i].user === snap.user_text && !ts[i].reply) return ts.map((x, j) => (j === i ? { ...x, ...patch } : x));
+      if (i >= 0 && patch.reply && ts[i].reply === patch.reply) return ts; // 終わった結果は、すでに会話に戻っている
+      return [...ts, { user: snap.user_text, userAt: new Date(), ...patch }];
+    };
     if (snap.finished) {
       // 離れている間に終わっていた。結果だけを見せる
       const { reply, error } = snap.finished;
       if (error) fail(error);
-      if (reply) setTurns([{ ...turn, reply: reply.content, replyAt: new Date(), via: reply.model }]);
+      if (reply) setTurns((ts) => merge(ts, { log, reply: reply.content, replyAt: new Date(), via: reply.model }));
       return;
     }
     setBusy(true);
-    setTurns([turn]);
-    setLog(snap.events.reduce(applyTaskEvent, emptyLog));
+    setTurns((ts) => merge(ts, { log }));
     const lastDraft = [...snap.events].reverse().find((x) => x.type === "dispatch_draft");
     if (lastDraft?.type === "dispatch_draft") setDispatchDraft({ id: lastDraft.id, instruction: lastDraft.instruction, targets: lastDraft.targets });
     // 離れている間に求められた承認は、回答を待っている。戻ったので、ここで答えられる
@@ -357,16 +356,41 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     };
   }, [workspaceId, t]);
 
-  // このワークスペースを開いたとき、実行中だった依頼の続きを受け取る。離れるときは、依頼を止めずに接続だけ外す
+  // このワークスペースを開いたとき、前回までの会話を戻し、実行中だった依頼の続きを受け取る。離れるときは、依頼を止めずに接続だけ外す
   useEffect(() => {
     let live = true;
-    taskResume(workspaceId, (e) => live && taskEventRef.current(e))
-      .then((snap) => live && restoreRef.current(snap))
+    const toTurn = (x: SessionTurn): Turn => ({
+      user: x.user,
+      userAt: new Date(x.user_at),
+      reply: x.reply ?? undefined,
+      replyAt: x.reply_at ? new Date(x.reply_at) : undefined,
+      via: x.via ?? undefined,
+      log: x.events.reduce(applyTaskEvent, emptyLog),
+      restored: true,
+    });
+    chatSessionLoad()
+      .then((view) => {
+        if (!live) return;
+        session.current = { id: view.session_id };
+        setTurns(view.turns.map(toTurn));
+      })
+      .catch((e) => {
+        // 読み込めなくても、新しい会話として続けられるようにする
+        if (!live) return;
+        fail(e);
+        session.current = { id: crypto.randomUUID() };
+      })
+      .then(() => {
+        sessionReady.resolve();
+        return live ? taskResume(workspaceId, (e) => live && taskEventRef.current(e)) : null;
+      })
+      .then((snap) => live && snap && restoreRef.current(snap))
       .catch(() => {});
     return () => {
       live = false;
       taskDetach(workspaceId).catch(() => {});
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 読み込みはワークスペースごとに1回
   }, [workspaceId]);
 
   const answerApproval = (approved: boolean) => {
@@ -393,13 +417,12 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   /** 新しい会話を始める。これまでの文脈は引き継がず、実行中の処理と読み上げは止める。 */
   const startNewConversation = (interrupt: boolean) => {
     const next = { id: crypto.randomUUID() };
-    sessions.set(workspaceId, next);
     session.current = next;
+    chatSessionNew(next.id).catch(fail); // 再起動後も、この新しい会話から再開する
     if (interrupt) resetEpoch.current++; // 会話中のループは自分で続けるので、止めるのは外からの操作のときだけ
     stopSpeech();
     if (gate.current.busy || approvalRef.current) cancelTask();
     setTurns([]);
-    setLog(emptyLog);
     setDispatchDraft(null);
     toast.success(t("新しい会話を始めました。"));
   };
@@ -423,7 +446,6 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     setListening("idle");
     setAwake(false);
     setActivity(null);
-    setTurns((ts) => ts.filter((x) => x.reply)); // 返答前の依頼だけ消し、これまでのやり取りは残す
     toast.info(t("中断しました。"));
   };
   const abortRef = useRef(abortAll);
@@ -434,19 +456,19 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     const text = raw.trim();
     if (!text || busy) return "none";
     unlockAudio(); // 操作のタイミングで有効化し、応答の自動再生を可能にする
+    await sessionReady.promise; // 前回の会話の読み込みを待つ
     const sessionId = session.current.id;
     const epoch = resetEpoch.current;
     const aborted = () => session.current.id !== sessionId || resetEpoch.current !== epoch;
     const userAt = new Date();
-    setLog(emptyLog);
     setBusy(true);
-    setTurns((ts) => [...ts.filter((x) => x.reply), { user: text, userAt }]);
+    setTurns((ts) => [...ts, { user: text, userAt }]);
     let result: "spoke" | "replied" | "none" = "none";
     try {
       if (!route) throw new Error(t("使えるモデルがありません。設定でAPIキーを登録してください。"));
       const r = await sendChat(sessionId, text, route, onTaskEvent);
       if (aborted()) return "none"; // 待っている間に新しい会話へ切り替わった、または中断された
-      const replied = { user: text, userAt, reply: r.content, replyAt: new Date(), via: r.model };
+      const replied = { reply: r.content, replyAt: new Date(), via: r.model };
       result = "replied";
       if (speakReply) {
         // 字幕を読み上げの再生位置に合わせるため、音声を作って再生を始めてから返答を表示する
@@ -458,7 +480,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
         if (audio && speakReplyRef.current) await playBase64Mp3(audio, r.content).catch(fail);
         result = "spoke";
       }
-      setTurns((ts) => ts.map((x) => (x.userAt === userAt ? replied : x)));
+      setTurns((ts) => ts.map((x) => (x.userAt === userAt ? { ...x, ...replied } : x)));
     } catch (e) {
       fail(e);
     } finally {
@@ -944,7 +966,6 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   };
 
   const recording = mic === "recording";
-  const isWorking = busy || speaking || switching || !!approval || awake || mic === "starting" || recording || mic === "transcribing";
   const phase: Phase =
     mic === "starting" ? "initializing"
     : recording ? "listening"
@@ -959,77 +980,67 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     : phase === "standby" ? (standbyOn ? t("「{words}」と呼びかけてください", { words: wake.words[0] }) : t("マイクをオンにして話しかけてください"))
     : t("処理中…");
 
+  const SMALL = "[@media(max-height:40rem),(max-width:40rem)]";
   return (
-    <div className="relative flex h-full flex-col">
-      <WorkspaceBadge className="pointer-events-none absolute top-4 right-4 z-10" />
-      {setup && (
-        <div className="mx-6 mt-4 flex flex-col gap-2 empty:hidden">
-          {!Object.values(keyStatus).some(Boolean) && Object.keys(keyStatus).length > 0 && <SetupNotice text={t("APIキーが未登録のため、AIが応答できません。")} action={t("設定を開く")} onAction={() => router.push("/setup")} />}
-          {!ttsReady && voiceReply && <SetupNotice text={setup.tts === "voicevox" ? t("VOICEVOXが未取得のため、読み上げは動作しません(字幕のみ)。") : t("Google Cloudのキーが未登録のため、読み上げは動作しません(字幕のみ)。")} action={t("設定を開く")} onAction={() => router.push("/setup")} />}
-          {!setup.sttKey && <SetupNotice text={setup.stt === "aqua" ? t("Aqua Voiceのキーが未登録のため、音声入力は動作しません。") : t("Google Cloudのキーが未登録のため、音声入力は動作しません。")} action={t("設定を開く")} onAction={() => router.push("/setup")} />}
-        </div>
-      )}
-      {needModel && (
-        <div className="hud-panel hud-accent mx-6 mt-4 flex items-center justify-between gap-3 px-5 py-3 text-sm">
-          <span>{t("音声入力にはローカル音声認識モデル(約470MB)のダウンロードが必要です。")}</span>
-          <Button size="sm" disabled={downloading} onClick={download}>
-            {downloading ? <Loader2 className="animate-spin" /> : <Download />}
-            {downloading ? t("ダウンロード中…") : t("ダウンロード")}
-          </Button>
-        </div>
-      )}
+    <div className="relative flex h-full flex-col gap-3 p-3">
+      <WorkspaceBadge className="pointer-events-none absolute top-5 right-5 z-10" />
+      <ChatNotices setup={setup} keyStatus={keyStatus} ttsReady={ttsReady} voiceReply={voiceReply} needModel={needModel} downloading={downloading} onDownload={download} />
 
-      {/* 確認UIは、ウィンドウが小さくて回答を畳んでいるときも残す */}
+      {/* 確認UIは、ウィンドウが小さくて会話を畳んでいるときも残す */}
       {switching && (
-        <div className="flex shrink-0 justify-center px-6 pt-3">
+        <div className="flex shrink-0 justify-center">
           <SwitchConfirm listening={switchListening} onAnswer={answerSwitch} />
         </div>
       )}
-      {/* 左: 回答(広く使う)。右: 円形波形。リーダーは、その下に台帳を縦に並べる。狭いときは波形を回答の上に小さく出す */}
-      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-      <div className={cn("relative min-h-0 min-w-0 flex-1 flex-col gap-3 px-6 py-4", HIDE_WHEN_SMALL_FLEX)}>
-        {/* 上: 新しい会話ボタンと、その下に実行ログ */}
-        <div className="flex max-h-[40%] shrink-0 flex-col gap-3 overflow-y-auto">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="hud-label self-start border-primary/40 bg-background/80 backdrop-blur hover:border-primary"
-            title={t("これまでの会話の流れを引き継がず、新しい会話を始める")}
-            onClick={() => startNewConversation(true)}
-          >
-            <MessageSquarePlus />
-            {t("新しい会話")}
-          </Button>
-          <ExecutionLog log={log} busy={busy} onCancel={cancelTask} onClose={() => setLog(emptyLog)} />
-        </div>
-        {busy && activity && !approval && (
-          <p className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-            <Loader2 className="size-3.5 animate-spin" /> {activity}
-          </p>
-        )}
-        {/* 回答は残りの高さをすべて使い、長文は領域内でスクロールさせる */}
-        <div className="flex min-h-0 w-full flex-1 flex-col justify-end">
-          <Subtitles turns={turns} pending={busy} speaking={speaking} onSpeak={ttsReady ? (text) => void speakOnDemand(text) : undefined} onStop={stopSpeech} onCorrected={(text) => setTurns((ts) => ts.map((x, i) => (i === ts.length - 1 ? { ...x, user: text } : x)))} />
-        </div>
-        {/* 右下: 処理が始まったら現れる強制中断。どの状態からでもすぐ押せるよう大きく目立たせる */}
-        {isWorking && <AbortButton onAbort={abortAll} />}
-      </div>
-      <div
-        className={cn(
-          "order-first flex h-44 shrink-0 flex-col md:order-last md:h-auto md:w-[30%] md:max-w-[28rem] md:min-w-64 md:pt-14",
-          "[@media(max-height:40rem),(max-width:40rem)]:h-auto [@media(max-height:40rem),(max-width:40rem)]:w-full [@media(max-height:40rem),(max-width:40rem)]:max-w-none [@media(max-height:40rem),(max-width:40rem)]:flex-1 [@media(max-height:40rem),(max-width:40rem)]:pt-4",
-        )}
-      >
-        {/* 利用できる幅・高さのうち小さい方に合わせて、円形波形を正方形で最大化する */}
-        <div className={cn("relative flex min-h-0 w-full items-center justify-center px-4 py-2 [container-type:size]", workspaceId === LEADER_ID ? "flex-1 md:h-[45%] md:flex-none" : "flex-1")}>
-          <div className="relative size-[min(100cqmin,40rem)] @container">
-            <VoiceOrb phase={phase} micActive={recording} thinking={busy} className="size-full" />
-            <OrbReadout phase={phase} />
+      {/* 左: 会話のカード(広く使う)。右: 円形波形のカード。リーダーは、その下に台帳のカードを縦に並べる。狭いときは波形を会話の上に小さく出す */}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 md:flex-row">
+        <section className={cn("hud-panel hud-accent min-h-0 min-w-0 flex-1 flex-col gap-3 px-5 py-4", `flex ${SMALL}:hidden`)} aria-label={t("会話")}>
+          <div className="flex shrink-0 items-center justify-between gap-2">
+            <p className="hud-label">{"// Conversation"}</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="hud-label border-primary/40 bg-background/80 hover:border-primary"
+              title={t("これまでの会話の流れを引き継がず、新しい会話を始める")}
+              onClick={() => startNewConversation(true)}
+            >
+              <MessageSquarePlus />
+              {t("新しい会話")}
+            </Button>
           </div>
+          <ChatThread
+            turns={turns}
+            busy={busy}
+            activity={busy && !approval ? activity : null}
+            speaking={speaking}
+            onSpeak={ttsReady ? (text) => void speakOnDemand(text) : undefined}
+            onStop={stopSpeech}
+            onCancelTask={cancelTask}
+            onCorrected={(text) => setTurns((ts) => ts.map((x, i) => (i === ts.length - 1 ? { ...x, user: text } : x)))}
+          />
+        </section>
+        <div
+          className={cn(
+            "order-first flex h-44 shrink-0 flex-col gap-3 md:order-last md:h-auto md:w-[30%] md:max-w-[28rem] md:min-w-64",
+            `${SMALL}:h-auto ${SMALL}:w-full ${SMALL}:max-w-none ${SMALL}:flex-1`,
+          )}
+        >
+          {/* 利用できる幅・高さのうち小さい方に合わせて、円形波形を正方形で最大化する */}
+          <section
+            className={cn(
+              "hud-panel hud-accent relative flex min-h-0 w-full items-center justify-center px-4 py-3 [container-type:size]",
+              workspaceId === LEADER_ID ? "flex-1 md:h-[45%] md:flex-none" : "flex-1",
+            )}
+            aria-label={t("音声")}
+          >
+            <div className="relative size-[min(100cqmin,40rem)] @container">
+              <VoiceOrb phase={phase} micActive={recording} thinking={busy} className="size-full" />
+              <OrbReadout phase={phase} />
+            </div>
+          </section>
+          {workspaceId === LEADER_ID && <LeaderLedger active={active} className={cn("hud-panel hud-accent hidden min-h-0 flex-1 md:flex", `${SMALL}:hidden`)} />}
         </div>
-        {workspaceId === LEADER_ID && <LeaderLedger active={active} className={cn("hidden min-h-0 flex-1 md:flex", HIDE_WHEN_SMALL)} />}
-      </div>
       </div>
 
       {approval &&<ApprovalModal approval={approval} listening={listening} onAnswer={answerApproval} />}
@@ -1038,110 +1049,37 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
           key={dispatchDraft.id}
           draft={dispatchDraft}
           onClose={() => setDispatchDraft(null)}
-          className="absolute inset-x-6 bottom-28 z-20 mx-auto max-w-2xl"
+          className="absolute inset-x-6 bottom-36 z-20 mx-auto max-w-2xl"
         />
       )}
 
-      {/* 下部: 操作ボタンと入力欄 */}
-      <div className="border-t border-primary/30 bg-background/60 px-6 py-4 shadow-[0_-8px_24px_-12px_oklch(0.85_0.13_180/25%)] backdrop-blur">
-        <div className="mx-auto flex max-w-4xl items-center gap-4">
-          <Button
-            type="button"
-            variant="outline"
-            size="icon-lg"
-            aria-pressed={standbyOn}
-            aria-label={standbyOn ? t("待機中") : t("待機オフ")}
-            disabled={!wake.words.length}
-            title={wake.words.length ? t("呼びかけで起動する常時待機のオン/オフ") : t("設定で起動ワードを登録してください")}
-            className={cn("size-11 shrink-0 rounded-full [&_svg]:size-5", standbyOn && "border-primary text-primary")}
-            onClick={toggleStandby}
-          >
-            <Ear />
-          </Button>
-          <Button
-            type="button"
-            size="icon-lg"
-            variant={recording ? "destructive" : "outline"}
-            aria-label={recording ? t("録音を停止して送信") : t("音声入力")}
-            title={t("{recording} ({micHint}を押している間)", { recording: recording ? "録音を停止して送信" : "音声入力", micHint })}
-            aria-pressed={recording}
-            disabled={(busy && !approval) || mic === "starting" || mic === "transcribing" || needModel || (speaking && mic !== "recording")}
-            className={cn("size-16 shrink-0 rounded-full [&_svg]:size-7", recording && "animate-pulse")}
-            onClick={() => void toggleMic()}
-          >
-            {mic === "starting" || mic === "transcribing" ? <Loader2 className="animate-spin" /> : recording ? <Square /> : <Mic />}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon-lg"
-            aria-pressed={!speakReply}
-            aria-label={speakReply ? t("ミュート") : t("読み上げ")}
-            disabled={!ttsReady}
-            title={ttsReady ? t("応答の読み上げのオン/オフ") : t("設定で読み上げの準備をしてください")}
-            className="size-11 shrink-0 rounded-full [&_svg]:size-5"
-            onClick={() => {
-              if (speakReply) stopSpeech(); // 読み上げの途中でオフにしたら、その場で止める
-              setVoiceReply((v) => !v);
-            }}
-          >
-            {speakReply ? <Volume2 /> : <VolumeX />}
-          </Button>
-          <form
-            className="min-w-0 flex-1"
-            onSubmit={(e) => {
-              e.preventDefault();
-              submitDraft();
-            }}
-          >
-            <div className="flex flex-col rounded-lg border border-primary/30 bg-background/60 focus-within:border-primary">
-            <Textarea
-              value={draft}
-              rows={1}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                // Enterで送信、Shift+Enterで改行。日本語入力の変換確定のEnterでは送らない
-                if (e.key !== "Enter" || e.shiftKey) return;
-                e.preventDefault();
-                if (!e.nativeEvent.isComposing && e.keyCode !== 229) submitDraft();
-              }}
-              disabled={busy || needModel}
-              placeholder={status}
-              aria-label={t("メッセージ")}
-              className="max-h-48 min-h-10 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
-            />
-            <div className="flex items-center justify-between gap-2 px-2 pb-2">
-              <div className="min-w-0 max-w-64">
-                <ModelPicker compact disabled={busy} route={route} models={models} keyStatus={keyStatus} onChange={changeRoute} />
-              </div>
-              <Button
-                type="submit"
-                size="icon-sm"
-                variant="outline"
-                aria-label={t("送信")}
-                title={t("送信")}
-                disabled={!draft.trim() || busy || needModel || mic !== "idle"}
-                className="shrink-0"
-              >
-                <Send />
-              </Button>
-            </div>
-            </div>
-          </form>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** チャット画面上部の、設定不足の案内。 */
-function SetupNotice({ text, action, onAction }: { text: string; action: string; onAction: () => void }) {
-  return (
-    <div className="hud-panel hud-accent flex items-center justify-between gap-3 px-5 py-3 text-sm" role="status">
-      <span>{text}</span>
-      <Button size="sm" variant="outline" onClick={onAction}>
-        {action}
-      </Button>
+      {/* 下部: 操作ボタンと入力欄のカード */}
+      <ChatComposer
+        standby={{ on: standbyOn, available: wake.words.length > 0, onToggle: toggleStandby }}
+        mic={{
+          state: mic,
+          disabled: (busy && !approval) || mic === "starting" || mic === "transcribing" || needModel || (speaking && mic !== "recording"),
+          hint: micHint,
+          onToggle: () => void toggleMic(),
+        }}
+        speak={{
+          on: speakReply,
+          ready: ttsReady,
+          onToggle: () => {
+            if (speakReply) stopSpeech(); // 読み上げの途中でオフにしたら、その場で止める
+            setVoiceReply((v) => !v);
+          },
+        }}
+        draft={draft}
+        onDraft={setDraft}
+        onSubmit={submitDraft}
+        placeholder={status}
+        inputDisabled={busy || needModel}
+        sendDisabled={!draft.trim() || busy || needModel || mic !== "idle"}
+        busy={busy}
+        onStop={abortAll}
+        model={{ route, models, keyStatus, onChange: changeRoute }}
+      />
     </div>
   );
 }

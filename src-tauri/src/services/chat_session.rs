@@ -52,6 +52,14 @@ pub fn start_new(db: &Db) -> Result<String, AppError> {
     Ok(id)
 }
 
+/// 画面が決めた新しい会話のIDを保存する。英数字と`-`、`_`だけの64文字以内。
+pub fn set(db: &Db, id: &str) -> Result<(), AppError> {
+    if id.is_empty() || id.len() > 64 || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(AppError::Db("invalid session id".into()));
+    }
+    db.set_setting(KEY, id)
+}
+
 /// 現在の会話と、画面に戻すやり取り。
 pub fn load(db: &Db) -> Result<SessionView, AppError> {
     let session_id = current(db)?;
@@ -130,6 +138,17 @@ mod tests {
         let next = start_new(&db).unwrap();
         assert_ne!(next, first);
         assert_eq!(current(&db).unwrap(), next);
+    }
+
+    #[test]
+    fn set_accepts_only_plain_ids() {
+        let db = Db::open_in_memory(Role::Agent);
+        set(&db, "0b8e-4C_x").unwrap();
+        assert_eq!(current(&db).unwrap(), "0b8e-4C_x");
+        for bad in ["", "a b", "../x", &"a".repeat(65)] {
+            assert!(set(&db, bad).is_err(), "{bad}");
+        }
+        assert_eq!(current(&db).unwrap(), "0b8e-4C_x", "不正なIDでは変わらない");
     }
 
     #[test]

@@ -935,3 +935,18 @@ export const listPrompts = () => invoke<PromptInfo[]>("list_prompts");
 /** 空、または既定と同じ文章は上書きなしになる。保存後の状態を返す。 */
 export const savePrompt = (id: PromptId, text: string) => invoke<PromptInfo>("save_prompt", { id, text });
 export const resetPrompt = (id: PromptId) => invoke<PromptInfo>("reset_prompt", { id });
+
+/** 会話の継続。保存済みの現在の会話のIDと、画面に戻す直近のやり取り(発話ごとの実行ログ付き)。 */
+export type SessionTurn = {
+  user: string;
+  user_at: string;
+  reply: string | null;
+  reply_at: string | null;
+  via: string | null;
+  /** 実行ログ(`TaskEvent`のうち、呼び出し・結果・コマンド出力)。 */
+  events: TaskEvent[];
+};
+export type ChatSessionView = { session_id: string; turns: SessionTurn[] };
+export const chatSessionLoad = () => invoke<ChatSessionView>("chat_session_load");
+/** 新しい会話のIDを保存する。次回の起動から、その会話を再開する。 */
+export const chatSessionNew = (sessionId: string) => invoke<void>("chat_session_new", { sessionId });

@@ -72,6 +72,7 @@ erDiagram
 | テーブル | 役割 | 主な操作 |
 | --- | --- | --- |
 | `conversation_logs` | 会話の一次ログ(時系列)。インデックスは `(session_id, created_at)` と `is_processed` | 保存、直近 N 件・全件の取得、未処理の取得、処理済みにする |
+| `turn_events` | 発話ごとの実行ログ(ツール呼び出し・コマンド出力のJSON)。ユーザー発話の行ID(`user_log_id`)に結び付け、会話の再開時に画面へ戻す | 取得、置換 |
 | `conversation_summaries` | 会話(セッション)ごとの要約。どこまで畳み込んだか(`upto_id`)と本文([chat-flow.md](chat-flow.md)) | 取得、upsert |
 | `usage_logs` | LLM 呼び出しごとのトークン使用量。インデックスは `created_at` | 記録、当月(ローカル時間)のプロバイダー・モデル別集計 |
 | `app_settings` | エージェントごとのキー・値の設定(値は文字列。構造のあるものは JSON) | 取得、upsert、削除 |
