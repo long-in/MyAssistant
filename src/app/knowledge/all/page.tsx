@@ -1,8 +1,10 @@
 "use client";
 
+import { useEditShortcuts } from "@/lib/useEditShortcuts";
+import { Kbd } from "@/components/Kbd";
 import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useState } from "react";
-import { BookOpen, ChevronDown, ChevronRight, Eye, FileText, FolderOpen, Library, Loader2, Pencil, Save } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronRight, FileText, FolderOpen, Library, Loader2, Pencil, Save } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { ask } from "@tauri-apps/plugin-dialog";
 import ReactMarkdown from "react-markdown";
@@ -97,12 +99,17 @@ export default function AllKnowledge() {
   };
 
   const save = async () => {
-    if (!selected || !dirty || saving) return;
+    if (!selected || saving) return;
+    if (!dirty) {
+      setEditMode(false); // 変更が無ければ保存せず閲覧に戻る
+      return;
+    }
     setSaving(true);
     try {
       await writeKnowledgeIn(selected.agentId, selected.path, draft);
       setContent(draft);
       await refresh();
+      setEditMode(false);
       toast.success(t("保存しました。"));
     } catch (e) {
       toast.error(reportError(e));
@@ -174,21 +181,13 @@ export default function AllKnowledge() {
       return next;
     });
 
-  // Cmd/Ctrl+Sで保存
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-        e.preventDefault();
-        save();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
 
   const total = agents.reduce((n, s) => n + s.files.length, 0);
   const readOnly = selected !== null && !isNote(selected.path);
   const doc = selected ? splitFrontmatter(draft) : null;
+
+  // `e`で編集、Cmd/Ctrl+Sで保存
+  useEditShortcuts({ canEdit: selected !== null && !readOnly, editMode, onEdit: () => setEditMode(true), onSave: save });
   const selectedAgent = selected ? agents.find((s) => s.id === selected.agentId) : undefined;
 
   return (
@@ -256,13 +255,14 @@ export default function AllKnowledge() {
                 </Button>
                 {!readOnly && (
                   <>
-                    <Button size="sm" variant="outline" onClick={() => setEditMode((v) => !v)}>
-                      {editMode ? <Eye /> : <Pencil />}
-                      {editMode ? t("プレビュー") : t("編集")}
-                    </Button>
-                    <Button size="sm" disabled={!dirty || saving} onClick={save}>
+                    {!editMode && (
+                      <Button size="sm" variant="outline" onClick={() => setEditMode(true)}>
+                        <Pencil /> {t("編集")} <Kbd>E</Kbd>
+                      </Button>
+                    )}
+                    <Button size="sm" disabled={saving || !editMode} onClick={save}>
                       {saving ? <Loader2 className="animate-spin" /> : <Save />}
-                      {t("保存")}
+                      {t("保存")} <Kbd>⌘S</Kbd>
                     </Button>
                   </>
                 )}

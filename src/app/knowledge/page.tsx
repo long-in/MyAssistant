@@ -1,8 +1,10 @@
 "use client";
 
+import { useEditShortcuts } from "@/lib/useEditShortcuts";
+import { Kbd } from "@/components/Kbd";
 import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useState } from "react";
-import { BookOpen, Brain, Download, Eye, FileText, FolderOpen, Loader2, Pencil, RotateCcw, Save, Sparkles, Trash2, Upload } from "lucide-react";
+import { BookOpen, Brain, Download, FileText, FolderOpen, Loader2, Pencil, RotateCcw, Save, Sparkles, Trash2, Upload } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import ReactMarkdown from "react-markdown";
@@ -141,12 +143,17 @@ export default function Knowledge() {
   };
 
   const save = async () => {
-    if (!selected || !dirty || saving) return;
+    if (!selected || saving) return;
+    if (!dirty) {
+      setEditMode(false); // 変更が無ければ保存せず閲覧に戻る
+      return;
+    }
     setSaving(true);
     try {
       await writeKnowledge(selected, draft);
       setContent(draft);
       await refresh();
+      setEditMode(false);
       toast.success(t("保存しました。"));
     } catch (e) {
       toast.error(reportError(e));
@@ -297,17 +304,8 @@ export default function Knowledge() {
   const readOnly = selected !== null && !isNote(selected);
   const doc = selected ? splitFrontmatter(draft) : null;
 
-  // Cmd/Ctrl+Sで保存
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-        e.preventDefault();
-        save();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
+  // `e`で編集、Cmd/Ctrl+Sで保存
+  useEditShortcuts({ canEdit: selected !== null && !readOnly && !showMemory, editMode, onEdit: () => setEditMode(true), onSave: save });
 
   return (
     <div className="flex h-full">
@@ -397,13 +395,14 @@ export default function Knowledge() {
               </span>
               {!readOnly && (
               <div className="flex shrink-0 gap-2">
-                <Button size="sm" variant="outline" onClick={() => setEditMode((v) => !v)}>
-                  {editMode ? <Eye /> : <Pencil />}
-                  {editMode ? t("プレビュー") : t("編集")}
-                </Button>
-                <Button size="sm" disabled={!dirty || saving} onClick={save}>
+                {!editMode && (
+                  <Button size="sm" variant="outline" onClick={() => setEditMode(true)}>
+                    <Pencil /> {t("編集")} <Kbd>E</Kbd>
+                  </Button>
+                )}
+                <Button size="sm" disabled={saving || !editMode} onClick={save}>
                   {saving ? <Loader2 className="animate-spin" /> : <Save />}
-                  {t("保存")}
+                  {t("保存")} <Kbd>⌘S</Kbd>
                 </Button>
               </div>
               )}
