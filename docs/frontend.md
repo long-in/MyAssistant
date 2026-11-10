@@ -81,10 +81,10 @@ Next.js 16(App Router、`output: "export"`)の静的サイト。Tauri の WebVie
 
 | タブ | 節 |
 | --- | --- |
-| LLM | Claude Code(ワークのエージェントのみ。接続先・モデル・上限時間・許可するツール(チェックボックス。一覧にないパターン指定は「その他」欄)。`ClaudeCodeSettings`)、AI Link(API キー、AWS、端末内の LLM。リーダーは API キーのコピー)、Limits(検索回数などの上限。リーダー以外)、AI Settings(機能ごとのモデルとプロンプト)、Agent Data(リーダーは Leader Prompt・上限) |
+| LLM | AI Link(API キー、AWS、端末内の LLM。リーダーは API キーのコピー)、Limits(検索回数などの上限。リーダー以外)、AI Settings(機能ごとのモデルとプロンプト)、Agent Data(リーダーは Leader Prompt・上限) |
 | 音声 | Voice Input(Whisper の取得バージョンを含む)、Voice Output(VOICEVOX の取得バージョンを含む) |
 | 権限 | Web Search、Command Tasks、Command Policy(リーダーには無い) |
-| Sandbox | ワークのエージェントのみ(パーソナル・リーダーには無い。常にサンドボックスで動き、切り替えは無い)。コンテナの状態・作り直し、`/workspace` の場所と「Finder で開く」、専用の Dockerfile、`sandbox.env` のエディタ([sandbox.md](sandbox.md)) |
+| Sandbox | ワークのエージェントのみ(パーソナル・リーダーには無い。常にサンドボックスで動き、切り替えは無い)。コンテナの状態・作り直し、`/workspace` の場所と「Finder で開く」、専用の Dockerfile、1回の指示の上限時間(`SandboxTimeout`)、Claude Code の settings.json(モデル・許可するツール。`ClaudeSettingsEditor`)、`sandbox.env` のエディタ([sandbox.md](sandbox.md)) |
 | その他 | 名前・色の編集、使うプロキシの選択(Proxy)、設定の書き出し・取り込み(Backup)、設定のコピー、Debug Mode、削除 |
 
 ### 全体設定(`/global`)

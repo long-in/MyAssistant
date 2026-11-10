@@ -112,7 +112,7 @@ erDiagram
 | `web_access` | `0` / `1` | 有効 | Web Search |
 | `shell_access` | `0` / `1` | 有効 | Command Tasks |
 | `sandbox_claude_settings` | 貼り付けた Claude Code の settings.json(JSON。空は未設定) | 未設定 | Sandbox タブ(ワークのエージェント) |
-| `sandbox_llm` | 接続先(Bedrock 固定)・モデル・上限時間(分)・許可するツール(JSON) | Bedrock・既定のモデル・30分 | LLM(ワークのエージェント) |
+| `sandbox_llm` | 接続先(Bedrock 固定)・上限時間(分)(JSON)。旧版のモデル・許可するツールは settings.json へ移る | Bedrock・30分 | Sandbox(ワークのエージェント) |
 | `sandbox_claude_sessions` | 会話 ID と Claude Code のセッション ID の対応(JSON、直近 50 件) | なし | なし(端末の会話と対なので対象外) |
 | `stt_engine` | `local` / `google` | `local` | Voice Link |
 | `stt_language` | `auto` / `ja` / `en` / `zh` / `ko` | `auto` | Voice Link |

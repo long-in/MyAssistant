@@ -16,10 +16,11 @@ import SandboxDockerfile from "@/components/SandboxDockerfile";
 import SandboxAgentSettings from "@/components/SandboxAgentSettings";
 import SandboxEnvEditor from "@/components/SandboxEnvEditor";
 import ClaudeSettingsEditor from "@/components/ClaudeSettingsEditor";
+import SandboxTimeout from "@/components/SandboxTimeout";
 
 /**
  * エージェントごとのサンドボックス(専用のDockerコンテナの中で Claude Code が作業する)の状態と設定、Dockerfile・環境変数の確認。
- * ワークのエージェントは常にサンドボックスで動くので、切り替えは無い(Claude Code の設定は LLM タブ)。
+ * ワークのエージェントは常にサンドボックスで動くので、切り替えは無い(Claude Code の設定は下の settings.json と上限時間)。
  * Dockerfileと環境変数(sandbox.env)はワークスペースのファイルで、ここでは状態の確認とFinderでの表示だけを行う。
  */
 export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
@@ -79,7 +80,7 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
             </ul>
           </Heading>
           <p className="text-xs text-muted-foreground">
-            {t("ワークのエージェントは、常にこのコンテナで動きます(切り替えはありません)。Claude Code の接続先・モデルなどは、LLM タブで設定します。")}
+            {t("ワークのエージェントは、常にこのコンテナで動きます(切り替えはありません)。Claude Code のモデルや許可するツールは、下の settings.json で設定します。")}
           </p>
         </div>
       </div>
@@ -123,6 +124,10 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
 
         <div className="border-t pt-4">
           <SandboxEnvEditor key={workspaceId} />
+        </div>
+
+        <div className="border-t pt-4">
+          <SandboxTimeout key={workspaceId} />
         </div>
 
         <div className="border-t pt-4">

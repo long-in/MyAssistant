@@ -28,17 +28,15 @@ pub const CLAUDE_SETTINGS_KEY: &str = "sandbox_claude_settings";
 const SETTINGS_MAX_BYTES: usize = 64 * 1024;
 /// 1回の指示の上限時間(分)の範囲。
 pub const TIMEOUT_RANGE: RangeInclusive<u32> = 1..=180;
-const MODEL_MAX_CHARS: usize = 200;
-/// 許可するツールの既定。Bash を含むので、拒否は`command-policy.json`の拒否で絞る。
+/// Claude Code の標準のツール。ツールなしの単発の呼び出しでは、これをすべて拒否する。
+/// 許可は settings.json の`permissions.allow`で決める(画面の雛形も同じ一覧)。拒否は`command-policy.json`の拒否で絞る。
 pub const DEFAULT_ALLOWED_TOOLS: [&str; 12] =
     ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit", "WebFetch", "WebSearch", "Task", "TodoWrite", "Skill"];
-const TOOLS_MAX: usize = 100;
-const TOOL_MAX_CHARS: usize = 200;
 /// システムプロンプトの上限(Linux の環境変数1つの上限 128KB より小さく)。
 const SYSTEM_MAX_BYTES: usize = 100 * 1024;
 
 /// コンテナ内で実行するコマンド。可変の値はすべて環境変数で受け取る(シェルへ値を埋め込まない)。
-const CLAUDE_COMMAND: &str = r#"exec claude -p --output-format stream-json --verbose --permission-mode acceptEdits ${MYASSISTANT_ALLOWED_TOOLS:+--allowedTools "$MYASSISTANT_ALLOWED_TOOLS"} ${MYASSISTANT_DISALLOWED_TOOLS:+--disallowedTools "$MYASSISTANT_DISALLOWED_TOOLS"} ${MYASSISTANT_RESUME:+--resume "$MYASSISTANT_RESUME"} ${MYASSISTANT_SETTINGS:+--settings "$MYASSISTANT_SETTINGS"} --append-system-prompt "$MYASSISTANT_SYSTEM_PROMPT""#;
+const CLAUDE_COMMAND: &str = r#"exec claude -p --output-format stream-json --verbose --permission-mode acceptEdits ${MYASSISTANT_DISALLOWED_TOOLS:+--disallowedTools "$MYASSISTANT_DISALLOWED_TOOLS"} ${MYASSISTANT_RESUME:+--resume "$MYASSISTANT_RESUME"} ${MYASSISTANT_SETTINGS:+--settings "$MYASSISTANT_SETTINGS"} --append-system-prompt "$MYASSISTANT_SYSTEM_PROMPT""#;
 
 /// アプリが決める、秘密でない環境変数の名前。出力の伏せ字の対象から外す。
 pub const NON_SECRET_NAMES: [&str; 2] = ["CLAUDE_CODE_USE_BEDROCK", "ANTHROPIC_MODEL"];
@@ -54,52 +52,27 @@ pub enum Provider {
 }
 
 /// 接続の設定。未保存・欠けた項目は既定値になる。
+/// モデルと許可するツールは settings.json で決める(旧設定の値は`migrate_legacy_llm`が settings.json へ移す)。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LlmConfig {
     /// 常に Bedrock(保存済みの旧設定が Anthropic でも、読み込み時に Bedrock へ直す)。
     pub provider: Provider,
-    /// モデル。空なら Claude Code の既定。Bedrock ではモデル ID か推論プロファイルを指定する。
-    pub model: String,
     /// 1回の指示の上限時間(分)。
     pub timeout_mins: u32,
-    /// 許可する Claude Code のツール(`Bash`、`Bash(git status:*)`など)。
-    pub allowed_tools: Vec<String>,
 }
 
 impl Default for LlmConfig {
     fn default() -> Self {
-        Self {
-            provider: Provider::Bedrock,
-            model: String::new(),
-            timeout_mins: 30,
-            allowed_tools: DEFAULT_ALLOWED_TOOLS.iter().map(|s| (*s).to_owned()).collect(),
-        }
+        Self { provider: Provider::Bedrock, timeout_mins: 30 }
     }
 }
 
 impl LlmConfig {
-    /// 保存できる形に整える。範囲外の上限時間は丸め、不正なモデル名は拒否する。
+    /// 保存できる形に整える。範囲外の上限時間は丸める。
     fn normalized(mut self) -> Result<Self, AppError> {
         self.provider = Provider::Bedrock;
-        self.model = self.model.trim().to_owned();
-        if self.model.chars().count() > MODEL_MAX_CHARS || self.model.chars().any(|c| c.is_control() || c.is_whitespace()) {
-            return Err(AppError::Sandbox("モデルの指定が正しくありません(空白や制御文字は使えません)。".into()));
-        }
         self.timeout_mins = self.timeout_mins.clamp(*TIMEOUT_RANGE.start(), *TIMEOUT_RANGE.end());
-        let mut tools: Vec<String> = Vec::new();
-        for t in self.allowed_tools.iter().map(|t| t.trim()).filter(|t| !t.is_empty()) {
-            if t.chars().count() > TOOL_MAX_CHARS || t.contains(',') || t.chars().any(char::is_control) {
-                return Err(AppError::Sandbox(format!("許可するツールの指定が正しくありません: {t}")));
-            }
-            if !tools.iter().any(|x| x == t) {
-                tools.push(t.to_owned());
-            }
-        }
-        if tools.len() > TOOLS_MAX {
-            return Err(AppError::Sandbox(format!("許可するツールは{TOOLS_MAX}個までです。")));
-        }
-        self.allowed_tools = tools;
         Ok(self)
     }
 }
@@ -117,6 +90,38 @@ pub fn save(db: &impl SettingsStore, cfg: LlmConfig) -> Result<LlmConfig, AppErr
     let cfg = cfg.normalized()?;
     db.set_setting(LLM_KEY, &serde_json::to_string(&cfg).map_err(|e| AppError::Io(e.to_string()))?)?;
     Ok(cfg)
+}
+
+/// 旧設定(`sandbox_llm`のモデル・許可するツール)を、settings.json(`model`・`permissions.allow`)へ一度だけ移す。
+/// settings.json がすでに書かれているときは上書きせず、そちらを優先する。移したあと(または不要なとき)は、旧項目を`sandbox_llm`から外す。
+pub fn migrate_legacy_llm(db: &impl SettingsStore) -> Result<(), AppError> {
+    let Some(raw) = db.get_setting(LLM_KEY)? else { return Ok(()) };
+    let Ok(Value::Object(old)) = serde_json::from_str::<Value>(&raw) else { return Ok(()) };
+    if !old.contains_key("model") && !old.contains_key("allowed_tools") {
+        return Ok(());
+    }
+    if load_settings(db)?.trim().is_empty() {
+        let mut root = serde_json::Map::new();
+        if let Some(model) = old.get("model").and_then(Value::as_str).map(str::trim).filter(|m| !m.is_empty()) {
+            root.insert("model".into(), Value::String(model.to_owned()));
+        }
+        let tools: Vec<Value> = old
+            .get("allowed_tools")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_str).map(str::trim).filter(|t| !t.is_empty()).map(|t| Value::String(t.to_owned())).collect())
+            .unwrap_or_default();
+        if !tools.is_empty() {
+            root.insert("permissions".into(), serde_json::json!({ "allow": tools }));
+        }
+        if !root.is_empty() {
+            let text = serde_json::to_string_pretty(&Value::Object(root)).map_err(|e| AppError::Io(e.to_string()))?;
+            save_settings(db, &text)?;
+        }
+    }
+    // 旧項目を外す(読めない・範囲外の値は既定値へ丸める)
+    let cfg: LlmConfig = serde_json::from_value(Value::Object(old)).unwrap_or_default();
+    save(db, cfg)?;
+    Ok(())
 }
 
 /// 貼り付けた settings.json を検証する。空(空白のみ)は未設定として通す。JSON のオブジェクトで、上限以内であること。
@@ -139,6 +144,12 @@ pub fn validate_settings(text: &str) -> Result<(), String> {
 /// 保存された settings.json(未設定は空文字)。
 pub fn load_settings(db: &impl SettingsStore) -> Result<String, AppError> {
     Ok(db.get_setting(CLAUDE_SETTINGS_KEY)?.unwrap_or_default())
+}
+
+/// settings.json の`model`(ログの表示用)。未設定・読めないときは`None`。
+pub fn configured_model(db: &impl SettingsStore) -> Option<String> {
+    let Ok(Value::Object(root)) = serde_json::from_str::<Value>(&load_settings(db).ok()?) else { return None };
+    root.get("model").and_then(Value::as_str).map(str::trim).filter(|m| !m.is_empty()).map(str::to_owned)
 }
 
 /// 検証して保存する。空にすると未設定に戻る。
@@ -164,18 +175,15 @@ fn settings_env(text: &str) -> Result<Option<(String, String)>, String> {
 }
 
 /// アプリが決める環境変数(秘密でない値だけ)。
-pub fn app_env(cfg: &LlmConfig) -> BTreeMap<String, String> {
+pub fn app_env() -> BTreeMap<String, String> {
     let mut vars = BTreeMap::new();
     vars.insert("CLAUDE_CODE_USE_BEDROCK".to_owned(), "1".to_owned());
-    if !cfg.model.is_empty() {
-        vars.insert("ANTHROPIC_MODEL".to_owned(), cfg.model.clone());
-    }
     vars
 }
 
 /// アプリが決める値の上に、認証情報(`sandbox.env`とAWSの一時キー)を重ねる。同じ名前は認証情報の側が優先。
-pub fn merge_env(cfg: &LlmConfig, credentials: BTreeMap<String, String>) -> BTreeMap<String, String> {
-    let mut vars = app_env(cfg);
+pub fn merge_env(credentials: BTreeMap<String, String>) -> BTreeMap<String, String> {
+    let mut vars = app_env();
     vars.extend(credentials);
     vars
 }
@@ -219,7 +227,7 @@ fn valid_session_id(id: &str) -> bool {
 }
 
 /// アプリが内部で渡す値(`MYASSISTANT_`)。
-fn internal_vars(cfg: &LlmConfig, policy: &Policy, extra_deny: &[String], system: &str, resume: Option<&str>) -> Result<BTreeMap<String, String>, String> {
+fn internal_vars(policy: &Policy, extra_deny: &[String], system: &str, resume: Option<&str>) -> Result<BTreeMap<String, String>, String> {
     if system.len() > SYSTEM_MAX_BYTES {
         return Err(format!("システムプロンプトが長すぎます(上限{}KB)。", SYSTEM_MAX_BYTES / 1024));
     }
@@ -228,7 +236,6 @@ fn internal_vars(cfg: &LlmConfig, policy: &Policy, extra_deny: &[String], system
     }
     let mut v = BTreeMap::new();
     v.insert("MYASSISTANT_SYSTEM_PROMPT".to_owned(), system.to_owned());
-    v.insert("MYASSISTANT_ALLOWED_TOOLS".to_owned(), cfg.allowed_tools.join(","));
     let deny: Vec<String> = extra_deny.iter().cloned().chain(deny_rules(policy)).collect();
     v.insert("MYASSISTANT_DISALLOWED_TOOLS".to_owned(), deny.join(","));
     if let Some(id) = resume {
@@ -401,17 +408,19 @@ pub async fn run_turn(turn: Turn<'_>, cancel: &CancelToken, mut on_event: impl F
     if turn.prompt.trim().is_empty() {
         return Err("指示が空です。".into());
     }
+    migrate_legacy_llm(&turn.ctx.db).map_err(|e| e.to_string())?;
     let cfg = load(&turn.ctx.db).map_err(|e| e.to_string())?;
     let mounts = sandbox::mounts_for(turn.ctx, turn.knowledge_root)?;
-    let mut vars = merge_env(&cfg, sandbox::env_for(turn.ctx).await?);
+    let mut vars = merge_env(sandbox::env_for(turn.ctx).await?);
     check_credentials(&vars)?;
-    let (cfg_for_run, deny) = if turn.no_tools {
-        let all = DEFAULT_ALLOWED_TOOLS.iter().map(|s| (*s).to_owned()).collect();
-        (LlmConfig { allowed_tools: Vec::new(), ..cfg.clone() }, [turn.deny.clone(), all].concat())
+    // ツールなしの単発の呼び出しは、標準のツールをすべて拒否する(拒否は settings.json の許可より優先される)
+    let deny = if turn.no_tools {
+        let all: Vec<String> = DEFAULT_ALLOWED_TOOLS.iter().map(|s| (*s).to_owned()).collect();
+        [turn.deny.clone(), all].concat()
     } else {
-        (cfg.clone(), turn.deny.clone())
+        turn.deny.clone()
     };
-    vars.extend(internal_vars(&cfg_for_run, &command_policy::load(turn.knowledge_root), &deny, turn.system, turn.resume)?);
+    vars.extend(internal_vars(&command_policy::load(turn.knowledge_root), &deny, turn.system, turn.resume)?);
     let settings = load_settings(&turn.ctx.db).map_err(|e| e.to_string())?;
     vars.extend(settings_env(&settings)?);
 
@@ -540,14 +549,58 @@ mod tests {
     }
 
     #[test]
-    fn command_omits_allowed_tools_when_empty() {
-        // ツールなしの単発の呼び出しは許可を空にする。空のときは`--allowedTools`自体を渡さない
-        assert!(CLAUDE_COMMAND.contains(r#"${MYASSISTANT_ALLOWED_TOOLS:+--allowedTools "$MYASSISTANT_ALLOWED_TOOLS"}"#));
-        let cfg = LlmConfig { allowed_tools: Vec::new(), ..Default::default() };
+    fn allowed_tools_come_from_settings_not_flags() {
+        // 許可は settings.json の`permissions.allow`で決める。`--allowedTools`は渡さない
+        assert!(!CLAUDE_COMMAND.contains("--allowedTools") && !CLAUDE_COMMAND.contains("MYASSISTANT_ALLOWED_TOOLS"));
+        // ツールなしの単発の呼び出しは、標準のツールをすべて拒否する
         let all: Vec<String> = DEFAULT_ALLOWED_TOOLS.iter().map(|s| (*s).to_owned()).collect();
-        let v = internal_vars(&cfg, &Policy::defaults(), &all, "sys", None).unwrap();
-        assert_eq!(v["MYASSISTANT_ALLOWED_TOOLS"], "");
+        let v = internal_vars(&Policy::defaults(), &all, "sys", None).unwrap();
+        assert!(!v.contains_key("MYASSISTANT_ALLOWED_TOOLS"));
         assert!(v["MYASSISTANT_DISALLOWED_TOOLS"].contains("Bash") && v["MYASSISTANT_DISALLOWED_TOOLS"].contains("WebFetch"));
+    }
+
+    #[test]
+    fn legacy_llm_settings_are_moved_into_claude_settings_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::Db::open(&dir.path().join("t.db")).unwrap();
+        // 旧設定がなければ何もしない
+        migrate_legacy_llm(&db).unwrap();
+        assert_eq!(load_settings(&db).unwrap(), "");
+        db.set_setting(LLM_KEY, r#"{"provider":"bedrock","model":" us.anthropic.claude-x ","timeout_mins":45,"allowed_tools":["Bash"," Read ","Bash(git status:*)",""]}"#).unwrap();
+        migrate_legacy_llm(&db).unwrap();
+        let moved: Value = serde_json::from_str(&load_settings(&db).unwrap()).unwrap();
+        assert_eq!(moved["model"], "us.anthropic.claude-x");
+        assert_eq!(moved["permissions"]["allow"], serde_json::json!(["Bash", "Read", "Bash(git status:*)"]));
+        // 上限時間は残り、旧項目は外れる
+        assert_eq!(load(&db).unwrap().timeout_mins, 45);
+        let left: Value = serde_json::from_str(&db.get_setting(LLM_KEY).unwrap().unwrap()).unwrap();
+        assert!(left.get("model").is_none() && left.get("allowed_tools").is_none());
+        // 2回目は何もしない(利用者が書き換えた内容を上書きしない)
+        save_settings(&db, r#"{"model":"mine"}"#).unwrap();
+        migrate_legacy_llm(&db).unwrap();
+        assert_eq!(load_settings(&db).unwrap(), r#"{"model":"mine"}"#);
+    }
+
+    #[test]
+    fn configured_model_is_read_from_claude_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::Db::open(&dir.path().join("t.db")).unwrap();
+        assert_eq!(configured_model(&db), None);
+        save_settings(&db, r#"{"model":" us.anthropic.claude-x "}"#).unwrap();
+        assert_eq!(configured_model(&db).as_deref(), Some("us.anthropic.claude-x"));
+        save_settings(&db, r#"{"permissions":{}}"#).unwrap();
+        assert_eq!(configured_model(&db), None);
+    }
+
+    #[test]
+    fn legacy_llm_settings_do_not_overwrite_existing_claude_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::Db::open(&dir.path().join("t.db")).unwrap();
+        save_settings(&db, r#"{"model":"mine"}"#).unwrap();
+        db.set_setting(LLM_KEY, r#"{"model":"old","timeout_mins":10,"allowed_tools":["Bash"]}"#).unwrap();
+        migrate_legacy_llm(&db).unwrap();
+        assert_eq!(load_settings(&db).unwrap(), r#"{"model":"mine"}"#);
+        assert_eq!(load(&db).unwrap().timeout_mins, 10);
     }
 
     #[test]
@@ -572,33 +625,26 @@ mod tests {
     #[test]
     fn config_defaults_and_normalizes() {
         let cfg: LlmConfig = serde_json::from_str(r#"{"provider":"bedrock"}"#).unwrap();
-        assert_eq!(cfg, LlmConfig { provider: Provider::Bedrock, ..Default::default() });
-        // 旧設定の Anthropic は、読み込み時に Bedrock へ直る(ほかの項目は残る)
+        assert_eq!(cfg, LlmConfig::default());
+        // 旧設定の Anthropic は、読み込み時に Bedrock へ直る。旧項目(model など)は無視される
         let old: LlmConfig = serde_json::from_str(r#"{"provider":"anthropic","model":"m"}"#).unwrap();
-        let old = old.normalized().unwrap();
-        assert_eq!((old.provider, old.model.as_str()), (Provider::Bedrock, "m"));
+        assert_eq!(old.normalized().unwrap().provider, Provider::Bedrock);
         assert_eq!(LlmConfig::default().provider, Provider::Bedrock);
-        let n = LlmConfig { timeout_mins: 9999, model: "  claude-x  ".into(), ..Default::default() }.normalized().unwrap();
-        assert_eq!((n.timeout_mins, n.model.as_str()), (180, "claude-x"));
+        assert_eq!(LlmConfig { timeout_mins: 9999, ..Default::default() }.normalized().unwrap().timeout_mins, 180);
         assert_eq!(LlmConfig { timeout_mins: 0, ..Default::default() }.normalized().unwrap().timeout_mins, 1);
-        assert!(LlmConfig { model: "a b".into(), ..Default::default() }.normalized().is_err());
-        assert!(LlmConfig { model: "x\n".repeat(1) + "y", ..Default::default() }.normalized().is_err());
     }
 
     #[test]
     fn app_env_carries_only_non_secret_values() {
-        let bedrock = LlmConfig { provider: Provider::Bedrock, model: "us.anthropic.claude-x".into(), ..Default::default() };
-        let env = app_env(&bedrock);
-        assert_eq!(env, vars(&[("CLAUDE_CODE_USE_BEDROCK", "1"), ("ANTHROPIC_MODEL", "us.anthropic.claude-x")]));
+        let env = app_env();
+        assert_eq!(env, vars(&[("CLAUDE_CODE_USE_BEDROCK", "1")]));
         assert!(env.keys().all(|k| NON_SECRET_NAMES.contains(&k.as_str())));
-        assert_eq!(app_env(&LlmConfig::default()), vars(&[("CLAUDE_CODE_USE_BEDROCK", "1")]));
     }
 
     #[test]
     fn sandbox_env_overrides_app_values() {
-        let cfg = LlmConfig { model: "from-app".into(), ..Default::default() };
-        let merged = merge_env(&cfg, vars(&[("ANTHROPIC_MODEL", "from-env"), ("ANTHROPIC_API_KEY", "k")]));
-        assert_eq!(merged.get("ANTHROPIC_MODEL").map(String::as_str), Some("from-env"));
+        let merged = merge_env(vars(&[("CLAUDE_CODE_USE_BEDROCK", "0"), ("ANTHROPIC_API_KEY", "k")]));
+        assert_eq!(merged.get("CLAUDE_CODE_USE_BEDROCK").map(String::as_str), Some("0"));
     }
 
     #[test]
@@ -611,15 +657,6 @@ mod tests {
     }
 
     #[test]
-    fn allowed_tools_are_validated_and_deduplicated() {
-        let cfg = LlmConfig { allowed_tools: vec![" Bash ".into(), "Bash".into(), "".into(), "Bash(git status:*)".into()], ..Default::default() };
-        assert_eq!(cfg.normalized().unwrap().allowed_tools, vec!["Bash".to_owned(), "Bash(git status:*)".to_owned()]);
-        assert!(LlmConfig { allowed_tools: vec!["Read,Write".into()], ..Default::default() }.normalized().is_err());
-        assert!(LlmConfig { allowed_tools: vec!["a\nb".into()], ..Default::default() }.normalized().is_err());
-        assert!(LlmConfig::default().allowed_tools.contains(&"Bash".to_owned()));
-    }
-
-    #[test]
     fn deny_rules_come_from_the_command_policy() {
         let mut p = Policy::defaults();
         p.deny = vec!["git push --force".into(), "bad,rule".into(), "x(y)".into(), "git push --force".into()];
@@ -629,23 +666,21 @@ mod tests {
 
     #[test]
     fn internal_values_are_passed_by_environment_only() {
-        let cfg = LlmConfig::default();
         let p = Policy::defaults();
-        let v = internal_vars(&cfg, &p, &[], "ルール\n'\"$(rm -rf /)", Some("cd6a4042-73d8-4e11-84bc-f7e196eab226")).unwrap();
+        let v = internal_vars(&p, &[], "ルール\n'\"$(rm -rf /)", Some("cd6a4042-73d8-4e11-84bc-f7e196eab226")).unwrap();
         assert_eq!(v["MYASSISTANT_SYSTEM_PROMPT"], "ルール\n'\"$(rm -rf /)");
         assert_eq!(v["MYASSISTANT_RESUME"], "cd6a4042-73d8-4e11-84bc-f7e196eab226");
-        assert!(v["MYASSISTANT_ALLOWED_TOOLS"].starts_with("Bash,"));
         assert!(v.keys().all(|k| k.starts_with("MYASSISTANT_")));
         // コマンドには値を埋め込まない
         assert!(!CLAUDE_COMMAND.contains("ルール") && CLAUDE_COMMAND.contains("\"$MYASSISTANT_SYSTEM_PROMPT\""));
-        assert!(internal_vars(&cfg, &p, &[], "x", Some("bad id;rm")).is_err());
-        assert!(internal_vars(&cfg, &p, &[], &"a".repeat(SYSTEM_MAX_BYTES + 1), None).is_err());
-        assert!(!internal_vars(&cfg, &p, &[], "x", None).unwrap().contains_key("MYASSISTANT_RESUME"));
+        assert!(internal_vars(&p, &[], "x", Some("bad id;rm")).is_err());
+        assert!(internal_vars(&p, &[], &"a".repeat(SYSTEM_MAX_BYTES + 1), None).is_err());
+        assert!(!internal_vars(&p, &[], "x", None).unwrap().contains_key("MYASSISTANT_RESUME"));
     }
 
     #[test]
     fn extra_deny_is_added_before_policy_rules() {
-        let v = internal_vars(&LlmConfig::default(), &Policy::defaults(), &["Bash".into(), "WebFetch".into()], "x", None).unwrap();
+        let v = internal_vars(&Policy::defaults(), &["Bash".into(), "WebFetch".into()], "x", None).unwrap();
         assert!(v["MYASSISTANT_DISALLOWED_TOOLS"].starts_with("Bash,WebFetch,Bash("));
     }
 

@@ -73,8 +73,8 @@
 
 - **Amazon Bedrock(固定)**: 接続先は Bedrock だけ(以前の Anthropic API は廃止。保存済みの旧設定は読み込み時に Bedrock へ直す)。アプリに登録したそのエージェントの AWS 設定から、**ホスト側で STS の一時キーを発行して渡す**(ロールの引き受けと MFA の入力はホストで行う)。Claude Code 向けに `CLAUDE_CODE_USE_BEDROCK=1` を渡す。リージョンは AWS 設定のプロファイル(`AWS_REGION`)から取る。
 - **AWS のリソース**: Bedrock と同じ一時キーで、コンテナ内の AWS CLI などからも使える。AWS 設定が登録されていれば渡す。
-- **Claude Code の settings.json**: 利用者が貼り付けた内容(JSON のオブジェクト、64KB まで)を、アプリの設定 `sandbox_claude_settings` に保存する。実行ごとに環境変数 `MYASSISTANT_SETTINGS` で渡し、`claude --settings` へ与える(ファイルとしてコンテナには置かない。`~/.claude/settings.json` には書かない)。保存時に検証し、誤りは行・列と理由だけを返す(内容は含めない)。アプリが決める `--allowedTools` `--disallowedTools` `--permission-mode` は引数で渡すため、settings.json の拒否はアプリの拒否に加わるだけで緩められない(許可は追加される)。`env` の値は、画面では既定で伏せ(「値を表示して編集」で本文を出す)、コンテナの出力に出たときは伏せ字にする(`sandbox.env` と同じ)。設定の書き出し・バックアップにはそのまま含まれる。
-- **接続先とモデル**: エージェントの設定でモデルを選ぶ(接続先は Bedrock 固定)。秘密でない値(`CLAUDE_CODE_USE_BEDROCK` `ANTHROPIC_MODEL` など)はアプリが決めて渡す。`sandbox.env` に同じ名前があれば、そちらが優先される。
+- **Claude Code の settings.json**: 利用者が貼り付けた内容(JSON のオブジェクト、64KB まで)を、アプリの設定 `sandbox_claude_settings` に保存する。実行ごとに環境変数 `MYASSISTANT_SETTINGS` で渡し、`claude --settings` へ与える(ファイルとしてコンテナには置かない。`~/.claude/settings.json` には書かない)。保存時に検証し、誤りは行・列と理由だけを返す(内容は含めない)。モデル(`model`)と許可するツール(`permissions.allow`)はここで決める。アプリが決める `--disallowedTools` `--permission-mode` は引数で渡すため、settings.json の拒否はアプリの拒否に加わるだけで緩められない(許可は追加される)。空のままだと Bash などは許可されないので、画面に雛形(既定の12ツール)を入れるボタンを出す。旧設定(`sandbox_llm` のモデル・許可するツール)は、初めて開いたとき・実行時に、settings.json が空なら `model` と `permissions.allow` へ一度だけ移す(書かれていれば上書きしない)。`env` の値は、画面では既定で伏せ(「値を表示して編集」で本文を出す)、コンテナの出力に出たときは伏せ字にする(`sandbox.env` と同じ)。設定の書き出し・バックアップにはそのまま含まれる。
+- **接続先とモデル**: 接続先は Bedrock 固定。モデルは settings.json の `model` で決める。秘密でない値(`CLAUDE_CODE_USE_BEDROCK`)はアプリが決めて渡す。`sandbox.env` に同じ名前があれば、そちらが優先される。
 - 必要な認証情報が無いとき(AWS のキーかリージョンが無い、MFA を入力しなかった)は、実行せずにエラーにする。
 - MFA: 一時キーはメモリにキャッシュし、期限内は MFA を聞かない。指示ごとに実行し直すため、毎回期限内のキーが渡る。1回の指示が一時キーの期限を超えると、その途中で AWS の呼び出しが失敗する。AWS 設定の `duration_seconds` を長くして避ける(ロールの最大セッション時間まで。最大 12 時間)。
 
@@ -113,7 +113,7 @@
 - **ルール**: 通常の会話と同じ、ベースプロンプト(チャット用)・エージェントデータと共通データ(パーソナルは基本情報)・記憶(覚えておくこと)・聞き取りの訂正に、作業環境の説明(`/workspace` と `/knowledge` の役割、認証情報の扱い)を加えて、`--append-system-prompt` で毎回渡す(上限 100KB)。関連ナレッジとスキルの候補は渡さない(Claude Code が `/knowledge` を直接読む)。
 - **承認**: 初版では、実行中に画面で承認を求めない。コンテナを境界とし、次のリストの範囲で自動で進める。
   - 権限モードは `acceptEdits`(ファイルの編集は自動)。
-  - 許可リスト(`--allowedTools`): エージェントの設定で変えられる。既定は Bash・Read・Edit・Write・Glob・Grep・NotebookEdit・WebFetch・WebSearch・Task・TodoWrite・Skill。
+  - 許可リスト(settings.json の `permissions.allow`): エージェントごとに settings.json で決める(`--allowedTools` は渡さない)。画面の雛形は Bash・Read・Edit・Write・Glob・Grep・NotebookEdit・WebFetch・WebSearch・Task・TodoWrite・Skill。
   - 拒否リスト(`--disallowedTools`): エージェントのコマンド権限(`command-policy.json`)の拒否(`deny`)と、どこにあっても拒否する語(`deny_words`)を、`Bash(<コマンド>:*)` の形へ変換して渡す。「,」や括弧を含む項目は渡さない。拒否が許可より優先される。
   - コマンド実行を無効にしているエージェントでは `Bash` を、Web 検索を無効にしているエージェントでは `WebFetch` と `WebSearch` を拒否する。
   - コマンド権限の確認(`ask`)と許可(`allow`)は、初版では使わない(承認を挟まないため)。
@@ -168,9 +168,9 @@
 - 各エージェントの「Sandbox」タブ(リーダーでは出ない。全体設定で無効でも準備できる):
   - 有効/無効の表示、Docker・コンテナの状態、コンテナ名、コンテナを作り直す。
   - `/workspace` にマウントするフォルダの場所の表示、「Finder で開く」、注意書き。
-  - Claude Code のモデル(接続先は Bedrock 固定)・1回の指示の上限時間・許可するツール(`sandbox_llm`。設定の書き出し・コピーの対象)。
+  - 1回の指示の上限時間(`sandbox_llm`。設定の書き出し・コピーの対象)。
   - 専用の Dockerfile の登録・編集。
-  - Claude Code の settings.json のエディタ(貼り付け・保存・変更を破棄・再読み込み。`sandbox_claude_settings`。設定の書き出し・コピーの対象)。
+  - Claude Code の settings.json のエディタ(モデル・許可するツールもここ。空のときは許可の雛形を入れるボタン。貼り付け・保存・変更を破棄・再読み込み。`sandbox_claude_settings`。設定の書き出し・コピーの対象)。
   - `sandbox.env` のエディタ(値を含めて表示・編集、保存・変更を破棄・再読み込み・ファイルを表示)と、渡す変数の名前・検証結果。
 - 実行ログと進行中の表示は、Claude Code のツール(`Bash`・`Read`・`Edit` など)を分かる名前で表示する。
 

@@ -104,7 +104,7 @@ export default function AiSettings({ keyStatus, leader, work = false }: { keySta
   return (
     <section className="hud-panel hud-accent px-5 py-4">
       <Heading title="AI Settings" help={t("AI設定")}>
-        <p>{work ? t("AIを使う機能ごとに、渡すプロンプト(指示)を設定します。モデルは、上の Claude Code の設定で決まります。") : t("AIを使う機能ごとに、使うモデルと渡すプロンプト(指示)を設定します。")}</p>
+        <p>{work ? t("AIを使う機能ごとに、渡すプロンプト(指示)を設定します。モデルは、Sandbox タブの Claude Code の settings.json で決まります。") : t("AIを使う機能ごとに、使うモデルと渡すプロンプト(指示)を設定します。")}</p>
         <ul>
           <li>{t("プロンプトは全文を編集できます。変更は次の呼び出しから反映されます。")}</li>
           <li>{t("出力の形式(JSONなど)を示す部分を消すと、結果を読み取れず機能が働かなくなることがあります。")}</li>
