@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import ModelSelector from "@/components/ModelSelector";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Heading } from "@/components/GlobalPanels";
 import {
   PROMPT_MAX_CHARS,
@@ -51,11 +52,17 @@ const FEATURES: (Feature & { only?: "leader" | "agent" })[] = [
   { id: "suggest", title: "宛先の提案", description: "指示の配布先を、過去の履歴から提案する指示です。軽量なモデルを自動で選びます。", only: "leader" },
 ];
 
+/** ワークのエージェントで、校正をコンテナ内の Claude Code で行うことを示す `Route.provider`(Rust 側の `SANDBOX_PROVIDER`)。 */
+const SANDBOX_ROUTE: Route = { provider: "sandbox" as Route["provider"], model: "" };
+
 /**
- * エージェントの「AI設定」。LLMを使う機能ごとに、使うモデルと渡すプロンプトを1か所で扱う。
+ * エージェントの「AI設定」。
+ * ワークのエージェント(`work`)は、会話・整理・校正をコンテナ内の Claude Code が受け持つため、モデル選択は出さない
+ * (校正だけ、コンテナ / 端末内のQwen / オフの選択)。プロンプトは編集できる。
+ *LLMを使う機能ごとに、使うモデルと渡すプロンプトを1か所で扱う。
  * プロンプトは全文を編集でき、「初期値へ戻す」で既定へ戻る。変更は次の呼び出しから反映される。
  */
-export default function AiSettings({ keyStatus, leader }: { keyStatus: Partial<KeyStatus>; leader: boolean }) {
+export default function AiSettings({ keyStatus, leader, work = false }: { keyStatus: Partial<KeyStatus>; leader: boolean; work?: boolean }) {
   const t = useT();
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [routes, setRoutes] = useState<Partial<Record<PromptId, Route | null>>>({});
@@ -67,7 +74,7 @@ export default function AiSettings({ keyStatus, leader }: { keyStatus: Partial<K
     Promise.all([
       listModels(),
       listPrompts(),
-      ...features.map(async (f) => [f.id, await ROUTES[f.id]?.load()] as const),
+      ...features.map(async (f) => [f.id, !work || f.id === "proofread" ? await ROUTES[f.id]?.load() : null] as const),
     ])
       .then(([m, p, ...r]) => {
         setModels(m);
@@ -76,7 +83,7 @@ export default function AiSettings({ keyStatus, leader }: { keyStatus: Partial<K
       })
       .catch((e) => toast.error(reportError(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keyStatus, leader]);
+  }, [keyStatus, leader, work]);
 
   const changeRoute = useCallback(
     async (id: PromptId, next: Route | null) => {
@@ -97,7 +104,7 @@ export default function AiSettings({ keyStatus, leader }: { keyStatus: Partial<K
   return (
     <section className="hud-panel hud-accent px-5 py-4">
       <Heading title="AI Settings" help={t("AI設定")}>
-        <p>{t("AIを使う機能ごとに、使うモデルと渡すプロンプト(指示)を設定します。")}</p>
+        <p>{work ? t("AIを使う機能ごとに、渡すプロンプト(指示)を設定します。モデルは、上の Claude Code の設定で決まります。") : t("AIを使う機能ごとに、使うモデルと渡すプロンプト(指示)を設定します。")}</p>
         <ul>
           <li>{t("プロンプトは全文を編集できます。変更は次の呼び出しから反映されます。")}</li>
           <li>{t("出力の形式(JSONなど)を示す部分を消すと、結果を読み取れず機能が働かなくなることがあります。")}</li>
@@ -107,11 +114,34 @@ export default function AiSettings({ keyStatus, leader }: { keyStatus: Partial<K
       </Heading>
       <div className="flex flex-col gap-3">
         {features.map((f) => {
-          const api = ROUTES[f.id];
+          const api = work && f.id !== "proofread" ? undefined : ROUTES[f.id];
           const route = routes[f.id] ?? null;
+          const localModel = models.find((m) => m.provider === "local");
           return (
             <FeatureCard key={f.id} feature={f} info={prompts[f.id]} onInfo={(i) => setPrompts((p) => ({ ...p, [f.id]: i }))}>
-              {api && (
+              {api && work && (
+                <div className="flex flex-col gap-2">
+                  <Select
+                    value={route?.provider === SANDBOX_ROUTE.provider ? "sandbox" : route?.provider === "local" ? "local" : "off"}
+                    onValueChange={(v) =>
+                      changeRoute(f.id, v === "sandbox" ? SANDBOX_ROUTE : v === "local" && localModel ? { provider: localModel.provider, model: localModel.id } : null)
+                    }
+                  >
+                    <SelectTrigger size="sm" aria-label={t(f.title)}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="off">{t("オフ")}</SelectItem>
+                      <SelectItem value="sandbox">{t("コンテナ内の Claude Code")}</SelectItem>
+                      <SelectItem value="local" disabled={!localModel}>{t("端末内のモデル(Qwen 2.5)")}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {t("コンテナ内の Claude Code は、発話のたびに起動するため数秒かかります。遅さが気になるときは、端末内のモデル(AI Link で取得)を選べます。")}
+                  </p>
+                </div>
+              )}
+              {api && !work && (
                 <div className="flex flex-col gap-2">
                   {api.optional && (
                     <div className="flex items-center justify-between gap-3">

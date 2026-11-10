@@ -111,8 +111,7 @@ erDiagram
 | `routing` | `Route`(JSON) | Claude が使えれば Sonnet | 対話画面のモデル選択 |
 | `web_access` | `0` / `1` | 有効 | Web Search |
 | `shell_access` | `0` / `1` | 有効 | Command Tasks |
-| `sandbox_enabled` | `0` / `1` | 無効 | 全体設定の Sandbox(全体設定のため、設定の書き出し・コピーの対象外) |
-| `sandbox_llm` | 接続先・モデル・上限時間(分)・許可するツール(JSON) | Anthropic API・既定のモデル・30分 | Sandbox |
+| `sandbox_llm` | 接続先・モデル・上限時間(分)・許可するツール(JSON) | Anthropic API・既定のモデル・30分 | LLM(ワークのエージェント) |
 | `sandbox_claude_sessions` | 会話 ID と Claude Code のセッション ID の対応(JSON、直近 50 件) | なし | なし(端末の会話と対なので対象外) |
 | `stt_engine` | `local` / `google` | `local` | Voice Link |
 | `stt_language` | `auto` / `ja` / `en` / `zh` / `ko` | `auto` | Voice Link |
@@ -121,8 +120,8 @@ erDiagram
 | `whisper_revision` | Hugging Face のリビジョン(ブランチ・タグ・コミット) | `main` | Voice Link(取得バージョン) |
 | `voicevox_versions` | 取得する配布物のバージョン(JSON: `core` / `onnxruntime` / `models` / `dict_release` / `dict`。未指定の項目は既定値) | CORE `0.17.1`、ONNX Runtime `1.23.2`、音声モデル `0.17.0`、辞書 `v1.11.1` / `1.11` | Voice Link(取得バージョン) |
 | `tuning` | 上限の調整項目(JSON) | 下表 | Limits |
-| `batch_route` | `Route`(JSON) | 既定 | ナレッジ画面 |
-| `proofread_route` | `Route`(JSON)。空は校正オフ | オフ | Proofread(設定の音声タブ) |
+| `batch_route` | `Route`(JSON)。ワークのエージェントでは使わない(整理はコンテナ内の Claude Code) | 既定 | ナレッジ画面 |
+| `proofread_route` | `Route`(JSON)。空は校正オフ。ワークでは `provider` が `sandbox`(コンテナ内の Claude Code)か `local` | オフ | Proofread(設定の音声タブ) |
 | `skills_route` | `Route`(JSON) | 軽量モデル | スキル画面([skills.md](skills.md))。設定のエクスポートの対象外 |
 | `debug_mode` | `0` / `1` | 無効 | Debug Mode |
 | `agent_data` | エージェントデータ(JSON `{enabled, text}`。エージェントのみ。コピー・エクスポートの対象外) | 有効・空 | Agent Data |

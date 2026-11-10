@@ -97,8 +97,6 @@ pub const ALL: &[Setting] = &[
     // ---- 全体設定 ----
     global(chat::BASE_INSTRUCTIONS_KEY, Some(Kind::Text)),
     global(global_settings::OS_NOTIFICATIONS_KEY, Some(Kind::Flag)),
-    // コマンドをDockerコンテナで実行するか。全エージェント共通
-    global(chat::SANDBOX_ENABLED_KEY, Some(Kind::Flag)),
     global(global_settings::LANGUAGE_KEY, Some(Kind::OneOf(&["ja", "en"]))),
     global(tuning::VOICE_KEY, Some(Kind::Json)),
     global(wake::ENABLED_KEY, Some(Kind::Flag)),

@@ -58,7 +58,7 @@ const TEMPLATE: &str = "\
 # AWS の認証情報は、このエージェントの AWS の設定から一時キーを発行して渡すので、ここには書かなくてかまいません。
 # このファイルは他のエージェントやナレッジからは見えず、コンテナの中にも置かれません。
 
-# Claude Code の API キー(接続先が Anthropic API のとき必要)
+# Claude Code の API キー(接続先が Anthropic API のとき必要)。アプリに登録した API キーが自動で渡されるので、別のキーを使うときだけ書きます。
 ANTHROPIC_API_KEY=
 ";
 

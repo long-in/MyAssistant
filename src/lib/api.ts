@@ -275,7 +275,6 @@ export const setShellAccess = (enabled: boolean) => invoke<void>("set_shell_acce
 
 /** サンドボックス(エージェント専用のDockerコンテナでコマンドを実行する)の設定。エージェントだけが使える。既定は無効。 */
 export const getSandboxEnabled = () => invoke<boolean>("get_sandbox_enabled");
-export const setSandboxEnabled = (enabled: boolean) => invoke<void>("set_sandbox_enabled", { enabled });
 
 export type DockerState = "missing" | "stopped" | "ready";
 export type SandboxStatus = {

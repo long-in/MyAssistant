@@ -1,5 +1,9 @@
 //! 音声認識結果を会話の文脈から校正するLLMステップ。
+use std::time::Duration;
+
 use super::{
+    sandbox, sandbox_agent,
+    cancel::CancelToken,
     prompts::{self, PromptId},
     llm_client::{self, ChatMessage},
     llm_router::{self, Route},
@@ -10,6 +14,11 @@ use crate::utils::error::AppError;
 
 /// 校正に使うモデル指定(`Route`のJSON)のキー。未設定なら校正しない。
 pub const ROUTE_KEY: &str = "proofread_route";
+/// ワークのエージェントで、校正をコンテナ内の Claude Code で行うことを示す`Route.provider`の値(`Route.model`は空)。
+/// ワークの校正は、これか端末内のQwen(`local`)かのどちらか。
+pub const SANDBOX_PROVIDER: &str = "sandbox";
+/// コンテナでの校正の上限時間。長引くなら諦めて元の文章を使う。
+const SANDBOX_TIMEOUT: Duration = Duration::from_secs(60);
 /// 文脈として渡す直近の発話数。
 const CONTEXT_MESSAGES: u32 = 6;
 /// 校正結果が元の何倍を超えたら、説明文などが混ざったとみなして採用しない。
@@ -26,11 +35,15 @@ pub const DEFAULT_SYSTEM: &str = "\
 
 /// 保存済みの校正モデル。未設定、またはキー削除などで使えなければ`None`(校正しない)。
 pub fn effective_route(ctx: &WorkspaceCtx, available: &[Provider]) -> Result<Option<Route>, AppError> {
-    Ok(ctx
-        .db
-        .get_setting(ROUTE_KEY)?
-        .and_then(|v| serde_json::from_str::<Route>(&v).ok())
-        .filter(|r| llm_router::resolve(ctx, r, available).is_ok()))
+    let route = ctx.db.get_setting(ROUTE_KEY)?.and_then(|v| serde_json::from_str::<Route>(&v).ok());
+    Ok(route.filter(|r| {
+        if sandbox::runs_in_sandbox(&ctx.id) {
+            // ワークは、コンテナ(Claude Code)か端末内のQwenだけ
+            r.provider == SANDBOX_PROVIDER || (r.provider == Provider::Local.as_str() && llm_router::resolve(ctx, r, available).is_ok())
+        } else {
+            llm_router::resolve(ctx, r, available).is_ok()
+        }
+    }))
 }
 
 fn prompt(text: &str, history: &[ChatMessage], corrections: Option<&str>) -> String {
@@ -59,14 +72,6 @@ pub async fn proofread(ctx: &WorkspaceCtx, route: &Route, session_id: Option<&st
         .into_iter()
         .map(|r| ChatMessage { role: r.role, content: r.content })
         .collect();
-    let target = match llm_router::resolve(ctx, route, &super::batch::available_providers(&ctx.secrets)) {
-        Ok(t) => t,
-        Err(e) => {
-            log::warn!("proofread skipped: {e}");
-            return text.to_owned();
-        }
-    };
-    let msg = [ChatMessage { role: "user".into(), content: prompt(text, &history, corrections) }];
     let system = match prompts::load(&ctx.db, PromptId::Proofread) {
         Ok(s) => s,
         Err(e) => {
@@ -74,9 +79,31 @@ pub async fn proofread(ctx: &WorkspaceCtx, route: &Route, session_id: Option<&st
             return text.to_owned();
         }
     };
-    match llm_client::complete(ctx, target.provider, &target.model, Some(&system), &msg).await {
-        Ok(done) => {
-            let out = done.text.trim();
+    let content = prompt(text, &history, corrections);
+    let done = if route.provider == SANDBOX_PROVIDER {
+        // コンテナ内の Claude Code(ツールなしの単発)
+        let root = match super::batch::knowledge_root(ctx) {
+            Ok(r) => r,
+            Err(e) => {
+                log::warn!("proofread skipped: {e}");
+                return text.to_owned();
+            }
+        };
+        sandbox_agent::complete(ctx, &root, Some(&system), &content, Some(SANDBOX_TIMEOUT), &CancelToken::default()).await.map_err(|e| e.to_string())
+    } else {
+        let target = match llm_router::resolve(ctx, route, &super::batch::available_providers(&ctx.secrets)) {
+            Ok(t) => t,
+            Err(e) => {
+                log::warn!("proofread skipped: {e}");
+                return text.to_owned();
+            }
+        };
+        let msg = [ChatMessage { role: "user".into(), content }];
+        llm_client::complete(ctx, target.provider, &target.model, Some(&system), &msg).await.map(|d| d.text).map_err(|e| e.to_string())
+    };
+    match done {
+        Ok(out) => {
+            let out = out.trim();
             if acceptable(text, out) { out.to_owned() } else { text.to_owned() }
         }
         Err(e) => {

@@ -6,7 +6,6 @@ import { RefreshCw } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import {
   type SandboxStatus,
-  getSandboxEnabled,
   getSandboxStatus,
   reportError,
   resetSandbox,
@@ -19,12 +18,11 @@ import SandboxEnvEditor from "@/components/SandboxEnvEditor";
 
 /**
  * エージェントごとのサンドボックス(専用のDockerコンテナの中で Claude Code が作業する)の状態と設定、Dockerfile・環境変数の確認。
- * 有効/無効は全体設定(`SandboxSwitch`)で切り替えるので、ここにスイッチは無い。
+ * ワークのエージェントは常にサンドボックスで動くので、切り替えは無い(Claude Code の設定は LLM タブ)。
  * Dockerfileと環境変数(sandbox.env)はワークスペースのファイルで、ここでは状態の確認とFinderでの表示だけを行う。
  */
 export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
   const t = useT();
-  const [enabled, setEnabled] = useState<boolean | null>(null);
   const [status, setStatus] = useState<SandboxStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -36,13 +34,7 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
     }
   }, []);
 
-  useEffect(() => {
-    getSandboxEnabled()
-      .then(setEnabled)
-      .catch((e) => toast.error(reportError(e)));
-  }, []);
-
-  // 全体設定で無効でも、有効にする前に準備できるよう状態を読む
+  // 画面を開いたときに状態を読む
   useEffect(() => {
     let cancelled = false;
     getSandboxStatus()
@@ -79,19 +71,16 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
             <p>{t("このエージェントへの指示を、専用のDockerコンテナの中の Claude Code が受け持ちます。調査・編集・コマンドの実行はすべてコンテナの中で行います。")}</p>
             <ul>
               <li>{t("コンテナから見えるのは、担当フォルダ(/workspace)、ナレッジ(/knowledge)、専用ボリュームだけです。ほかのエージェントや ~/.aws には届きません。")}</li>
-              <li>{t("認証情報(sandbox.env と AWS の一時キー)は、指示ごとに環境変数で渡します。")}</li>
+              <li>{t("認証情報(AI Link に登録した API キー・AWS の一時キー・sandbox.env)は、指示ごとに環境変数で渡します。")}</li>
               <li>{t("Dockerが使えないときは、ホストでは実行せずエラーにします。")}</li>
               <li>{t("コマンドはLinux(Debian)上で動きます。brew や open などmacOS向けのコマンドは使えません。")}</li>
               <li>{t("sandbox.env(コンテナへ渡す環境変数)は、この画面で編集できます。")}</li>
             </ul>
           </Heading>
           <p className="text-xs text-muted-foreground">
-            {enabled
-              ? t("有効です。このエージェントへの指示は、専用のDockerコンテナの中の Claude Code が受け持ちます。切り替えは全体設定で行います。")
-              : t("全体設定で無効になっています。今は、指示をこのアプリが直接処理し、コマンドはホストで実行されます。有効にする前に、ここで準備できます。")}
+            {t("ワークのエージェントは、常にこのコンテナで動きます(切り替えはありません)。Claude Code の接続先・モデルなどは、LLM タブで設定します。")}
           </p>
         </div>
-        <StatusPill on={!!enabled}>{enabled ? t("オン") : t("オフ")}</StatusPill>
       </div>
 
       <div className="flex flex-col gap-4 border-t pt-4">

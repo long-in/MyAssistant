@@ -2,10 +2,8 @@
 use serde::Serialize;
 
 use crate::{
-    commands::chat::SANDBOX_ENABLED_KEY,
     services::{
         cancel::CancelToken,
-        global_settings::SettingsStore,
         sandbox::{self, DockerfileState, ImageStatus, Status},
         sandbox_agent, sandbox_env,
         workspace::{Ctx, WorkspaceCtx},
@@ -21,15 +19,10 @@ fn supported(ctx: &WorkspaceCtx) -> Result<(), AppError> {
     }
 }
 
-/// 全体設定。有効なら、全エージェント(パーソナルを含む)のコマンドをコンテナで実行する。
+/// このエージェントがサンドボックスで動くか(ワークのエージェントは常に動く。パーソナルとリーダーは動かない)。
 #[tauri::command]
-pub fn get_sandbox_enabled(ctx: Ctx) -> Result<bool, AppError> {
-    Ok(ctx.global.get_setting(SANDBOX_ENABLED_KEY)?.as_deref() == Some("1"))
-}
-
-#[tauri::command]
-pub fn set_sandbox_enabled(ctx: Ctx, enabled: bool) -> Result<(), AppError> {
-    ctx.global.set_setting(SANDBOX_ENABLED_KEY, if enabled { "1" } else { "0" })
+pub fn get_sandbox_enabled(ctx: Ctx) -> bool {
+    crate::commands::chat::sandbox_enabled(&ctx)
 }
 
 /// このエージェントのコンテナの状態。

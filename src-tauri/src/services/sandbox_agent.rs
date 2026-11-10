@@ -1,7 +1,7 @@
 //! サンドボックスのエージェント(コンテナ内の Claude Code)の接続の設定と、渡す環境変数。
 //!
 //! - 接続先(Anthropic API / Amazon Bedrock)・モデル・1回の指示の上限時間を、エージェントごとに持つ(`LLM_KEY`)。
-//! - API キーは`sandbox.env`に書く(アプリに登録した API キーは渡さない)。Bedrock は、アプリの AWS 設定から
+//! - API キーは、アプリに登録したものを実行ごとの環境変数で渡す(`sandbox.env`の同名が優先)。Bedrock は、アプリの AWS 設定から
 //!   ホストで発行した一時キーを使う(`sandbox::env_for`)。
 //! - アプリが決める環境変数は秘密でない値だけ。`sandbox.env`に同じ名前があれば、そちらが優先される。
 //! - 1回の指示は`run_turn`で、コンテナ内の`claude -p`(ヘッドレスモード)を起動し、`stream-json`の出力を逐次解析する。
@@ -35,7 +35,7 @@ const TOOL_MAX_CHARS: usize = 200;
 const SYSTEM_MAX_BYTES: usize = 100 * 1024;
 
 /// コンテナ内で実行するコマンド。可変の値はすべて環境変数で受け取る(シェルへ値を埋め込まない)。
-const CLAUDE_COMMAND: &str = r#"exec claude -p --output-format stream-json --verbose --permission-mode acceptEdits --allowedTools "$MYASSISTANT_ALLOWED_TOOLS" ${MYASSISTANT_DISALLOWED_TOOLS:+--disallowedTools "$MYASSISTANT_DISALLOWED_TOOLS"} ${MYASSISTANT_RESUME:+--resume "$MYASSISTANT_RESUME"} --append-system-prompt "$MYASSISTANT_SYSTEM_PROMPT""#;
+const CLAUDE_COMMAND: &str = r#"exec claude -p --output-format stream-json --verbose --permission-mode acceptEdits ${MYASSISTANT_ALLOWED_TOOLS:+--allowedTools "$MYASSISTANT_ALLOWED_TOOLS"} ${MYASSISTANT_DISALLOWED_TOOLS:+--disallowedTools "$MYASSISTANT_DISALLOWED_TOOLS"} ${MYASSISTANT_RESUME:+--resume "$MYASSISTANT_RESUME"} --append-system-prompt "$MYASSISTANT_SYSTEM_PROMPT""#;
 
 /// アプリが決める、秘密でない環境変数の名前。出力の伏せ字の対象から外す。
 pub const NON_SECRET_NAMES: [&str; 2] = ["CLAUDE_CODE_USE_BEDROCK", "ANTHROPIC_MODEL"];
@@ -141,7 +141,7 @@ fn has(vars: &BTreeMap<String, String>, name: &str) -> bool {
 pub fn check_credentials(cfg: &LlmConfig, vars: &BTreeMap<String, String>) -> Result<(), String> {
     match cfg.provider {
         Provider::Anthropic if !has(vars, "ANTHROPIC_API_KEY") && !has(vars, "ANTHROPIC_AUTH_TOKEN") => {
-            Err("Anthropic API のキーがありません。このエージェントの sandbox.env に ANTHROPIC_API_KEY を書いてください。".into())
+            Err("Anthropic API のキーがありません。このエージェントの設定で API キーを登録するか、sandbox.env に ANTHROPIC_API_KEY を書いてください。".into())
         }
         Provider::Bedrock if !has(vars, "AWS_ACCESS_KEY_ID") || !has(vars, "AWS_SECRET_ACCESS_KEY") => {
             Err("Bedrock の認証情報がありません。このエージェントに AWS の設定を登録してください。".into())
@@ -336,6 +336,10 @@ pub struct Turn<'a> {
     pub resume: Option<&'a str>,
     /// 追加で拒否するツール(コマンド実行やWeb検索を無効にしているときの`Bash`・`WebFetch`など)。
     pub deny: Vec<String>,
+    /// ツールを使わない単発の呼び出しか(ナレッジ整理・校正)。許可を空にし、既定のツールをすべて拒否する。
+    pub no_tools: bool,
+    /// 上限時間。`None`なら設定の「1回の指示の上限時間」。
+    pub timeout: Option<Duration>,
 }
 
 /// エラーの文面に添える標準エラーの末尾の文字数。
@@ -359,7 +363,13 @@ pub async fn run_turn(turn: Turn<'_>, cancel: &CancelToken, mut on_event: impl F
     let mounts = sandbox::mounts_for(turn.ctx, turn.knowledge_root)?;
     let mut vars = merge_env(&cfg, sandbox::env_for(turn.ctx).await?);
     check_credentials(&cfg, &vars)?;
-    vars.extend(internal_vars(&cfg, &command_policy::load(turn.knowledge_root), &turn.deny, turn.system, turn.resume)?);
+    let (cfg_for_run, deny) = if turn.no_tools {
+        let all = DEFAULT_ALLOWED_TOOLS.iter().map(|s| (*s).to_owned()).collect();
+        (LlmConfig { allowed_tools: Vec::new(), ..cfg.clone() }, [turn.deny.clone(), all].concat())
+    } else {
+        (cfg.clone(), turn.deny.clone())
+    };
+    vars.extend(internal_vars(&cfg_for_run, &command_policy::load(turn.knowledge_root), &deny, turn.system, turn.resume)?);
 
     let mut parser = LineParser::default();
     let mut session: Option<String> = None;
@@ -382,7 +392,7 @@ pub async fn run_turn(turn: Turn<'_>, cancel: &CancelToken, mut on_event: impl F
         command: CLAUDE_COMMAND,
         vars,
         input: Some(turn.prompt.to_owned()),
-        timeout: Duration::from_secs(u64::from(cfg.timeout_mins) * 60),
+        timeout: turn.timeout.unwrap_or_else(|| Duration::from_secs(u64::from(cfg.timeout_mins) * 60)),
     };
     let out = sandbox::exec(exec, cancel, |stream, text| match stream {
         Stream::Stdout => {
@@ -418,6 +428,23 @@ pub async fn run_turn(turn: Turn<'_>, cancel: &CancelToken, mut on_event: impl F
     r.timed_out = out.timed_out;
     r.cancelled = out.cancelled;
     Ok(r)
+}
+
+/// ツールを使わない単発の呼び出し(ナレッジ整理・校正)。会話のセッションは作らず、応答のテキストだけを返す。
+/// Claude Code がエラーで終えた・中断・時間切れは`Err`。
+pub async fn complete(ctx: &WorkspaceCtx, knowledge_root: &Path, system: Option<&str>, prompt: &str, timeout: Option<Duration>, cancel: &CancelToken) -> Result<String, String> {
+    let turn = Turn { ctx, knowledge_root, prompt, system: system.unwrap_or(""), resume: None, deny: Vec::new(), no_tools: true, timeout };
+    let r = run_turn(turn, cancel, |_| {}).await?;
+    if r.cancelled {
+        return Err("中断されました。".into());
+    }
+    if r.timed_out {
+        return Err("時間切れになりました。".into());
+    }
+    if r.is_error {
+        return Err(if r.text.trim().is_empty() { "Claude Code がエラーで終了しました。".into() } else { r.text });
+    }
+    Ok(r.text)
 }
 
 // ------------------------------------------------------------------ 会話との対応
@@ -466,6 +493,17 @@ mod tests {
 
     fn vars(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect()
+    }
+
+    #[test]
+    fn command_omits_allowed_tools_when_empty() {
+        // ツールなしの単発の呼び出しは許可を空にする。空のときは`--allowedTools`自体を渡さない
+        assert!(CLAUDE_COMMAND.contains(r#"${MYASSISTANT_ALLOWED_TOOLS:+--allowedTools "$MYASSISTANT_ALLOWED_TOOLS"}"#));
+        let cfg = LlmConfig { allowed_tools: Vec::new(), ..Default::default() };
+        let all: Vec<String> = DEFAULT_ALLOWED_TOOLS.iter().map(|s| (*s).to_owned()).collect();
+        let v = internal_vars(&cfg, &Policy::defaults(), &all, "sys", None).unwrap();
+        assert_eq!(v["MYASSISTANT_ALLOWED_TOOLS"], "");
+        assert!(v["MYASSISTANT_DISALLOWED_TOOLS"].contains("Bash") && v["MYASSISTANT_DISALLOWED_TOOLS"].contains("WebFetch"));
     }
 
     #[test]
@@ -621,7 +659,7 @@ mod tests {
         std::fs::write(super::super::sandbox_env::path(&ctx.dir), "ANTHROPIC_API_KEY=sk-ant-dummy-not-a-real-key-0000\n").unwrap();
         let cancel = CancelToken::default();
         let mut events = Vec::new();
-        let turn = Turn { ctx: &ctx, knowledge_root: &knowledge, prompt: "こんにちは", system: "日本語で答える。'\"$(x)", resume: None, deny: vec!["WebFetch".into()] };
+        let turn = Turn { ctx: &ctx, knowledge_root: &knowledge, prompt: "こんにちは", system: "日本語で答える。'\"$(x)", resume: None, deny: vec!["WebFetch".into()], no_tools: false, timeout: None };
         let r = run_turn(turn, &cancel, |e| events.push(e)).await.unwrap();
         assert!(r.is_error, "{r:?}");
         assert!(r.session_id.is_some(), "{r:?}");
@@ -629,7 +667,7 @@ mod tests {
         assert!(!r.text.contains("sk-ant-dummy"), "{}", r.text);
         // 続きの指示(--resume)も同じ流れで通る
         let resume = r.session_id.clone().unwrap();
-        let turn = Turn { ctx: &ctx, knowledge_root: &knowledge, prompt: "続き", system: "x", resume: Some(&resume), deny: Vec::new() };
+        let turn = Turn { ctx: &ctx, knowledge_root: &knowledge, prompt: "続き", system: "x", resume: Some(&resume), deny: Vec::new(), no_tools: false, timeout: None };
         let r2 = run_turn(turn, &cancel, |_| {}).await.unwrap();
         assert!(r2.is_error, "{r2:?}");
         sandbox::remove_agent_blocking_for_test(id);

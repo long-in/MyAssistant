@@ -8,6 +8,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use super::{
+    cancel::CancelToken,
+    sandbox, sandbox_agent,
     prompts::{self, PromptId},
     secrets::{Provider, Secrets},
     knowledge::{self, Entry},
@@ -261,19 +263,32 @@ pub async fn run_guarded(ctx: &WorkspaceCtx) -> Result<Option<BatchReport>, AppE
         let db = &ctx.db;
         let root = knowledge_root(ctx)?;
         let available = available_providers(&ctx.secrets);
+        // ワークのエージェントは、整理もコンテナ内の Claude Code で行う(アプリのモデル選択は使わない)
+        let in_sandbox = sandbox::runs_in_sandbox(&ctx.id);
         let mut ran = false;
         let mut report = BatchReport::default();
-        if !db.unprocessed(1)?.is_empty() && !available.is_empty() {
-            let target = llm_router::resolve(ctx, &effective_route(ctx, &available)?.ok_or(AppError::NoProvider)?, &available)?;
+        if !db.unprocessed(1)?.is_empty() && (in_sandbox || !available.is_empty()) {
+            let target = if in_sandbox {
+                None
+            } else {
+                Some(llm_router::resolve(ctx, &effective_route(ctx, &available)?.ok_or(AppError::NoProvider)?, &available)?)
+            };
+            let cancel = CancelToken::default();
             report = run(db, &root, |prompt| {
-                let model = target.model.clone();
+                let target = target.as_ref();
+                let (root, cancel) = (&root, &cancel);
                 async move {
                     // LLMの呼び出しの前後で削除を確かめ、削除されたエージェントへ整理結果を書かせない
                     ctx.ensure_alive()?;
-                    let msg = [ChatMessage { role: "user".into(), content: prompt }];
-                    let done = llm_client::complete(ctx, target.provider, &model, None, &msg).await?;
+                    let text = match target {
+                        Some(t) => {
+                            let msg = [ChatMessage { role: "user".into(), content: prompt }];
+                            llm_client::complete(ctx, t.provider, &t.model, None, &msg).await?.text
+                        }
+                        None => sandbox_agent::complete(ctx, root, None, &prompt, None, cancel).await.map_err(AppError::Sandbox)?,
+                    };
                     ctx.ensure_alive()?;
-                    Ok(done.text)
+                    Ok(text)
                 }
             })
             .await?;

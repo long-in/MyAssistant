@@ -12,7 +12,6 @@ import {
   LanguageSetting,
   OsNotifications,
   ProxyPanel,
-  SandboxSwitch,
   PersonalData,
   TuningPanel,
   VOICE_FIELDS,
@@ -137,7 +136,6 @@ export default function GlobalSettings() {
           </TabsContent>
 
           <TabsContent value="sandbox" className="flex flex-col gap-6">
-            <SandboxSwitch />
             <SandboxDockerfile />
           </TabsContent>
 
