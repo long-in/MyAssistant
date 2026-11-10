@@ -83,9 +83,9 @@ fn shell_access(db: &Db) -> Result<bool, AppError> {
     Ok(db.get_setting(SHELL_ACCESS_KEY)?.as_deref() != Some("0"))
 }
 
-/// サンドボックスの可否。未設定なら無効。パーソナルとリーダーでは常に無効。
+/// サンドボックスの可否(全体設定)。未設定なら無効。リーダーはコマンドを実行しないので常に無効。
 pub fn sandbox_enabled(ctx: &WorkspaceCtx) -> Result<bool, AppError> {
-    Ok(sandbox::is_agent(&ctx.id) && ctx.db.get_setting(SANDBOX_ENABLED_KEY)?.as_deref() == Some("1"))
+    Ok(sandbox::is_supported(&ctx.id) && ctx.global.get_setting(SANDBOX_ENABLED_KEY)?.as_deref() == Some("1"))
 }
 
 #[tauri::command]

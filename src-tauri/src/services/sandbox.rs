@@ -15,7 +15,7 @@ use std::{
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::Command,
@@ -30,18 +30,27 @@ use super::{
     workspace::{LEADER_ID, PERSONAL_ID, WorkspaceCtx},
 };
 
-/// 標準のDockerfile。初めて有効にしたとき、エージェントのワークスペースへコピーする。
+/// 標準のDockerfile。初めて使うとき、アプリデータの`sandbox/`へコピーする(全エージェント共通)。
 pub const TEMPLATE: &str = include_str!("../../resources/sandbox/Dockerfile");
 /// ビルドの進捗を画面へ知らせるイベント名。
 pub const BUILD_EVENT: &str = "sandbox-build-progress";
 
-const IMAGE_PREFIX: &str = "myassistant-sandbox-";
+/// 全エージェント共通のイメージ名(タグはDockerfileの内容のハッシュ)。
+const IMAGE_REPO: &str = "myassistant-sandbox";
 const CONTAINER_PREFIX: &str = "myassistant-";
 const NETWORK_PREFIX: &str = "myassistant-net-";
 const VOLUME_PREFIX: &str = "myassistant-home-";
 /// このアプリが作ったリソースの印。値はエージェントID。
 const LABEL_AGENT: &str = "myassistant.agent";
 const LABEL_IMAGE: &str = "myassistant.image";
+/// 共通イメージの印。
+const LABEL_SHARED: &str = "myassistant.shared-image";
+/// ビルド中の記録に使うキー(イメージは1つだけ)。
+const BUILD_KEY: &str = "shared";
+/// エージェント専用のDockerfileのフォルダ名(ワークスペース直下。共通の`sandbox/`とは別)。
+const AGENT_DOCKERFILE_DIR: &str = "agent-sandbox";
+/// Dockerfileの最大バイト数(画面から保存するとき)。
+const DOCKERFILE_MAX_BYTES: usize = 256 * 1024;
 const LABEL_ROOT: &str = "myassistant.root";
 
 const DOCKERFILE_DIR: &str = "sandbox";
@@ -61,6 +70,7 @@ const MASK: &str = "***";
 const BUILD_TAIL_LINES: usize = 40;
 
 static APP: OnceLock<AppHandle> = OnceLock::new();
+static APP_DIR: OnceLock<PathBuf> = OnceLock::new();
 static LOCKS: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
 static BUILD: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static BUILDING: Mutex<Option<HashSet<String>>> = Mutex::new(None);
@@ -73,13 +83,9 @@ struct Usage {
 
 // ------------------------------------------------------------------ 名前・Dockerfile
 
-/// サンドボックスを使えるのはエージェントだけ(パーソナルとリーダーは対象外)。
-pub fn is_agent(id: &str) -> bool {
-    id != PERSONAL_ID && id != LEADER_ID && !id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
-}
-
-fn short(id: &str) -> String {
-    id.chars().filter(|c| *c != '-').take(8).collect()
+/// サンドボックスを使えるのはパーソナルとワークのエージェント(リーダーはコマンドを実行しないので対象外)。
+pub fn is_supported(id: &str) -> bool {
+    id == PERSONAL_ID || (id != LEADER_ID && !id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'))
 }
 
 /// 新しいコンテナの名前。エージェントとの対応は名前ではなくラベル(`myassistant.agent`)で持ち、画面で確認できる。
@@ -96,11 +102,28 @@ fn volume_name(id: &str) -> String {
     format!("{VOLUME_PREFIX}{id}")
 }
 
-/// Dockerfileの内容から決めるイメージ名。内容が変われば別のタグになる。
-pub fn image_tag(id: &str, dockerfile: &str) -> String {
+/// Dockerfileの内容から決めるイメージ名(全エージェント共通)。内容が変われば別のタグになる。
+pub fn image_tag(dockerfile: &str) -> String {
+    format!("{IMAGE_REPO}:{}", content_hash(dockerfile))
+}
+
+/// エージェント専用のDockerfileのイメージ名。共通のイメージとは名前が違うので、登録・解除でコンテナが作り直される。
+pub fn agent_image_tag(id: &str, dockerfile: &str) -> String {
+    format!("{IMAGE_REPO}-{}:{}", short(id), content_hash(dockerfile))
+}
+
+fn content_hash(dockerfile: &str) -> String {
     let digest = Sha256::digest(normalize(dockerfile).as_bytes());
-    let hex: String = digest.iter().take(4).map(|b| format!("{b:02x}")).collect();
-    format!("{IMAGE_PREFIX}{}:{hex}", short(id))
+    digest.iter().take(4).map(|b| format!("{b:02x}")).collect()
+}
+
+fn short(id: &str) -> String {
+    id.chars().filter(|c| *c != '-').take(8).collect()
+}
+
+/// アプリデータのフォルダ。起動時(`init`)に決まる。
+pub fn app_dir() -> Result<PathBuf, String> {
+    APP_DIR.get().cloned().ok_or_else(|| "アプリデータのフォルダが未確定です。".to_owned())
 }
 
 /// 改行コードと末尾の空白だけの違いは同じ内容として扱う。
@@ -108,17 +131,18 @@ fn normalize(text: &str) -> String {
     text.replace("\r\n", "\n").trim_end().to_owned()
 }
 
-pub fn dockerfile_dir(ws_dir: &Path) -> PathBuf {
-    ws_dir.join(DOCKERFILE_DIR)
+/// 共通のDockerfileのフォルダ(ビルドの文脈)。`app_dir`はアプリデータ。
+pub fn dockerfile_dir(app_dir: &Path) -> PathBuf {
+    app_dir.join(DOCKERFILE_DIR)
 }
 
-pub fn dockerfile_path(ws_dir: &Path) -> PathBuf {
-    dockerfile_dir(ws_dir).join(DOCKERFILE_NAME)
+pub fn dockerfile_path(app_dir: &Path) -> PathBuf {
+    dockerfile_dir(app_dir).join(DOCKERFILE_NAME)
 }
 
 /// 標準のDockerfileと`.dockerignore`を、無ければ作る。既にあるファイルは上書きしない。
-pub fn ensure_template(ws_dir: &Path) -> Result<PathBuf, String> {
-    let dir = dockerfile_dir(ws_dir);
+pub fn ensure_template(app_dir: &Path) -> Result<PathBuf, String> {
+    let dir = dockerfile_dir(app_dir);
     std::fs::create_dir_all(&dir).map_err(|e| format!("sandboxフォルダを作れません: {e}"))?;
     let file = dir.join(DOCKERFILE_NAME);
     if !file.exists() {
@@ -132,10 +156,123 @@ pub fn ensure_template(ws_dir: &Path) -> Result<PathBuf, String> {
 }
 
 /// 標準のDockerfileで上書きする(利用者の編集は失われる)。
-pub fn reset_dockerfile(ws_dir: &Path) -> Result<(), String> {
-    let dir = dockerfile_dir(ws_dir);
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join(DOCKERFILE_NAME), TEMPLATE).map_err(|e| format!("Dockerfileを書き込めません: {e}"))
+pub fn reset_dockerfile(app_dir: &Path) -> Result<(), String> {
+    write_dockerfile(app_dir, TEMPLATE)
+}
+
+/// Dockerfileの内容を読む。無ければ標準を作ってから読む。
+pub fn read_dockerfile(app_dir: &Path) -> Result<String, String> {
+    let file = ensure_template(app_dir)?;
+    std::fs::read_to_string(file).map_err(|e| format!("Dockerfileを読めません: {e}"))
+}
+
+/// 画面から編集した内容を保存する。空・大きすぎる内容・NUL文字を含む内容は拒否する。
+pub fn write_dockerfile(app_dir: &Path, content: &str) -> Result<(), String> {
+    validate_dockerfile(content)?;
+    ensure_template(app_dir)?;
+    std::fs::write(dockerfile_path(app_dir), content).map_err(|e| format!("Dockerfileを書き込めません: {e}"))
+}
+
+fn validate_dockerfile(content: &str) -> Result<(), String> {
+    if content.trim().is_empty() {
+        return Err("Dockerfileが空です。".into());
+    }
+    if content.len() > DOCKERFILE_MAX_BYTES {
+        return Err(format!("Dockerfileが大きすぎます(上限{}KB)。", DOCKERFILE_MAX_BYTES / 1024));
+    }
+    if content.contains('\0') {
+        return Err("Dockerfileに使えない文字が含まれています。".into());
+    }
+    Ok(())
+}
+
+// ------------------------------------------------------------------ エージェント専用のDockerfile
+
+pub fn agent_dockerfile_dir(ws_dir: &Path) -> PathBuf {
+    ws_dir.join(AGENT_DOCKERFILE_DIR)
+}
+
+pub fn agent_dockerfile_path(ws_dir: &Path) -> PathBuf {
+    agent_dockerfile_dir(ws_dir).join(DOCKERFILE_NAME)
+}
+
+/// このエージェント専用のDockerfileが登録されているか(あれば共通より優先する)。
+pub fn agent_registered(ws_dir: &Path) -> bool {
+    agent_dockerfile_path(ws_dir).is_file()
+}
+
+/// 共通のDockerfileをコピーして、専用として登録する。登録済みなら何もしない。
+pub fn register_agent_dockerfile(app_dir: &Path, ws_dir: &Path) -> Result<(), String> {
+    if agent_registered(ws_dir) {
+        return Ok(());
+    }
+    let text = read_dockerfile(app_dir)?;
+    let dir = agent_dockerfile_dir(ws_dir);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("agent-sandboxフォルダを作れません: {e}"))?;
+    std::fs::write(dir.join(DOCKERFILE_NAME), text).map_err(|e| format!("Dockerfileを作れません: {e}"))?;
+    let _ = std::fs::write(dir.join(".dockerignore"), DOCKERIGNORE);
+    Ok(())
+}
+
+/// 専用のDockerfileの登録を解除する(ファイルを消す。以後は共通を使う)。
+pub fn unregister_agent_dockerfile(ws_dir: &Path) -> Result<(), String> {
+    match std::fs::remove_dir_all(agent_dockerfile_dir(ws_dir)) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("登録を解除できません: {e}")),
+    }
+}
+
+pub fn read_agent_dockerfile(ws_dir: &Path) -> Result<String, String> {
+    std::fs::read_to_string(agent_dockerfile_path(ws_dir)).map_err(|e| format!("Dockerfileを読めません: {e}"))
+}
+
+/// 専用のDockerfileを保存する。登録されていなければ拒否する(登録は`register_agent_dockerfile`で行う)。
+pub fn write_agent_dockerfile(ws_dir: &Path, content: &str) -> Result<(), String> {
+    validate_dockerfile(content)?;
+    if !agent_registered(ws_dir) {
+        return Err("専用のDockerfileが登録されていません。".into());
+    }
+    std::fs::write(agent_dockerfile_path(ws_dir), content).map_err(|e| format!("Dockerfileを書き込めません: {e}"))
+}
+
+/// ビルド・実行に使うイメージ。専用の登録があればそれ、なければ共通。
+#[derive(Debug, Clone)]
+pub struct ImageSpec {
+    pub tag: String,
+    /// `docker build`の文脈(Dockerfileのあるフォルダ)。
+    pub context: PathBuf,
+    /// 専用のイメージなら、持ち主のエージェントID。
+    pub agent: Option<String>,
+}
+
+impl ImageSpec {
+    /// ビルド中の記録や進捗の宛先に使うキー。
+    pub fn scope(&self) -> &str {
+        self.agent.as_deref().unwrap_or(BUILD_KEY)
+    }
+}
+
+pub fn shared_image(app_dir: &Path) -> Result<ImageSpec, String> {
+    let text = read_dockerfile(app_dir)?;
+    Ok(ImageSpec { tag: image_tag(&text), context: dockerfile_dir(app_dir), agent: None })
+}
+
+/// そのエージェントが使うイメージ。専用の登録を優先する。
+pub fn resolve_image(app_dir: &Path, id: &str, ws_dir: &Path) -> Result<ImageSpec, String> {
+    if agent_registered(ws_dir) {
+        let text = read_agent_dockerfile(ws_dir)?;
+        return Ok(ImageSpec { tag: agent_image_tag(id, &text), context: agent_dockerfile_dir(ws_dir), agent: Some(id.to_owned()) });
+    }
+    shared_image(app_dir)
+}
+
+/// `resolve_image`のタグだけ。ファイルを作らず、読めなければ`None`(状態の表示用)。
+fn peek_tag(app_dir: &Path, id: &str, ws_dir: &Path) -> Option<String> {
+    if agent_registered(ws_dir) {
+        return std::fs::read_to_string(agent_dockerfile_path(ws_dir)).ok().map(|t| agent_image_tag(id, &t));
+    }
+    std::fs::read_to_string(dockerfile_path(app_dir)).ok().map(|t| image_tag(&t))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -146,8 +283,8 @@ pub enum DockerfileState {
     Edited,
 }
 
-pub fn dockerfile_state(ws_dir: &Path) -> DockerfileState {
-    match std::fs::read_to_string(dockerfile_path(ws_dir)) {
+pub fn dockerfile_state(app_dir: &Path) -> DockerfileState {
+    match std::fs::read_to_string(dockerfile_path(app_dir)) {
         Err(_) => DockerfileState::Missing,
         Ok(t) if normalize(&t) == normalize(TEMPLATE) => DockerfileState::Template,
         Ok(_) => DockerfileState::Edited,
@@ -322,36 +459,63 @@ pub enum DockerState {
     Ready,
 }
 
+/// 共通イメージの状態(Dockerと、現在のDockerfileのイメージ)。
 #[derive(Debug, Clone, Serialize)]
-pub struct Status {
+pub struct ImageStatus {
     pub docker: DockerState,
     /// 現在のDockerfileのイメージがビルド済みか。
     pub image_ready: bool,
-    pub container_running: bool,
-    /// このエージェントのコンテナの名前(まだ作っていなければ`None`)。
-    pub container_name: Option<String>,
     pub building: bool,
 }
 
-pub async fn status(id: &str, ws_dir: &Path) -> Status {
-    let building = is_building(id);
+pub async fn image_status(app_dir: &Path) -> ImageStatus {
+    let building = is_building(BUILD_KEY);
     let Some(bin) = find_docker() else {
-        return Status { docker: DockerState::Missing, image_ready: false, container_running: false, container_name: None, building };
+        return ImageStatus { docker: DockerState::Missing, image_ready: false, building };
     };
     if !daemon_up(&bin).await {
-        return Status { docker: DockerState::Stopped, image_ready: false, container_running: false, container_name: None, building };
+        return ImageStatus { docker: DockerState::Stopped, image_ready: false, building };
     }
-    let image_ready = match std::fs::read_to_string(dockerfile_path(ws_dir)) {
-        Ok(text) => image_exists(&bin, &image_tag(id, &text)).await,
+    let image_ready = match std::fs::read_to_string(dockerfile_path(app_dir)) {
+        Ok(text) => image_exists(&bin, &image_tag(&text)).await,
         Err(_) => false,
+    };
+    ImageStatus { docker: DockerState::Ready, image_ready, building }
+}
+
+/// エージェントのコンテナと、そのエージェントが使うイメージの状態。
+#[derive(Debug, Clone, Serialize)]
+pub struct Status {
+    pub docker: DockerState,
+    pub container_running: bool,
+    /// このエージェントのコンテナの名前(まだ作っていなければ`None`)。
+    pub container_name: Option<String>,
+    /// 専用のDockerfileが登録されているか(登録があれば共通より優先)。
+    pub dockerfile_registered: bool,
+    /// このエージェントが使うイメージがビルド済みか。
+    pub image_ready: bool,
+    pub building: bool,
+}
+
+pub async fn status(id: &str, app_dir: &Path, ws_dir: &Path) -> Status {
+    let registered = agent_registered(ws_dir);
+    let building = is_building(if registered { id } else { BUILD_KEY });
+    let base = Status { docker: DockerState::Missing, container_running: false, container_name: None, dockerfile_registered: registered, image_ready: false, building };
+    let Some(bin) = find_docker() else { return base };
+    if !daemon_up(&bin).await {
+        return Status { docker: DockerState::Stopped, ..base };
+    }
+    let image_ready = match peek_tag(app_dir, id, ws_dir) {
+        Some(tag) => image_exists(&bin, &tag).await,
+        None => false,
     };
     let container = find_container(&bin, id).await;
     Status {
         docker: DockerState::Ready,
-        image_ready,
         container_running: container.as_ref().is_some_and(|c| c.running),
         container_name: container.map(|c| c.name),
-        building,
+        image_ready,
+        ..base
     }
 }
 
@@ -379,16 +543,16 @@ fn ws_lock(id: &str) -> Arc<tokio::sync::Mutex<()>> {
     map.lock().unwrap_or_else(|p| p.into_inner()).entry(id.to_owned()).or_default().clone()
 }
 
-fn is_building(id: &str) -> bool {
-    BUILDING.lock().unwrap_or_else(|p| p.into_inner()).as_ref().is_some_and(|s| s.contains(id))
+fn is_building(scope: &str) -> bool {
+    BUILDING.lock().unwrap_or_else(|p| p.into_inner()).as_ref().is_some_and(|s| s.contains(scope))
 }
 
 struct BuildingGuard(String);
 
 impl BuildingGuard {
-    fn new(id: &str) -> Self {
-        BUILDING.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert_with(Default::default).insert(id.to_owned());
-        Self(id.to_owned())
+    fn new(scope: &str) -> Self {
+        BUILDING.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert_with(Default::default).insert(scope.to_owned());
+        Self(scope.to_owned())
     }
 }
 
@@ -425,49 +589,43 @@ impl Drop for UseGuard {
 
 #[derive(Serialize, Clone)]
 struct BuildProgress<'a> {
-    workspace_id: &'a str,
+    /// `shared`(共通のイメージ)またはエージェントID(専用のイメージ)。
+    scope: &'a str,
     line: &'a str,
 }
 
-fn emit_progress(id: &str, line: &str) {
+fn emit_progress(scope: &str, line: &str) {
     if let Some(app) = APP.get() {
-        let _ = app.emit(BUILD_EVENT, BuildProgress { workspace_id: id, line });
+        let _ = app.emit(BUILD_EVENT, BuildProgress { scope, line });
     }
 }
 
-/// そのエージェントのDockerfileからイメージをビルドして、タグを返す。ビルド済みなら何もしない。
+/// `spec`のDockerfileからイメージをビルドして、タグを返す。ビルド済みなら何もしない。
 /// 進捗は`on_line`と画面のイベントへ流す。ビルドは全体で1本ずつ。
-pub async fn build_image(
-    id: &str,
-    ws_dir: &Path,
-    force: bool,
-    cancel: &CancelToken,
-    on_line: &mut impl FnMut(&str),
-) -> Result<String, String> {
-    if !is_agent(id) {
-        return Err("サンドボックスを使えるのはエージェントだけです。".into());
-    }
+pub async fn build_image(spec: &ImageSpec, force: bool, cancel: &CancelToken, on_line: &mut impl FnMut(&str)) -> Result<String, String> {
     let bin = require_docker().await?;
-    ensure_template(ws_dir)?;
-    let text = std::fs::read_to_string(dockerfile_path(ws_dir)).map_err(|e| format!("Dockerfileを読めません: {e}"))?;
-    let tag = image_tag(id, &text);
+    let tag = spec.tag.clone();
     if !force && image_exists(&bin, &tag).await {
         return Ok(tag);
     }
-    let _guard = BuildingGuard::new(id);
+    let _guard = BuildingGuard::new(spec.scope());
     let _serial = BUILD.lock().await;
     // 待っている間に別の実行がビルドを終えていることがある
     if !force && image_exists(&bin, &tag).await {
         return Ok(tag);
     }
     let mut line = |l: &str| {
-        emit_progress(id, l);
+        emit_progress(spec.scope(), l);
         on_line(l);
     };
     line(&format!("イメージをビルドします({tag})"));
     let mut cmd = docker_cmd(&bin);
-    cmd.args(["build", "--progress=plain", "-t", &tag, "--label", &format!("{LABEL_AGENT}={id}")])
-        .arg(dockerfile_dir(ws_dir))
+    let label = match &spec.agent {
+        Some(id) => format!("{LABEL_AGENT}={id}"),
+        None => format!("{LABEL_SHARED}=1"),
+    };
+    cmd.args(["build", "--progress=plain", "-t", &tag, "--label", &label])
+        .arg(&spec.context)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("docker buildを起動できませんでした: {e}"))?;
@@ -590,7 +748,8 @@ fn run_args(id: &str, name: &str, tag: &str, root: &Path) -> Vec<String> {
 }
 
 /// コンテナが使える状態(イメージが現在のもの、ナレッジが同じ、起動中)になるようにして、名前を返す。
-async fn ensure_container(bin: &Path, id: &str, tag: &str, root: &Path) -> Result<String, String> {
+async fn ensure_container(bin: &Path, id: &str, spec: &ImageSpec, root: &Path) -> Result<String, String> {
+    let tag = spec.tag.as_str();
     let lock = ws_lock(id);
     let _held = lock.lock().await;
     let root_s = root.display().to_string();
@@ -632,23 +791,29 @@ async fn ensure_container(bin: &Path, id: &str, tag: &str, root: &Path) -> Resul
         let _ = docker(bin, &["rm", "-f", &name], CLI_TIMEOUT).await;
         return Err("イメージが前提を満たしていません。Dockerfileに、ユーザー agent、sh、setsid(util-linux)が必要です。".into());
     }
-    prune_old_images(bin, id, tag).await;
+    prune_old_images(bin, id, spec).await;
     Ok(name)
 }
 
-/// 古いタグのイメージを消す(使用中のものは消えない)。
-async fn prune_old_images(bin: &Path, id: &str, keep: &str) {
-    let filter = format!("label={LABEL_AGENT}={id}");
-    let Ok(o) = docker(bin, &["images", "--filter", &filter, "--format", "{{.Repository}}:{{.Tag}}"], CLI_TIMEOUT).await else { return };
-    for tag in o.stdout.lines().map(str::trim).filter(|t| !t.is_empty() && *t != keep) {
-        let _ = docker(bin, &["rmi", tag], CLI_TIMEOUT).await;
+/// 古いタグのイメージを消す(別のエージェントのコンテナが使用中のものは消えない)。
+/// 専用のイメージを使うときは、このエージェントの古い専用イメージだけ。共通を使うときは、共通の古いタグと、このエージェントの専用イメージ(登録解除後の残り)。
+async fn prune_old_images(bin: &Path, id: &str, spec: &ImageSpec) {
+    let mut targets = vec![(format!("label={LABEL_AGENT}={id}"), spec.agent.is_some())];
+    if spec.agent.is_none() {
+        targets.push((format!("label={LABEL_SHARED}=1"), true));
+    }
+    for (filter, keep_current) in targets {
+        let Ok(o) = docker(bin, &["images", "--filter", &filter, "--format", "{{.Repository}}:{{.Tag}}"], CLI_TIMEOUT).await else { continue };
+        for tag in o.stdout.lines().map(str::trim).filter(|t| !t.is_empty() && !(keep_current && *t == spec.tag)) {
+            let _ = docker(bin, &["rmi", tag], CLI_TIMEOUT).await;
+        }
     }
 }
 
 /// コンテナを作り直す(ボリュームは残す)。
 pub async fn reset_container(id: &str) -> Result<(), String> {
-    if !is_agent(id) {
-        return Err("サンドボックスを使えるのはエージェントだけです。".into());
+    if !is_supported(id) {
+        return Err("リーダーではサンドボックスを使えません。".into());
     }
     let bin = require_docker().await?;
     let lock = ws_lock(id);
@@ -721,13 +886,14 @@ pub async fn run(
     mut on_chunk: impl FnMut(Stream, &str),
 ) -> Result<Output, String> {
     let id = req.ctx.id.as_str();
-    if !is_agent(id) {
-        return Err("サンドボックスを使えるのはエージェントだけです。".into());
+    if !is_supported(id) {
+        return Err("リーダーではサンドボックスを使えません。".into());
     }
     let vars = env_for(req.ctx).await?;
     let bin = require_docker().await?;
-    let tag = build_image(id, &req.ctx.dir, false, cancel, &mut |l| on_chunk(Stream::Stderr, &format!("[sandbox] {l}\n"))).await?;
-    let container = ensure_container(&bin, id, &tag, req.root).await?;
+    let spec = resolve_image(&app_dir()?, id, &req.ctx.dir)?;
+    build_image(&spec, false, cancel, &mut |l| on_chunk(Stream::Stderr, &format!("[sandbox] {l}\n"))).await?;
+    let container = ensure_container(&bin, id, &spec, req.root).await?;
     let _use = UseGuard::new(id);
 
     let pidfile = format!("{PIDFILE_DIR}/ma-{}.pid", uuid::Uuid::new_v4().simple());
@@ -770,6 +936,9 @@ pub async fn run(
 /// 前回のアプリが動かしたままのコンテナは、ここで止める。
 pub fn init(app: &AppHandle) {
     let _ = APP.set(app.clone());
+    if let Ok(dir) = app.path().app_data_dir() {
+        let _ = APP_DIR.set(dir);
+    }
     tauri::async_runtime::spawn(async {
         stop_all().await;
         loop {
@@ -822,10 +991,10 @@ pub async fn stop_all() {
     let _ = docker(&bin, &args, Duration::from_secs(30)).await;
 }
 
-/// エージェントのコンテナ・ボリューム・ネットワーク・イメージを消す。見つからなくても、失敗しても続ける。
+/// エージェントのコンテナ・ボリューム・ネットワーク・専用のイメージを消す(共通のイメージは残す)。見つからなくても、失敗しても続ける。
 /// 同期の関数で、別スレッドから呼ぶ(エージェントの削除は同期処理のため)。
 pub fn remove_agent_blocking(id: &str) {
-    if !is_agent(id) || cfg!(test) {
+    if !is_supported(id) || cfg!(test) {
         return;
     }
     let Some(bin) = find_docker() else { return };
@@ -851,6 +1020,7 @@ pub fn remove_agent_blocking(id: &str) {
     }
     run(&["network", "rm", &network_name(id)]);
     run(&["volume", "rm", "-f", &volume_name(id)]);
+    // 専用のイメージ(共通のイメージは残す)
     if let Ok(o) = std::process::Command::new(&bin)
         .args(["images", "-q", "--filter", &filter])
         .env("PATH", path_for(&bin))
@@ -868,7 +1038,7 @@ pub fn remove_agent_blocking(id: &str) {
 
 /// エージェントの削除時に、後始末を別スレッドで始める。
 pub fn remove_agent(id: &str) {
-    if !is_agent(id) || cfg!(test) {
+    if !is_supported(id) || cfg!(test) {
         return;
     }
     let id = id.to_owned();
@@ -882,20 +1052,62 @@ mod tests {
     const ID: &str = "0b9c3f5e-1d2a-4c6b-8e7f-123456789abc";
 
     #[test]
-    fn only_agents_use_the_sandbox() {
-        assert!(is_agent(ID));
-        assert!(!is_agent(PERSONAL_ID) && !is_agent(LEADER_ID) && !is_agent("") && !is_agent("../x"));
-        assert!(!is_agent("abc def"));
+    fn leader_and_invalid_ids_cannot_use_the_sandbox() {
+        assert!(is_supported(ID) && is_supported(PERSONAL_ID));
+        assert!(!is_supported(LEADER_ID) && !is_supported("") && !is_supported("../x"));
+        assert!(!is_supported("abc def"));
     }
 
     #[test]
-    fn image_tag_follows_the_dockerfile_content() {
-        let a = image_tag(ID, "FROM x\n");
-        assert!(a.starts_with("myassistant-sandbox-0b9c3f5e:"));
+    fn image_tag_is_shared_and_follows_the_dockerfile_content() {
+        let a = image_tag("FROM x\n");
+        assert!(a.starts_with("myassistant-sandbox:"));
         // 改行コードと末尾の空白は同じ内容として扱う
-        assert_eq!(a, image_tag(ID, "FROM x\r\n\n"));
-        assert_ne!(a, image_tag(ID, "FROM y\n"));
-        assert_ne!(a, image_tag("1111111a-1d2a-4c6b-8e7f-123456789abc", "FROM x\n"));
+        assert_eq!(a, image_tag("FROM x\r\n\n"));
+        assert_ne!(a, image_tag("FROM y\n"));
+    }
+
+    #[test]
+    fn dockerfile_can_be_written_and_is_validated() {
+        let dir = tempfile::tempdir().unwrap();
+        write_dockerfile(dir.path(), "FROM scratch\n").unwrap();
+        assert_eq!(read_dockerfile(dir.path()).unwrap(), "FROM scratch\n");
+        assert_eq!(dockerfile_state(dir.path()), DockerfileState::Edited);
+        assert!(write_dockerfile(dir.path(), "  \n").is_err());
+        assert!(write_dockerfile(dir.path(), "FROM x\0").is_err());
+        assert!(write_dockerfile(dir.path(), &"#".repeat(DOCKERFILE_MAX_BYTES + 1)).is_err());
+        // 拒否した内容では上書きしない
+        assert_eq!(read_dockerfile(dir.path()).unwrap(), "FROM scratch\n");
+    }
+
+    #[test]
+    fn agent_dockerfile_takes_priority_when_registered() {
+        let app = tempfile::tempdir().unwrap();
+        let ws = tempfile::tempdir().unwrap();
+        write_dockerfile(app.path(), "FROM shared\n").unwrap();
+        // 登録がなければ共通
+        let spec = resolve_image(app.path(), ID, ws.path()).unwrap();
+        assert!(spec.agent.is_none() && spec.tag == image_tag("FROM shared\n") && spec.context == dockerfile_dir(app.path()));
+        assert!(write_agent_dockerfile(ws.path(), "FROM x\n").is_err());
+        // 登録すると共通のコピーが専用になり、以後は専用が優先される
+        register_agent_dockerfile(app.path(), ws.path()).unwrap();
+        assert_eq!(read_agent_dockerfile(ws.path()).unwrap(), "FROM shared\n");
+        write_agent_dockerfile(ws.path(), "FROM mine\n").unwrap();
+        let spec = resolve_image(app.path(), ID, ws.path()).unwrap();
+        assert_eq!(spec.agent.as_deref(), Some(ID));
+        assert_eq!(spec.tag, agent_image_tag(ID, "FROM mine\n"));
+        assert!(spec.tag.starts_with("myassistant-sandbox-0b9c3f5e:"));
+        assert_eq!(spec.context, agent_dockerfile_dir(ws.path()));
+        // 共通を後から変えても、専用は影響を受けない。登録済みの再登録は上書きしない
+        write_dockerfile(app.path(), "FROM shared2\n").unwrap();
+        register_agent_dockerfile(app.path(), ws.path()).unwrap();
+        assert_eq!(read_agent_dockerfile(ws.path()).unwrap(), "FROM mine\n");
+        assert!(write_agent_dockerfile(ws.path(), " ").is_err());
+        // 解除すると共通へ戻る
+        unregister_agent_dockerfile(ws.path()).unwrap();
+        unregister_agent_dockerfile(ws.path()).unwrap();
+        assert!(!agent_registered(ws.path()));
+        assert!(resolve_image(app.path(), ID, ws.path()).unwrap().agent.is_none());
     }
 
     #[test]
@@ -1034,6 +1246,8 @@ mod tests {
         let id = "ffffffff-0000-4000-8000-00000000e2e1";
         let other = "ffffffff-0000-4000-8000-00000000e2e2";
         let tmp = tempfile::tempdir().unwrap();
+        // 共通のDockerfileの置き場所(アプリデータの代わり)
+        let _ = APP_DIR.set(tmp.path().join("app"));
         let mk = |agent: &str| {
             let dir = tmp.path().join(agent);
             let ctx = WorkspaceCtx::open(agent, &dir).unwrap();
@@ -1058,7 +1272,7 @@ mod tests {
         assert!(out.stdout.contains("token=***") && !out.stdout.contains("supersecretvalue123"), "{}", out.stdout);
         assert!(out.stdout.contains("/workspace") && out.stdout.contains("hi") && out.stdout.contains("agent"));
         // 画面で確認できるコンテナ名は myassistant-<ランダム>(エージェントの名前やIDは含まれない)
-        let name = status(id, &ctx.dir).await.container_name.expect("container name");
+        let name = status(id, &app_dir().unwrap(), &ctx.dir).await.container_name.expect("container name");
         assert!(name.starts_with("myassistant-") && !name.contains(id), "{name}");
         // 2. ホームの認証情報・アプリのデータは見えない。他エージェントのナレッジも見えない
         let out = run(req("ls ~/.aws /Users 2>&1; ls /workspace; env | grep -c MY_TOKEN", ctx, root), &cancel, |_, _| {}).await.unwrap();

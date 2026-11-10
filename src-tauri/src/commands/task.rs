@@ -86,7 +86,7 @@ pub async fn run_with_tools(
         tool_loop::tool_definitions(shell_access)
     };
     let (shell_access, web_access) = if leader { (false, None) } else { (shell_access, web_access) };
-    let sandbox = sandbox && shell_access && !leader && sandbox::is_agent(&ctx.id);
+    let sandbox = sandbox && shell_access && !leader && sandbox::is_supported(&ctx.id);
     if shell_access {
         let guide = if sandbox { tool_loop::SANDBOX_GUIDE.to_owned() } else { tool_loop::shell_guide() };
         system.push_str(&format!("\n\n{guide}"));

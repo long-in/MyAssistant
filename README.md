@@ -97,9 +97,9 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
     - 読み取り系以外のコマンドは、ナレッジのディレクトリ内でしか実行できません。
   - 許可・拒否・都度承認のコマンドは、設定画面の Command Policy で編集できます(実体はナレッジ内の `.my-assistant/command-policy.json`)。
 - **サンドボックス** ([sandbox.md](docs/sandbox.md))
-  - ワークのエージェントごとに、コマンドを専用の Docker コンテナで実行できます(設定画面の「権限」タブ。既定は無効)。
+  - 全体設定で有効にすると、パーソナルを含む全エージェントのコマンドを、エージェントごとの専用 Docker コンテナで実行します(既定は無効)。
   - コンテナから見えるのはそのエージェントのナレッジだけで、ほかのエージェントや `~/.aws` には届きません。
-  - エージェントごとの環境変数(`sandbox.env`)と AWS の一時キーを、実行時にだけコンテナへ渡します。Dockerfile もエージェントごとに編集できます。
+  - エージェントごとの環境変数(`sandbox.env`)と AWS の一時キーを、実行時にだけコンテナへ渡します。イメージは全エージェント共通で、Dockerfile は全体設定で編集します。エージェントごとに専用の Dockerfile を登録すると、そちらを優先します。
   - Docker が使えないときは、ホストでは実行せずエラーにします。
 
 ### スキル
@@ -223,7 +223,7 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
 - Node.js と npm
 - Rust (stable、1.90 以上)
 - Xcode Command Line Tools(whisper.cpp のビルドに C++ コンパイラと CMake が必要)
-- Docker(任意。エージェントのサンドボックスを使うときだけ。Docker Desktop や OrbStack など)
+- Docker(任意。サンドボックスを有効にするときだけ。Docker Desktop や OrbStack など)
 
 ## 開発
 

@@ -1,33 +1,27 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
-import { ask } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
-import { FileText, Loader2, RefreshCw } from "lucide-react";
+import { FileText, RefreshCw } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import {
-  SANDBOX_BUILD_EVENT,
-  type SandboxBuildProgress,
   type SandboxFiles,
   type SandboxStatus,
-  buildSandboxImage,
   getSandboxEnabled,
   getSandboxFiles,
   getSandboxStatus,
   reportError,
   resetSandbox,
-  resetSandboxDockerfile,
   revealSandboxFile,
-  setSandboxEnabled,
 } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { Heading, StatusPill } from "@/components/GlobalPanels";
+import SandboxDockerfile from "@/components/SandboxDockerfile";
 
 /**
- * エージェントごとのサンドボックス(専用のDockerコンテナでコマンドを実行する)の設定。
+ * エージェントごとのサンドボックス(専用のDockerコンテナでコマンドを実行する)の状態と、Dockerfile・環境変数の確認。
+ * 有効/無効は全体設定(`SandboxSwitch`)で切り替えるので、ここにスイッチは無い。
  * Dockerfileと環境変数(sandbox.env)はワークスペースのファイルで、ここでは状態の確認とFinderでの表示だけを行う。
  * 環境変数の値は画面へ渡されない(名前だけ表示する)。
  */
@@ -37,7 +31,6 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
   const [status, setStatus] = useState<SandboxStatus | null>(null);
   const [files, setFiles] = useState<SandboxFiles | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [log, setLog] = useState("");
 
   const refresh = useCallback(async () => {
     try {
@@ -71,27 +64,6 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
     };
   }, [enabled]);
 
-  // ビルドの進捗(このエージェントの分だけ)
-  useEffect(() => {
-    const un = listen<SandboxBuildProgress>(SANDBOX_BUILD_EVENT, (e) => {
-      if (e.payload.workspace_id === workspaceId) setLog(e.payload.line);
-    });
-    return () => {
-      un.then((f) => f());
-    };
-  }, [workspaceId]);
-
-  const change = async (next: boolean) => {
-    setEnabled(next);
-    try {
-      await setSandboxEnabled(next);
-      if (next) await refresh();
-    } catch (e) {
-      setEnabled(!next);
-      toast.error(reportError(e));
-    }
-  };
-
   const run = async (key: string, fn: () => Promise<void>, ok?: string) => {
     setBusy(key);
     try {
@@ -101,24 +73,12 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
       toast.error(reportError(e));
     } finally {
       setBusy(null);
-      setLog("");
       await refresh();
     }
   };
 
-  const confirmReset = async () => {
-    const yes = await ask(t("Dockerfile を標準の内容で上書きします。編集した内容は失われます。続行しますか?"), {
-      title: t("Dockerfile を標準に戻す"),
-      kind: "warning",
-      okLabel: t("上書きする"),
-      cancelLabel: t("キャンセル"),
-    });
-    if (yes) await run("reset-dockerfile", resetSandboxDockerfile, t("Dockerfile を標準に戻しました。"));
-  };
-
   const dockerLabel =
     status?.docker === "ready" ? t("Docker: 使えます") : status?.docker === "stopped" ? t("Docker: 停止中") : t("Docker: 未導入");
-  const building = busy === "build" || status?.building;
 
   return (
     <section className="hud-panel hud-accent flex flex-col gap-4 px-5 py-4">
@@ -130,21 +90,22 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
               <li>{t("コンテナから見えるのは、このエージェントのナレッジ(/workspace)と専用ボリュームだけです。ほかのエージェントや ~/.aws には届きません。")}</li>
               <li>{t("Dockerが使えないときは、ホストでは実行せずエラーにします。")}</li>
               <li>{t("コマンドはLinux(Debian)上で動きます。brew や open などmacOS向けのコマンドは使えません。")}</li>
-              <li>{t("Dockerfile と sandbox.env はこのエージェントのフォルダにあり、編集できます。")}</li>
+              <li>{t("sandbox.env はこのエージェントのフォルダにあり、編集できます。")}</li>
             </ul>
           </Heading>
           <p className="text-xs text-muted-foreground">
-            {t("コマンドをこのエージェント専用のDockerコンテナで実行します(認証情報の分離用)。")}
+            {enabled
+              ? t("有効です。このエージェントのコマンドは専用のDockerコンテナで実行されます。切り替えは全体設定で行います。")
+              : t("無効です。コマンドはホストで実行されます。切り替えは全体設定で行います。")}
           </p>
         </div>
-        <Switch checked={enabled ?? false} disabled={enabled === null} onCheckedChange={change} aria-label={t("サンドボックス")} />
+        <StatusPill on={!!enabled}>{enabled ? t("オン") : t("オフ")}</StatusPill>
       </div>
 
       {enabled && (
         <div className="flex flex-col gap-4 border-t pt-4">
           <div className="flex flex-wrap items-center gap-2">
             <StatusPill on={status?.docker === "ready"}>{dockerLabel}</StatusPill>
-            <StatusPill on={!!status?.image_ready}>{building ? t("イメージ: ビルド中") : status?.image_ready ? t("イメージ: 準備済み") : t("イメージ: 未ビルド")}</StatusPill>
             <StatusPill on={!!status?.container_running}>{status?.container_running ? t("コンテナ: 実行中") : t("コンテナ: 停止")}</StatusPill>
             <Button size="icon-sm" variant="ghost" onClick={() => void refresh()} aria-label={t("状態を更新")}>
               <RefreshCw className="size-3.5" />
@@ -162,42 +123,18 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
             <p className="text-xs text-muted-foreground">{t("Dockerに接続できません。Docker Desktop などを起動してください。")}</p>
           )}
 
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="hud-label">Dockerfile</span>
-              <Badge variant="outline">
-                {files?.dockerfile === "edited" ? t("編集済み") : files?.dockerfile === "template" ? t("標準") : t("未作成")}
-              </Badge>
-              <Button size="sm" variant="outline" onClick={() => run("reveal-dockerfile", () => revealSandboxFile("dockerfile"))}>
-                <FileText className="size-3.5" />
-                {t("ファイルを表示")}
-              </Button>
-              <Button size="sm" variant="outline" disabled={files?.dockerfile !== "edited"} onClick={confirmReset}>
-                {t("標準に戻す")}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={status?.docker !== "ready" || !!busy || status?.building}
-                onClick={() => run("build", () => buildSandboxImage(false), t("イメージを準備しました。"))}
-              >
-                {building ? <Loader2 className="size-3.5 animate-spin" /> : null}
-                {t("イメージをビルド")}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={status?.docker !== "ready" || !!busy}
-                onClick={() => run("reset", resetSandbox, t("コンテナを作り直します(次のコマンドで作成されます)。"))}
-              >
-                {t("コンテナを作り直す")}
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {t("Dockerfile を保存すると、次のコマンド実行時に自動で再ビルドされます。")}
-            </p>
-            {building && log && <p className="truncate font-mono text-[0.7rem] text-muted-foreground">{log}</p>}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={status?.docker !== "ready" || !!busy}
+              onClick={() => run("reset", resetSandbox, t("コンテナを作り直します(次のコマンドで作成されます)。"))}
+            >
+              {t("コンテナを作り直す")}
+            </Button>
           </div>
+
+          <SandboxDockerfile key={workspaceId} agent={{ id: workspaceId }} embedded />
 
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2">

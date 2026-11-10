@@ -302,17 +302,11 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_flag_is_transferred_and_validated() {
+    fn sandbox_flag_is_global_and_not_exported() {
         let (_da, a) = mem();
-        a.set_setting(chat::SANDBOX_ENABLED_KEY, "1").unwrap();
-        let text = serde_json::to_string(&collect(&a, Policy::defaults(), "t".into()).unwrap()).unwrap();
-        let (_db, b) = mem();
-        apply(&b, &parse(&text).unwrap()).unwrap();
-        assert_eq!(b.get_setting(chat::SANDBOX_ENABLED_KEY).unwrap().as_deref(), Some("1"));
-        // 不正な値は何も変えずに拒否する
-        let (_dc, c) = mem();
-        assert!(apply(&c, &file(&[(chat::SANDBOX_ENABLED_KEY, "yes")])).is_err());
-        assert_eq!(c.get_setting(chat::SANDBOX_ENABLED_KEY).unwrap(), None);
+        a.set_legacy_setting(chat::SANDBOX_ENABLED_KEY, "1");
+        let exported = collect(&a, Policy::defaults(), "t".into()).unwrap();
+        assert!(!exported.settings.contains_key(chat::SANDBOX_ENABLED_KEY));
     }
 
     #[test]

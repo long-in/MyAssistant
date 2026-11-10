@@ -62,7 +62,6 @@ pub const ALL: &[Setting] = &[
     agent(chat::ROUTE_KEY, Some(Kind::Json)),
     agent(chat::WEB_ACCESS_KEY, Some(Kind::Flag)),
     agent(chat::SHELL_ACCESS_KEY, Some(Kind::Flag)),
-    agent(chat::SANDBOX_ENABLED_KEY, Some(Kind::Flag)),
     agent(voice::STT_ENGINE_KEY, Some(Kind::OneOf(&["local", "google", "aqua"]))),
     agent(voice::STT_LANGUAGE_KEY, Some(Kind::Text)),
     agent(voice::TTS_ENGINE_KEY, Some(Kind::OneOf(&["google", "voicevox"]))),
@@ -92,6 +91,8 @@ pub const ALL: &[Setting] = &[
     // ---- 全体設定 ----
     global(chat::BASE_INSTRUCTIONS_KEY, Some(Kind::Text)),
     global(global_settings::OS_NOTIFICATIONS_KEY, Some(Kind::Flag)),
+    // コマンドをDockerコンテナで実行するか。全エージェント共通
+    global(chat::SANDBOX_ENABLED_KEY, Some(Kind::Flag)),
     global(global_settings::LANGUAGE_KEY, Some(Kind::OneOf(&["ja", "en"]))),
     global(tuning::VOICE_KEY, Some(Kind::Json)),
     global(wake::ENABLED_KEY, Some(Kind::Flag)),

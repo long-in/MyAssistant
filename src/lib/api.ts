@@ -279,17 +279,32 @@ export const setSandboxEnabled = (enabled: boolean) => invoke<void>("set_sandbox
 export type DockerState = "missing" | "stopped" | "ready";
 export type SandboxStatus = {
   docker: DockerState;
-  /** 現在のDockerfileのイメージがビルド済みか。 */
-  image_ready: boolean;
   container_running: boolean;
   /** このエージェントのコンテナの名前(`myassistant-<ランダム>`)。まだ作っていなければ null。 */
   container_name: string | null;
+  /** 専用のDockerfileが登録されているか(あれば共通より優先)。 */
+  dockerfile_registered: boolean;
+  /** このエージェントが使うイメージがビルド済みか。 */
+  image_ready: boolean;
   building: boolean;
 };
 export const getSandboxStatus = () => invoke<SandboxStatus>("get_sandbox_status");
 
+/** 全エージェント共通のイメージの状態。 */
+export type SandboxImageStatus = {
+  docker: DockerState;
+  /** 現在のDockerfileのイメージがビルド済みか。 */
+  image_ready: boolean;
+  building: boolean;
+};
+export const getSandboxImageStatus = () => invoke<SandboxImageStatus>("get_sandbox_image_status");
+
+export type DockerfileState = "missing" | "template" | "edited";
+/** 全エージェント共通のDockerfile。 */
+export const getSandboxDockerfile = () => invoke<{ content: string; state: DockerfileState }>("get_sandbox_dockerfile");
+export const setSandboxDockerfile = (content: string) => invoke<DockerfileState>("set_sandbox_dockerfile", { content });
+
 export type SandboxFiles = {
-  dockerfile: "missing" | "template" | "edited";
   /** 環境変数ファイルの名前と検証結果。値は含まれない。 */
   env: { names: string[]; error: { line: number | null; message: string } | null };
 };
@@ -298,13 +313,23 @@ export const getSandboxFiles = () => invoke<SandboxFiles>("get_sandbox_files");
 /** イメージをビルドする。進捗は`SANDBOX_BUILD_EVENT`で流れる。`force`ならビルド済みでも作り直す。 */
 export const buildSandboxImage = (force: boolean) => invoke<void>("build_sandbox_image", { force });
 export const SANDBOX_BUILD_EVENT = "sandbox-build-progress";
-export type SandboxBuildProgress = { workspace_id: string; line: string };
-/** コンテナを作り直す(専用ボリュームは残る)。 */
+/** `scope`は`shared`(共通のイメージ)またはエージェントID(専用のイメージ)。 */
+export type SandboxBuildProgress = { scope: string; line: string };
+/** このエージェントのコンテナを作り直す(専用ボリュームは残る)。 */
 export const resetSandbox = () => invoke<void>("reset_sandbox");
 /** Dockerfileを標準の内容で上書きする。 */
 export const resetSandboxDockerfile = () => invoke<void>("reset_sandbox_dockerfile");
+/** このエージェントのDockerfile。専用の登録があればその内容、なければ共通の内容(読み取り専用)。登録があれば共通より優先する。 */
+export const getAgentSandboxDockerfile = () => invoke<{ registered: boolean; content: string }>("get_agent_sandbox_dockerfile");
+/** 共通のDockerfileをコピーして、専用として登録する。 */
+export const registerAgentSandboxDockerfile = () => invoke<void>("register_agent_sandbox_dockerfile");
+export const setAgentSandboxDockerfile = (content: string) => invoke<void>("set_agent_sandbox_dockerfile", { content });
+/** 専用の登録を解除する(以後は共通を使う)。 */
+export const unregisterAgentSandboxDockerfile = () => invoke<void>("unregister_agent_sandbox_dockerfile");
+/** このエージェントが使うイメージ(専用の登録があれば専用)をビルドする。 */
+export const buildAgentSandboxImage = (force: boolean) => invoke<void>("build_agent_sandbox_image", { force });
 /** Finderでファイルを選択して開く。 */
-export const revealSandboxFile = (kind: "env" | "dockerfile") => invoke<void>("reveal_sandbox_file", { kind });
+export const revealSandboxFile = (kind: "env" | "dockerfile" | "agent_dockerfile") => invoke<void>("reveal_sandbox_file", { kind });
 
 /** コマンド権限。各項目は`git status`のようなコマンド名と引数の接頭辞。 */
 export type CommandPolicy = {

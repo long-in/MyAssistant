@@ -3,7 +3,7 @@
 //! - バックアップは1つのzipにまとめる。パスワードを指定すると、すべてのファイル(manifestを含む)をAES-256で暗号化する(ファイル名は見える)。中身は`manifest.json`(ファイルごとのSHA-256つき)と、次の3種類。
 //!   - `shared/`: エージェント一覧・全体設定・削除済みエージェントから残したナレッジ
 //!   - `ws/<id>/timeline.db`: `VACUUM INTO`で取った一貫したスナップショット(稼働中のDBを生コピーしない)
-//!   - `ws/<id>/`のそのほか: `secrets.json`(APIキー。平文のまま)・`sandbox.env`(サンドボックスの環境変数。平文のまま)・`sandbox/`(Dockerfile)・読み上げ辞書・ナレッジ(保存先がアプリデータの外でも含める)
+//!   - `ws/<id>/`のそのほか: `secrets.json`(APIキー。平文のまま)・`sandbox.env`(サンドボックスの環境変数。平文のまま)・`sandbox/`(共通のDockerfile)・`agent-sandbox/`(エージェント専用のDockerfile)・読み上げ辞書・ナレッジ(保存先がアプリデータの外でも含める)
 //! - Whisper・VOICEVOX・固定音声などの再取得できるものは含めない。
 //! - リストアは2段階。`prepare`がzipを検証しながら展開し(何も差し替えない)、確認後に再起動して、
 //!   次回起動のDBを開く前に`apply_pending`が現在のデータを`restore-backup-<日時>/`へ退避して差し替える。
@@ -40,6 +40,7 @@ const SECRETS_FILE: &str = "secrets.json";
 /// サンドボックスの環境変数ファイル(平文)と、Dockerfileなどを置くフォルダ。エージェントだけが持つ。
 const SANDBOX_ENV_FILE: &str = sandbox_env::FILE_NAME;
 const SANDBOX_DIR: &str = "sandbox";
+const AGENT_SANDBOX_DIR: &str = "agent-sandbox";
 const GLOBAL_FILE: &str = "global_settings.json";
 const KNOWLEDGE_DIR: &str = "knowledge";
 /// 展開先。リストアの確認が済むまで、ここから外へは何も出さない。
@@ -140,7 +141,7 @@ fn entry_allowed(name: &str, ids: &[String]) -> bool {
         ["shared", f] => *f == REGISTRY_FILE || *f == GLOBAL_FILE,
         ["shared", k, _, ..] => *k == KEPT_DIR_NAME,
         ["ws", id, f] => ids.iter().any(|i| i == id) && [DB_FILE, SECRETS_FILE, DICTIONARY_FILE, SANDBOX_ENV_FILE].contains(f),
-        ["ws", id, k, _, ..] => ids.iter().any(|i| i == id) && (*k == KNOWLEDGE_DIR || *k == SANDBOX_DIR),
+        ["ws", id, k, _, ..] => ids.iter().any(|i| i == id) && (*k == KNOWLEDGE_DIR || *k == SANDBOX_DIR || *k == AGENT_SANDBOX_DIR),
         _ => false,
     }
 }
@@ -282,6 +283,8 @@ fn create_inner(root: &Path, dest: &Path, part: &Path, work: &Path, now: String,
         }
         // サンドボックスのDockerfileなど(ビルドの文脈。環境変数ファイルは含まれない)
         p.add_tree(&format!("ws/{id}/{SANDBOX_DIR}"), &dir.join(SANDBOX_DIR))?;
+        // エージェント専用のDockerfile(登録があるときだけ)
+        p.add_tree(&format!("ws/{id}/{AGENT_SANDBOX_DIR}"), &dir.join(AGENT_SANDBOX_DIR))?;
         let knowledge = custom.as_deref().map(PathBuf::from).unwrap_or_else(|| dir.join(KNOWLEDGE_DIR));
         // アプリデータごと含んでしまう保存先(モデル等まで入る)は取り込まない
         let encloses_root = knowledge.canonicalize().is_ok_and(|k| root_canon.starts_with(&k));
@@ -528,7 +531,7 @@ fn swap(
         let from_dir = stage.join("ws").join(&w.id);
         let dir = workspace_dir(root, &w.id);
         std::fs::create_dir_all(&dir).map_err(io)?;
-        for name in [DB_FILE, SECRETS_FILE, DICTIONARY_FILE, SANDBOX_ENV_FILE, SANDBOX_DIR, KNOWLEDGE_DIR] {
+        for name in [DB_FILE, SECRETS_FILE, DICTIONARY_FILE, SANDBOX_ENV_FILE, SANDBOX_DIR, AGENT_SANDBOX_DIR, KNOWLEDGE_DIR] {
             let from = from_dir.join(name);
             if exists(&from) {
                 move_to(&from, &dir.join(name))?;

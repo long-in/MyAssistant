@@ -1485,7 +1485,7 @@ export default function Setup() {
             <TabsContent value="access" className="flex flex-col gap-6">
               <WebAccess />
               <ShellAccess />
-              {active.id !== PERSONAL_ID && <SandboxPanel key={active.id} workspaceId={active.id} />}
+              <SandboxPanel key={active.id} workspaceId={active.id} />
               <CommandPolicyEditor />
             </TabsContent>
           )}

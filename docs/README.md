@@ -20,7 +20,7 @@
 | [agent-file-tools.md](agent-file-tools.md) | ファイル操作・インターネット検索のツール |
 | [agent-command-tasks.md](agent-command-tasks.md) | 作業依頼(計画の承認とコマンド実行) |
 | [command-policy.md](command-policy.md) | コマンドの許可・拒否の判定とポリシーファイル |
-| [sandbox.md](sandbox.md) | エージェント別の Docker サンドボックス(Dockerfile・環境変数・分離・後始末) |
+| [sandbox.md](sandbox.md) | Docker サンドボックス(全エージェント共通のイメージと Dockerfile・環境変数・分離・後始末) |
 | [data-and-settings.md](data-and-settings.md) | 保存データ、設定項目、調整値、設定のエクスポート・インポート |
 | [backup.md](backup.md) | アプリ全体のバックアップとリストア(zip の中身、検証、再起動時の差し替え) |
 | [workspace.md](workspace.md) | パーソナルとワークのエージェント、保存場所、切り替え、未対応事項 |

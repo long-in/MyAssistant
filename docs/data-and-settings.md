@@ -19,8 +19,9 @@
 | `tts_dictionary.json` | 読み上げ辞書(ユーザー登録分) |
 | `workspaces/registry.json` | ワークのエージェント一覧(id・名称・イメージカラー・作成日時) |
 | `workspaces/<UUID>/` | エージェントのデータ。`timeline.db`・`secrets.json`・`knowledge/`・`tts_dictionary.json` をパーソナルと同じ名前で持つ |
-| `workspaces/<UUID>/sandbox.env` | サンドボックスの環境変数(dotenv 形式。**平文**、権限 0600)。エージェントだけ([sandbox.md](sandbox.md)) |
-| `workspaces/<UUID>/sandbox/` | サンドボックスの `Dockerfile` と `.dockerignore`(Docker のビルドの文脈)。エージェントだけ |
+| `workspaces/<UUID>/sandbox.env` | サンドボックスの環境変数(dotenv 形式。**平文**、権限 0600)。パーソナルはアプリデータ直下の `sandbox.env`([sandbox.md](sandbox.md)) |
+| `sandbox/` | 全エージェント共通の `Dockerfile` と `.dockerignore`(Docker のビルドの文脈)。アプリデータ直下 |
+| `workspaces/<UUID>/agent-sandbox/` | そのエージェント専用の `Dockerfile`(登録したときだけ。共通より優先)。パーソナルはアプリデータ直下の `agent-sandbox/` |
 
 旧名(識別子 `dev.longin.tachicoma-agent`)のフォルダがあり新しいフォルダが無ければ、起動時に丸ごと改名して引き継ぐ(`services/legacy_data.rs`)。ナレッジ内の旧 `.tachicoma/` もコマンド権限の読み書き時に `.my-assistant/` へ改名する。旧名の設定ファイルも取り込める。
 
@@ -109,7 +110,7 @@ erDiagram
 | `routing` | `Route`(JSON) | Claude が使えれば Sonnet | 対話画面のモデル選択 |
 | `web_access` | `0` / `1` | 有効 | Web Search |
 | `shell_access` | `0` / `1` | 有効 | Command Tasks |
-| `sandbox_enabled` | `0` / `1` | 無効(エージェントのみ) | Sandbox |
+| `sandbox_enabled` | `0` / `1` | 無効 | 全体設定の Sandbox(全体設定のため、設定の書き出し・コピーの対象外) |
 | `stt_engine` | `local` / `google` / `aqua` | `local` | Voice Link |
 | `stt_language` | `auto` / `ja` / `en` / `zh` / `ko` | `auto` | Voice Link |
 | `tts_engine` | `google` / `voicevox` | `voicevox` | Voice Link |
@@ -159,7 +160,7 @@ erDiagram
 
 ### 対象
 
-- `app_settings` のうち、キーの一覧(`settings_registry`)で書き出しの対象にした**設定項目**(`routing`・`web_access`・`shell_access`・`sandbox_enabled`・`stt_engine`・`stt_language`・`tts_engine`・`voicevox_style`・`tuning`・`batch_route`・`proofread_route`・`debug_mode`。全体設定の項目は含まない)と、**コマンド権限**(`command-policy.json`)。
+- `app_settings` のうち、キーの一覧(`settings_registry`)で書き出しの対象にした**設定項目**(`routing`・`web_access`・`shell_access`・`stt_engine`・`stt_language`・`tts_engine`・`voicevox_style`・`tuning`・`batch_route`・`proofread_route`・`debug_mode`。全体設定の項目は含まない)と、**コマンド権限**(`command-policy.json`)。
 - **含まない**: API キー、エージェントデータ(`agent_data`)、端末ごとに異なるナレッジ・デバッグログの保存先(`knowledge_dir` / `debug_log_dir`)、取得する配布物の版(`whisper_revision` / `voicevox_versions`)、リーダーの設定、会話ごとの要約、会話の履歴。
 - 全体設定の項目(ベースプロンプト・パーソナルデータ・起動ワード・音声入力の待ち時間・ナレッジ整理の間隔・表示言語・OS通知)は含まない。全体設定には別のエクスポート/インポートがある([global-settings.md](global-settings.md))。
 - 書き出し・取り込みの対象は、選択中のワークスペースの設定。ワークスペース間で設定を写すには、各エージェントの設定の「その他」にある設定のコピーを使う([workspace.md](workspace.md))。

@@ -13,6 +13,7 @@ import {
   LanguageSetting,
   OsNotifications,
   ProxyPanel,
+  SandboxSwitch,
   PersonalData,
   TuningPanel,
   VOICE_FIELDS,
@@ -37,6 +38,7 @@ import {
 } from "@/lib/api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useT } from "@/lib/i18n";
+import SandboxDockerfile from "@/components/SandboxDockerfile";
 
 /** 全体設定。全エージェント(パーソナルを含む)で共通の項目を管理する。各エージェントからは上書きできない。 */
 export default function GlobalSettings() {
@@ -138,6 +140,8 @@ export default function GlobalSettings() {
             <BatchInterval />
             <LanguageSetting />
             <OsNotifications />
+            <SandboxSwitch />
+            <SandboxDockerfile />
             <ProxyPanel />
             <GlobalBackup />
             <AppBackup />
