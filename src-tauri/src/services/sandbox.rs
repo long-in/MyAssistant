@@ -126,6 +126,12 @@ fn short(id: &str) -> String {
     id.chars().filter(|c| *c != '-').take(8).collect()
 }
 
+/// テストで、アプリデータの代わりのフォルダを指定する(最初の1回だけ有効)。
+#[cfg(test)]
+pub fn set_app_dir_for_test(dir: &Path) {
+    let _ = APP_DIR.set(dir.to_owned());
+}
+
 /// アプリデータのフォルダ。起動時(`init`)に決まる。
 pub fn app_dir() -> Result<PathBuf, String> {
     APP_DIR.get().cloned().ok_or_else(|| "アプリデータのフォルダが未確定です。".to_owned())
@@ -934,9 +940,13 @@ const KILL: &str = r#"p=$(cat "$1" 2>/dev/null); if [ -n "$p" ]; then kill -KILL
 /// 実行の仕組みが渡す固定の環境変数(秘密ではないので引数に書く)。
 const FIXED_ENV: [&str; 5] = ["TERM=dumb", "NO_COLOR=1", "PAGER=cat", "GIT_PAGER=cat", "GIT_TERMINAL_PROMPT=0"];
 
-/// `docker exec`の引数。環境変数は名前だけを渡し、値はdocker CLIの環境から読ませる。
-fn exec_args(container: &str, cwd: &str, command: &str, pidfile: &str, env_names: &[String]) -> Vec<String> {
-    let mut a: Vec<String> = vec!["exec".into(), "-w".into(), cwd.into()];
+/// `docker exec`の引数。環境変数は名前だけを渡し、値はdocker CLIの環境から読ませる。`stdin`なら標準入力をつなぐ(`-i`)。
+fn exec_args(container: &str, cwd: &str, command: &str, pidfile: &str, env_names: &[String], stdin: bool) -> Vec<String> {
+    let mut a: Vec<String> = vec!["exec".into()];
+    if stdin {
+        a.push("-i".into());
+    }
+    a.extend(["-w".into(), cwd.into()]);
     for e in FIXED_ENV {
         a.push("-e".into());
         a.push(e.into());
@@ -977,25 +987,44 @@ pub(crate) async fn env_for(ctx: &WorkspaceCtx) -> Result<BTreeMap<String, Strin
     Ok(vars)
 }
 
-/// 伏せる値。リージョンや、アプリが決めるモデル名のように秘密でない値は除く。
+/// 伏せる値。リージョンや、アプリが決めるモデル名・内部の値(`MYASSISTANT_`)のように秘密でない値は除く。
 fn secret_values(vars: &BTreeMap<String, String>) -> Vec<String> {
     vars.iter()
-        .filter(|(k, _)| !k.ends_with("REGION") && !sandbox_agent::NON_SECRET_NAMES.contains(&k.as_str()))
+        .filter(|(k, _)| !k.ends_with("REGION") && !k.starts_with("MYASSISTANT_") && !sandbox_agent::NON_SECRET_NAMES.contains(&k.as_str()))
         .map(|(_, v)| v.clone())
         .collect()
 }
 
 /// コマンドをそのエージェントのコンテナで実行する。`shell::run`と同じ`Output`を返す。
-pub async fn run(
-    req: Request<'_>,
-    cancel: &CancelToken,
-    mut on_chunk: impl FnMut(Stream, &str),
-) -> Result<Output, String> {
+pub async fn run(req: Request<'_>, cancel: &CancelToken, on_chunk: impl FnMut(Stream, &str)) -> Result<Output, String> {
+    if !is_supported(&req.ctx.id) {
+        return Err("リーダーではサンドボックスを使えません。".into());
+    }
+    let vars = env_for(req.ctx).await?;
+    exec(Exec { ctx: req.ctx, mounts: req.mounts, cwd: req.cwd, command: req.command, vars, input: None, timeout: req.timeout }, cancel, on_chunk).await
+}
+
+/// コンテナでの1回の実行。`vars`は渡す環境変数のすべて(名前だけを引数に書き、値はdocker CLIの環境で渡す)。
+pub struct Exec<'a> {
+    pub ctx: &'a WorkspaceCtx,
+    pub mounts: &'a Mounts,
+    /// コンテナ内の作業ディレクトリ。
+    pub cwd: &'a str,
+    /// `sh -c`で実行する文字列。可変の値は埋め込まず、`vars`の環境変数で渡して参照する。
+    pub command: &'a str,
+    pub vars: BTreeMap<String, String>,
+    /// 標準入力へ書き込む内容(無ければ標準入力は閉じる)。
+    pub input: Option<String>,
+    pub timeout: Duration,
+}
+
+/// イメージとコンテナを用意して、`docker exec`で実行する。出力は伏せ字にしてから`on_chunk`へ渡し、終了後にまとめて返す。
+/// 時間切れ・中断・通常の終了のたびに、コンテナ内のプロセスグループごと止める。
+pub async fn exec(req: Exec<'_>, cancel: &CancelToken, mut on_chunk: impl FnMut(Stream, &str)) -> Result<Output, String> {
     let id = req.ctx.id.as_str();
     if !is_supported(id) {
         return Err("リーダーではサンドボックスを使えません。".into());
     }
-    let vars = env_for(req.ctx).await?;
     let bin = require_docker().await?;
     let spec = resolve_image(&app_dir()?, id, &req.ctx.dir)?;
     build_image(&spec, false, cancel, &mut |l| on_chunk(Stream::Stderr, &format!("[sandbox] {l}\n"))).await?;
@@ -1003,16 +1032,17 @@ pub async fn run(
     let _use = UseGuard::new(id);
 
     let pidfile = format!("{PIDFILE_DIR}/ma-{}.pid", uuid::Uuid::new_v4().simple());
-    let names: Vec<String> = vars.keys().cloned().collect();
+    let names: Vec<String> = req.vars.keys().cloned().collect();
     let mut cmd = docker_cmd(&bin);
-    cmd.args(exec_args(&container, req.cwd, req.command, &pidfile, &names));
-    for (k, v) in &vars {
+    cmd.args(exec_args(&container, req.cwd, req.command, &pidfile, &names, req.input.is_some()));
+    for (k, v) in &req.vars {
         cmd.env(k, v);
     }
 
-    let values = secret_values(&vars);
+    let values = secret_values(&req.vars);
     let (mut out_mask, mut err_mask) = (Masker::new(&values), Masker::new(&values));
-    let result = shell::run_prepared(cmd, req.timeout, cancel, |stream, text| {
+    let input = req.input.map(String::into_bytes);
+    let result = shell::run_prepared_with_input(cmd, input, req.timeout, cancel, |stream, text| {
         let masked = match stream {
             Stream::Stdout => out_mask.push(text),
             Stream::Stderr => err_mask.push(text),
@@ -1149,6 +1179,20 @@ pub fn remove_agent(id: &str) {
     }
     let id = id.to_owned();
     std::thread::spawn(move || remove_agent_blocking(&id));
+}
+
+#[cfg(test)]
+/// `remove_agent_blocking`は単体テストでは何もしないので、同じ処理を実Dockerで行う。
+pub fn remove_agent_blocking_for_test(id: &str) {
+    let bin = find_docker().unwrap();
+    let filter = format!("label={LABEL_AGENT}={id}");
+    let ps = std::process::Command::new(&bin).args(["ps", "-aq", "--filter", &filter]).output().unwrap();
+    for container in String::from_utf8_lossy(&ps.stdout).split_whitespace() {
+        let _ = std::process::Command::new(&bin).args(["rm", "-f", container]).status();
+    }
+    for args in [vec!["network", "rm", &network_name(id)], vec!["volume", "rm", "-f", &volume_name(id)]] {
+        let _ = std::process::Command::new(&bin).args(args).status();
+    }
 }
 
 #[cfg(test)]
@@ -1335,12 +1379,15 @@ mod tests {
     #[test]
     fn exec_args_carry_names_never_values() {
         let names = vec!["MY_TOKEN".to_owned(), "AWS_SECRET_ACCESS_KEY".to_owned()];
-        let a = exec_args("c1", "/workspace/x", "echo hi", "/tmp/ma-1.pid", &names);
+        let a = exec_args("c1", "/workspace/x", "echo hi", "/tmp/ma-1.pid", &names, false);
         let joined = a.join(" ");
         assert!(joined.contains("-e MY_TOKEN") && joined.contains("-e AWS_SECRET_ACCESS_KEY"));
         assert!(!a.iter().any(|s| s.contains("MY_TOKEN=")));
         assert_eq!(a.last().unwrap(), "echo hi");
         assert_eq!(a[1..3], ["-w".to_owned(), "/workspace/x".to_owned()]);
+        // 標準入力をつなぐときだけ -i を付ける
+        let b = exec_args("c1", "/workspace/x", "cat", "/tmp/ma-1.pid", &[], true);
+        assert_eq!(b[1..4], ["-i".to_owned(), "-w".to_owned(), "/workspace/x".to_owned()]);
     }
 
     #[test]
@@ -1476,16 +1523,4 @@ mod tests {
         remove_agent_blocking_for_test(other);
     }
 
-    /// `remove_agent_blocking`は単体テストでは何もしないので、同じ処理を実Dockerで行う。
-    fn remove_agent_blocking_for_test(id: &str) {
-        let bin = find_docker().unwrap();
-        let filter = format!("label={LABEL_AGENT}={id}");
-        let ps = std::process::Command::new(&bin).args(["ps", "-aq", "--filter", &filter]).output().unwrap();
-        for container in String::from_utf8_lossy(&ps.stdout).split_whitespace() {
-            let _ = std::process::Command::new(&bin).args(["rm", "-f", container]).status();
-        }
-        for args in [vec!["network", "rm", &network_name(id)], vec!["volume", "rm", "-f", &volume_name(id)]] {
-            let _ = std::process::Command::new(&bin).args(args).status();
-        }
-    }
 }
