@@ -18,6 +18,9 @@ export default function ChatNotices({
   voiceReply,
   needModel,
   needSandbox,
+  containerStartable,
+  containerBusy,
+  onStartContainer,
   downloading,
   progress,
   onDownload,
@@ -29,6 +32,10 @@ export default function ChatNotices({
   needModel: boolean;
   /** サンドボックスのコンテナが起動していない(イメージのビルドとコンテナの起動が必要)。 */
   needSandbox: boolean;
+  /** イメージがビルド済みで、ここからコンテナを起動できる。 */
+  containerStartable: boolean;
+  containerBusy: boolean;
+  onStartContainer: () => void;
   downloading: boolean;
   progress: DownloadProgress | null;
   onDownload: () => void;
@@ -56,6 +63,14 @@ export default function ChatNotices({
           text={`${t("サンドボックスの準備ができていません")}。${t("チャットを使うには、Sandbox 設定でイメージのビルドとコンテナの起動を行ってください。")}`}
           action={t("Sandbox 設定を開く")}
           onAction={openSandbox}
+          extra={
+            containerStartable ? (
+              <Button size="sm" disabled={containerBusy} onClick={onStartContainer}>
+                {containerBusy && <Loader2 className="size-3.5 animate-spin" />}
+                {t("コンテナを起動")}
+              </Button>
+            ) : undefined
+          }
         />
       )}
       {needModel && (
@@ -74,13 +89,16 @@ export default function ChatNotices({
   );
 }
 
-function Notice({ text, action, onAction }: { text: string; action: string; onAction: () => void }) {
+function Notice({ text, action, onAction, extra }: { text: string; action: string; onAction: () => void; extra?: React.ReactNode }) {
   return (
     <div className="hud-panel hud-warn hud-accent flex items-center justify-between gap-3 px-5 py-3 text-sm" role="status">
       <span>{text}</span>
-      <Button size="sm" variant="outline" onClick={onAction}>
-        {action}
-      </Button>
+      <div className="flex shrink-0 gap-2">
+        {extra}
+        <Button size="sm" variant="outline" onClick={onAction}>
+          {action}
+        </Button>
+      </div>
     </div>
   );
 }
