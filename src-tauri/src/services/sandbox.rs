@@ -57,12 +57,13 @@ const LABEL_MOUNTS: &str = "myassistant.mounts";
 const DOCKERFILE_DIR: &str = "sandbox";
 const DOCKERFILE_NAME: &str = "Dockerfile";
 const DOCKERIGNORE: &str = "# ビルドの文脈に含めないものを書きます。\n.dockerignore\nDockerfile\n";
-/// コンテナ内の作業フォルダ(エージェントごとに選んだ担当システムのフォルダ)の場所。
+/// コンテナ内の作業フォルダ(担当システムのソースコードなどを置く)の場所。
 pub const WORKSPACE_MOUNT: &str = "/workspace";
 /// コンテナ内のナレッジの場所。
 pub const KNOWLEDGE_MOUNT: &str = "/knowledge";
-/// `/workspace`にマウントするフォルダの設定(エージェントごと。端末ごとに異なるので書き出しの対象外)。
-pub const WORKSPACE_DIR_KEY: &str = "sandbox_workspace_dir";
+/// `/workspace`にマウントするフォルダの名前。ワークスペースのフォルダ(パーソナルはアプリデータ直下)の中に決まった場所として置く。
+/// ワークスペースのフォルダ全体(`secrets.json`・`timeline.db`・`sandbox.env`がある階層)はマウントしない。
+pub const WORKSPACE_DIR_NAME: &str = "workspace";
 /// 使われなくなったコンテナを止めるまでの時間。
 const IDLE_STOP: Duration = Duration::from_secs(10 * 60);
 const REAP_INTERVAL: Duration = Duration::from_secs(60);
@@ -309,7 +310,7 @@ pub fn dockerfile_state(app_dir: &Path) -> DockerfileState {
 pub struct Mounts {
     /// ナレッジ(`/knowledge`)。
     pub knowledge: PathBuf,
-    /// 担当システムのフォルダ(`/workspace`)。未設定なら`None`でマウントしない。
+    /// 担当システムのフォルダ(`/workspace`)。`None`ならマウントしない(テスト用。実行時は常に`Some`)。
     pub workspace: Option<PathBuf>,
 }
 
@@ -379,56 +380,21 @@ pub fn map_cwd(mounts: &Mounts, arg: Option<&str>) -> Result<(PathBuf, String), 
     Ok((host, inner))
 }
 
-/// `/workspace`にマウントできるフォルダか確かめ、正規化したパスを返す。
-/// `forbidden`は、重なってはいけない場所(アプリデータ・各エージェントのナレッジやデバッグログ)。
-/// ほかに、`/`・ホームフォルダそのものとその親・`~/.ssh`・`~/.aws`と重なる場所を拒否する。
-pub fn check_workspace_dir(candidate: &Path, home: Option<&Path>, forbidden: &[PathBuf]) -> Result<PathBuf, String> {
-    if !candidate.is_absolute() {
-        return Err("フォルダは絶対パスで指定してください。".into());
-    }
-    let dir = candidate.canonicalize().map_err(|_| "フォルダが見つかりません。".to_owned())?;
-    if !dir.is_dir() {
-        return Err("フォルダではありません。".into());
-    }
-    if dir.parent().is_none() {
-        return Err("ルート(/)はマウントできません。".into());
-    }
-    if dir.display().to_string().contains(',') {
-        return Err("フォルダのパスに「,」を含むため、マウントできません。".into());
-    }
-    let overlaps = |a: &Path, b: &Path| a.starts_with(b) || b.starts_with(a);
-    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_owned());
-    if let Some(home) = home.map(canon) {
-        if home.starts_with(&dir) {
-            return Err("ホームフォルダやその親はマウントできません。".into());
-        }
-        for name in [".ssh", ".aws"] {
-            if overlaps(&dir, &canon(&home.join(name))) {
-                return Err(format!("~/{name} と重なるフォルダはマウントできません。"));
-            }
-        }
-    }
-    if forbidden.iter().any(|f| overlaps(&dir, &canon(f))) {
-        return Err("アプリのデータやナレッジと重なるフォルダはマウントできません。".into());
-    }
-    Ok(dir)
+/// `/workspace`にマウントするフォルダ(エージェントごとに決まった場所)。
+pub fn workspace_dir(ctx: &WorkspaceCtx) -> PathBuf {
+    ctx.dir.join(WORKSPACE_DIR_NAME)
 }
 
-/// 設定された`/workspace`のフォルダ。未設定なら`None`。設定後に消えた・使えなくなった場合はエラー(マウントせずに進めない)。
-pub fn workspace_dir(ctx: &WorkspaceCtx) -> Result<Option<PathBuf>, String> {
-    let Some(saved) = ctx.db.get_setting(WORKSPACE_DIR_KEY).map_err(|e| e.to_string())?.filter(|p| !p.is_empty()) else {
-        return Ok(None);
-    };
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    let forbidden: Vec<PathBuf> = app_dir().ok().into_iter().collect();
-    check_workspace_dir(Path::new(&saved), home.as_deref(), &forbidden)
-        .map(Some)
-        .map_err(|e| format!("/workspace のフォルダ({saved})を使えません: {e}"))
+/// `/workspace`にマウントするフォルダを、無ければ作って返す。
+pub fn ensure_workspace_dir(ctx: &WorkspaceCtx) -> Result<PathBuf, String> {
+    let dir = workspace_dir(ctx);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("/workspace のフォルダを作れません: {e}"))?;
+    Ok(dir)
 }
 
 /// コンテナにマウントするフォルダ。
 pub fn mounts_for(ctx: &WorkspaceCtx, knowledge: &Path) -> Result<Mounts, String> {
-    Ok(Mounts { knowledge: knowledge.to_owned(), workspace: workspace_dir(ctx)? })
+    Ok(Mounts { knowledge: knowledge.to_owned(), workspace: Some(ensure_workspace_dir(ctx)?) })
 }
 
 // ------------------------------------------------------------------ 出力の伏せ字
@@ -1347,33 +1313,15 @@ mod tests {
     }
 
     #[test]
-    fn workspace_dir_rejects_sensitive_and_overlapping_places() {
+    fn workspace_is_a_fixed_folder_inside_the_workspace_dir() {
         let dir = tempfile::tempdir().unwrap();
-        let home = dir.path().join("home");
-        let app = home.join("Library/MyAssistant");
-        let knowledge = dir.path().join("other-knowledge");
-        let ok = home.join("src/system-a");
-        for p in [&app, &knowledge, &ok, &home.join(".ssh/keys"), &home.join(".aws")] {
-            std::fs::create_dir_all(p).unwrap();
-        }
-        let forbidden = vec![app.clone(), knowledge.clone()];
-        let check = |p: &Path| check_workspace_dir(p, Some(&home), &forbidden);
-        assert_eq!(check(&ok).unwrap(), ok.canonicalize().unwrap());
-        for bad in [
-            Path::new("/"),
-            home.as_path(),
-            dir.path(),                   // ホームの親
-            &home.join(".ssh"),
-            &home.join(".ssh/keys"),
-            &home.join(".aws"),
-            &app,
-            &home.join("Library"),        // アプリデータを含む
-            &knowledge,
-            Path::new("relative/path"),
-            &home.join("missing"),
-        ] {
-            assert!(check(bad).is_err(), "{bad:?}");
-        }
+        let ctx = WorkspaceCtx::open("0b9c3f5e-1d2a-4c6b-8e7f-123456789abc", dir.path()).unwrap();
+        let knowledge = dir.path().join("knowledge");
+        let m = mounts_for(&ctx, &knowledge).unwrap();
+        // ワークスペースのフォルダ全体ではなく、その中の workspace/ だけをマウントする(キーやDBは見えない)
+        assert_eq!(m.workspace.as_deref(), Some(dir.path().join("workspace").as_path()));
+        assert!(dir.path().join("workspace").is_dir());
+        assert_eq!(m.default_dir(), WORKSPACE_MOUNT);
     }
 
     #[test]

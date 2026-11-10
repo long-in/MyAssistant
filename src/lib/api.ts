@@ -319,10 +319,10 @@ export type SandboxBuildProgress = { scope: string; line: string };
 export const resetSandbox = () => invoke<void>("reset_sandbox");
 /** Dockerfileを標準の内容で上書きする。 */
 export const resetSandboxDockerfile = () => invoke<void>("reset_sandbox_dockerfile");
-/** `/workspace`にマウントするフォルダ(未設定なら null)。 */
-export const getSandboxWorkspaceDir = () => invoke<string | null>("get_sandbox_workspace_dir");
-/** `/workspace`にマウントするフォルダを設定する。null で解除。保存した(正規化した)パスを返す。 */
-export const setSandboxWorkspaceDir = (path: string | null) => invoke<string | null>("set_sandbox_workspace_dir", { path });
+/** `/workspace`にマウントするフォルダ(エージェントごとに決まった場所。無ければ作る)。 */
+export const getSandboxWorkspaceDir = () => invoke<string>("get_sandbox_workspace_dir");
+/** `/workspace`にマウントするフォルダを Finder で開く。 */
+export const openSandboxWorkspaceDir = () => invoke<void>("open_sandbox_workspace_dir");
 
 export type SandboxProvider = "anthropic" | "bedrock";
 /** コンテナ内の Claude Code の接続の設定。 */

@@ -1,18 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
-import { FolderOpen, X } from "lucide-react";
+import { FolderOpen } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import {
   type SandboxLlm,
   type SandboxProvider,
   getSandboxLlm,
   getSandboxWorkspaceDir,
+  openSandboxWorkspaceDir,
   reportError,
   setSandboxLlm,
-  setSandboxWorkspaceDir,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,7 +27,7 @@ const parseTools = (text: string) =>
 
 /**
  * エージェントごとのサンドボックスの設定。
- * - `/workspace`にマウントするフォルダ(担当システムのソースコードなど)。読み書きでマウントされる。
+ * - `/workspace`にマウントするフォルダ(担当システムのソースコードなどを置く、エージェントごとに決まった場所)。読み書きでマウントされる。
  * - コンテナ内の Claude Code の接続先(Anthropic API / Bedrock)・モデル・1回の指示の上限時間・許可するツール。
  * API キーは sandbox.env に書く(ここでは扱わない)。
  */
@@ -55,20 +54,9 @@ export default function SandboxAgentSettings() {
     getSandboxLlm().then(apply).catch((e) => toast.error(reportError(e)));
   }, []);
 
-  const chooseDir = async () => {
-    const picked = await openDialog({ directory: true, multiple: false, title: t("/workspace にマウントするフォルダを選択") });
-    if (typeof picked !== "string") return;
+  const openDir = async () => {
     try {
-      setDir(await setSandboxWorkspaceDir(picked));
-      toast.success(t("フォルダを設定しました。次の指示でコンテナが作り直されます。"));
-    } catch (e) {
-      toast.error(reportError(e));
-    }
-  };
-
-  const clearDir = async () => {
-    try {
-      setDir(await setSandboxWorkspaceDir(null));
+      await openSandboxWorkspaceDir();
     } catch (e) {
       toast.error(reportError(e));
     }
@@ -109,19 +97,17 @@ export default function SandboxAgentSettings() {
       <div className="flex flex-col gap-2">
         <span className="hud-label">/workspace</span>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="min-w-0 flex-1 truncate font-mono text-xs">{dir ?? t("未設定(マウントしません)")}</span>
-          <Button size="sm" variant="outline" onClick={() => void chooseDir()}>
+          <span className="min-w-0 flex-1 truncate font-mono text-xs" title={dir ?? undefined}>{dir ?? "…"}</span>
+          <Button size="sm" variant="outline" onClick={() => void openDir()}>
             <FolderOpen className="size-3.5" />
-            {t("フォルダを選択")}
+            {t("Finder で開く")}
           </Button>
-          {dir && (
-            <Button size="sm" variant="ghost" onClick={() => void clearDir()} aria-label={t("解除")}>
-              <X className="size-3.5" />
-            </Button>
-          )}
         </div>
         <p className="text-xs text-muted-foreground">
-          {t("担当システムのソースコードなどを置くフォルダを、コンテナの /workspace に読み書きでマウントします。コンテナ内の作業でホストのファイルが変更・削除されることがあるため、Git で管理したフォルダを選んでください。")}
+          {t("このフォルダが、コンテナの /workspace に読み書きでマウントされます。担当システムのソースコードなどは、ここに置くか git clone してください。コンテナ内の作業でファイルが変更・削除されることがあります。")}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {t("エージェントを削除すると、このフォルダも削除されます。バックアップには含まれません。")}
         </p>
       </div>
 
