@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Bug, BookOpen, Library, ClipboardList, Globe, Keyboard, MessageSquare, PanelLeftClose, PanelLeftOpen, ScrollText, Settings, User } from "lucide-react";
+import { Bug, BookOpen, Library, ClipboardList, Globe, Keyboard, MessageSquare, PanelLeftClose, PanelLeftOpen, ScrollText, Settings } from "lucide-react";
 import Chat from "@/components/Chat";
 import AttentionToasts from "@/components/AttentionToasts";
 import MfaModal from "@/components/MfaModal";
@@ -39,6 +39,9 @@ const NAV_SHORTCUTS: Partial<Record<ShortcutId, string>> = {
   settings: "/setup",
   help: "/shortcuts",
 };
+
+/** アプリのバージョン(package.json からビルド時に埋め込まれる)。 */
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "";
 
 const COLLAPSED_KEY = "sidebarCollapsed";
 
@@ -174,24 +177,29 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           !collapsed && "md:w-48 md:items-stretch md:px-3",
         )}
       >
-        {/* いまどこにいるか(パーソナルか、どのエージェントか) */}
-        <div
-          className={cn("mb-3 flex w-full items-center justify-center rounded-md border px-2 py-2", !collapsed && "md:justify-start md:gap-2")}
-          style={accent ? { borderColor: accent, backgroundColor: `${accent}14` } : undefined}
-          title={personal ? "Personal" : `Work / ${leader ? LEADER_NAME : (active.agent?.name ?? "")}`}
-        >
-          {personal ? (
-            <User className="size-4 shrink-0 text-muted-foreground" />
-          ) : leader ? (
-            <ClipboardList className="size-4 shrink-0" style={{ color: accent }} />
-          ) : (
-            <span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: accent }} />
-          )}
+        {/* アプリ名とバージョン。稼働ランプは点滅させる */}
+        <div className={cn("mb-1 flex w-full items-center justify-center gap-2 py-1", !collapsed && "md:justify-start md:px-1")} title={`MyAssistant v${APP_VERSION}`}>
+          <span className="animate-hud-blink-slow size-2 shrink-0 bg-primary neon-glow" aria-hidden />
           <span className={cn("hidden min-w-0 flex-col leading-tight", !collapsed && "md:flex")}>
-            <span className="hud-label text-[0.65rem] text-muted-foreground">{personal ? "PERSONAL" : "WORK"}</span>
-            <span className="truncate text-sm font-semibold">{personal ? "Personal" : leader ? LEADER_NAME : (active.agent?.name ?? "")}</span>
+            <span className="hud-label truncate text-[0.7rem] font-semibold">MyAssistant</span>
+            <span className="font-mono text-[0.6rem] tracking-widest text-muted-foreground">{`v${APP_VERSION} // ONLINE`}</span>
           </span>
         </div>
+        {/* ワークのときだけ、どのエージェントかを色付きで示す(パーソナルは表示しない) */}
+        {!personal && (
+          <div
+            className={cn("mb-2 flex w-full items-center justify-center rounded-md border px-2 py-2", !collapsed && "md:justify-start md:gap-2")}
+            style={accent ? { borderColor: accent, backgroundColor: `${accent}14` } : undefined}
+            title={`Work / ${leader ? LEADER_NAME : (active.agent?.name ?? "")}`}
+          >
+            {leader ? <ClipboardList className="size-4 shrink-0" style={{ color: accent }} /> : <span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: accent }} />}
+            <span className={cn("hidden min-w-0 flex-col leading-tight", !collapsed && "md:flex")}>
+              <span className="hud-label text-[0.65rem] text-muted-foreground">WORK</span>
+              <span className="truncate text-sm font-semibold">{leader ? LEADER_NAME : (active.agent?.name ?? "")}</span>
+            </span>
+          </div>
+        )}
+        <div className="mb-1 h-px w-full bg-border" />
         {[...MAIN_NAV, ...(debug ? [DEBUG_NAV] : [])].map((n) => navLink(n))}
         <div className="my-2 h-px w-full bg-border" />
         {[ALL_KNOWLEDGE_NAV, GLOBAL_NAV, HELP_NAV].map((n) => navLink(n, true))}
