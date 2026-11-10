@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Archive, AudioLines, Container, MessageSquareText, SlidersHorizontal } from "lucide-react";
+import { AudioLines, Container, MessageSquareText, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import {
   BaseInstructions,
@@ -63,7 +63,7 @@ export default function GlobalSettings() {
       .catch(() => {});
   }, []);
 
-  // レールの「WORK」ボタンなどから `#work` で開かれたときは、ワークの有効化がある「一般」のタブを開く(静的エクスポートのため、保存値はマウント後に読む)
+  // レールの「WORK」ボタンなどから `#work` で開かれたときは、ワークの有効化がある「その他」のタブを開く(静的エクスポートのため、保存値はマウント後に読む)
   useEffect(() => {
     const sync = () => {
       if (location.hash === "#work") setTab("general");
@@ -105,8 +105,7 @@ export default function GlobalSettings() {
             <TabsTrigger value="prompt" className="flex-none gap-1.5 px-3"><MessageSquareText className="size-3.5" />{t("AIへの指示")}</TabsTrigger>
             <TabsTrigger value="voice" className="flex-none gap-1.5 px-3"><AudioLines className="size-3.5" />{t("音声")}</TabsTrigger>
             <TabsTrigger value="sandbox" className="flex-none gap-1.5 px-3"><Container className="size-3.5" />Sandbox</TabsTrigger>
-            <TabsTrigger value="general" className="flex-none gap-1.5 px-3"><SlidersHorizontal className="size-3.5" />{t("一般")}</TabsTrigger>
-            <TabsTrigger value="backup" className="flex-none gap-1.5 px-3"><Archive className="size-3.5" />{t("バックアップ")}</TabsTrigger>
+            <TabsTrigger value="general" className="flex-none gap-1.5 px-3"><SlidersHorizontal className="size-3.5" />{t("その他")}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="prompt" className="flex flex-col gap-6">
@@ -147,9 +146,6 @@ export default function GlobalSettings() {
             <BatchInterval />
             <WorkEnable />
             <ProxyPanel />
-          </TabsContent>
-
-          <TabsContent value="backup" className="flex flex-col gap-6">
             <AppBackup />
           </TabsContent>
         </Tabs>

@@ -80,8 +80,6 @@ export const EN: Record<string, string> = {
   "値(API キーなど)はこの画面にそのまま表示されます。画面を共有するときは注意してください。": "Values (such as API keys) are shown as-is on this screen. Take care when sharing your screen.",
   "sandbox.env(コンテナへ渡す環境変数)は、この画面で編集できます。": "sandbox.env (environment variables passed to the container) can be edited on this screen.",
   "AIへの指示": "AI Instructions",
-  "一般": "General",
-  "バックアップ": "Backup",
   "全体設定で無効になっています。今は、指示をこのアプリが直接処理し、コマンドはホストで実行されます。有効にする前に、ここで準備できます。": "Disabled in the global settings. For now, this app handles instructions directly and runs commands on the host. You can prepare here before enabling it.",
   "このエージェントのコマンドを、専用のDockerコンテナの中で実行します。": "Runs this agent's commands inside its own Docker container.",
   "コンテナから見えるのは、このエージェントのナレッジ(/workspace)と専用ボリュームだけです。ほかのエージェントや ~/.aws には届きません。": "The container can only see this agent's knowledge (/workspace) and its own volume. It cannot reach other agents or ~/.aws.",
