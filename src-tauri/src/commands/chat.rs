@@ -398,12 +398,14 @@ async fn send_chat_sandbox(
     ctx.shared.task.set_cancel(cancel.clone());
     let mut preparing = false;
     let emit = |event: TaskEvent| ctx.shared.task.emit(event);
+    let model = sandbox_agent::selected_model(&ctx.db);
     let turn = sandbox_agent::Turn {
         ctx,
         knowledge_root: &root,
         prompt: text,
         system: &system.join("\n\n"),
         resume: resume.as_deref(),
+        model: model.as_deref(),
         deny,
         no_tools: false,
         timeout: None,

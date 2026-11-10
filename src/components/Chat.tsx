@@ -1,13 +1,11 @@
 "use client";
 
 import { useT } from "@/lib/i18n";
-import { useEffect, useRef, useState } from "react";
-import { MessageSquarePlus } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { approvalLine } from "@/components/AttentionToasts";
 import { notifyOsIfBackground } from "@/lib/osNotify";
-import { Button } from "@/components/ui/button";
 import { VoiceOrb } from "./Waveforms";
 import ChatThread from "./ChatThread";
 import ChatComposer from "./ChatComposer";
@@ -59,6 +57,13 @@ import {
   recordingWaveform,
   getSandboxEnabled,
   getSandboxStatus,
+  getSandboxModels,
+  setSandboxModel,
+  type SandboxModels,
+  startAgentSandbox,
+  stopAgentSandbox,
+  resetSandbox,
+  type SandboxStatus,
   reportError,
   saveRouting,
   sendChat,
@@ -191,14 +196,24 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   }, []);
   /** サンドボックスのコンテナが使える状態か(未確認は null)。使えるまでは、指示を送れない。 */
   const [sandboxReady, setSandboxReady] = useState<boolean | null>(null);
+  const [sandboxStatus, setSandboxStatus] = useState<SandboxStatus | null>(null);
+  /** チャット画面からのコンテナの起動・停止の実行中。 */
+  const [containerBusy, setContainerBusy] = useState(false);
+  const refreshSandbox = useCallback(
+    () =>
+      getSandboxStatus()
+        .then((s) => {
+          setSandboxStatus(s);
+          setSandboxReady(s.docker === "ready" && s.image_ready && s.container_ready);
+        })
+        .catch(() => {}),
+    [],
+  );
   useEffect(() => {
     // 状態はアクティブなエージェントのものだけが取れる
     if (!sandboxOn || !active) return;
     let alive = true;
-    const check = () =>
-      getSandboxStatus()
-        .then((s) => alive && setSandboxReady(s.docker === "ready" && s.image_ready && s.container_ready))
-        .catch(() => {});
+    const check = () => (alive ? refreshSandbox() : Promise.resolve());
     void check();
     const timer = setInterval(() => void check(), sandboxReady ? 30_000 : 5_000);
     window.addEventListener("focus", check);
@@ -207,8 +222,49 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
       clearInterval(timer);
       window.removeEventListener("focus", check);
     };
-  }, [sandboxOn, active, sandboxReady]);
+  }, [sandboxOn, active, sandboxReady, refreshSandbox]);
   const needSandbox = sandboxOn && sandboxReady === false;
+  /** サンドボックスで選べるモデル(settings.json の許可)。設定画面で書き換えたあと戻ってきたときに読み直す。 */
+  const [sandboxModels, setSandboxModels] = useState<SandboxModels | null>(null);
+  useEffect(() => {
+    if (!sandboxOn || !active) return;
+    let alive = true;
+    const load = () =>
+      getSandboxModels()
+        .then((m) => alive && setSandboxModels(m))
+        .catch(() => {});
+    void load();
+    window.addEventListener("focus", load);
+    return () => {
+      alive = false;
+      window.removeEventListener("focus", load);
+    };
+  }, [sandboxOn, active]);
+  const changeSandboxModel = (model: string) => {
+    setSandboxModels((m) => (m ? { ...m, selected: model } : m));
+    setSandboxModel(model).catch(fail);
+  };
+  /** コンテナを起動する。起動中なら停止する。 */
+  const toggleContainer = async () => {
+    if (containerBusy) return;
+    setContainerBusy(true);
+    try {
+      if (sandboxReady) {
+        await stopAgentSandbox();
+        toast.success(t("コンテナを停止しました。"));
+      } else {
+        if (sandboxStatus?.container_name && !sandboxStatus.container_ready) await resetSandbox(); // 古いコンテナは作り直す
+        await startAgentSandbox();
+        toast.success(t("コンテナを起動しました。"));
+      }
+      await refreshSandbox();
+    } catch (e) {
+      fail(e);
+    } finally {
+      setContainerBusy(false);
+    }
+  };
+  const containerStartable = !!sandboxStatus && sandboxStatus.docker === "ready" && sandboxStatus.image_ready && !sandboxStatus.building;
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [keyStatus, setKeyStatus] = useState<Partial<KeyStatus>>({});
   const [mic, setMicState] = useState<Mic>("idle");
@@ -1018,7 +1074,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   const SMALL = "[@media(max-height:40rem),(max-width:40rem)]";
   return (
     <div className="relative flex h-full flex-col gap-3 p-3">
-      <ChatNotices setup={setup} keyStatus={keyStatus} ttsReady={ttsReady} voiceReply={voiceReply} needModel={needModel} needSandbox={needSandbox} downloading={dlActive} progress={dlProgress} onDownload={download} />
+      <ChatNotices setup={setup} keyStatus={keyStatus} ttsReady={ttsReady} voiceReply={voiceReply} needModel={needModel} needSandbox={needSandbox} containerStartable={containerStartable} containerBusy={containerBusy} onStartContainer={() => void toggleContainer()} downloading={dlActive} progress={dlProgress} onDownload={download} />
 
       {/* 確認UIは、ウィンドウが小さくて会話を畳んでいるときも残す */}
       {switching && (
@@ -1029,20 +1085,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
       {/* 左: 会話のカード(広く使う)。右: 円形波形のカード。リーダーは、その下に台帳のカードを縦に並べる。狭いときは波形を会話の上に小さく出す */}
       <div className="flex min-h-0 flex-1 flex-col gap-3 md:flex-row">
         <section className={cn("hud-panel hud-accent min-h-0 min-w-0 flex-1 flex-col gap-3 px-5 py-4", `flex ${SMALL}:hidden`)} aria-label={t("会話")}>
-          <div className="flex shrink-0 items-center justify-between gap-2">
-            <p className="hud-heading">{"// Conversation"}</p>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="hud-label border-primary/40 bg-background/80 hover:border-primary"
-              title={t("これまでの会話の流れを引き継がず、新しい会話を始める")}
-              onClick={() => startNewConversation(true)}
-            >
-              <MessageSquarePlus />
-              {t("新しい会話")}
-            </Button>
-          </div>
+          <p className="hud-heading shrink-0">{"// Conversation"}</p>
           <ChatThread
             turns={turns}
             busy={busy}
@@ -1078,7 +1121,10 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
           ) : (
             <InfoCard
               turns={turns.length}
-              modelLabel={models.find((m) => m.provider === route?.provider && m.id === route?.model)?.label}
+              modelLabel={sandboxOn ? (sandboxModels?.selected ?? sandboxModels?.models[0]) : models.find((m) => m.provider === route?.provider && m.id === route?.model)?.label}
+              container={
+                sandboxOn ? { running: !!sandboxReady, busy: containerBusy, disabled: !sandboxReady && !containerStartable, onToggle: () => void toggleContainer() } : undefined
+              }
               className={cn("hidden flex-1 md:flex", `${SMALL}:hidden`)}
             />
           )}
@@ -1097,6 +1143,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
 
       {/* 下部: 操作ボタンと入力欄のカード */}
       <ChatComposer
+        onNewConversation={() => startNewConversation(true)}
         standby={{ on: standbyOn, available: wake.words.length > 0, onToggle: toggleStandby }}
         mic={{
           state: mic,
@@ -1120,7 +1167,11 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
         sendDisabled={!draft.trim() || busy || needModel || needSandbox || mic !== "idle"}
         busy={busy}
         onStop={abortAll}
-        model={{ route, models, keyStatus, onChange: changeRoute }}
+        model={
+          sandboxOn
+            ? { kind: "sandbox", models: sandboxModels?.models ?? [], selected: sandboxModels?.selected ?? sandboxModels?.models[0] ?? null, onChange: changeSandboxModel }
+            : { kind: "app", route, models, keyStatus, onChange: changeRoute }
+        }
       />
     </div>
   );

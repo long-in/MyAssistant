@@ -24,6 +24,10 @@ use crate::utils::error::AppError;
 pub const LLM_KEY: &str = "sandbox_llm";
 /// Claude Code の settings.json(貼り付けたもの)のキー。値は JSON の文字列で、空は未設定。
 pub const CLAUDE_SETTINGS_KEY: &str = "sandbox_claude_settings";
+/// チャットで選んだモデル(settings.json の許可するモデルのうち、`--model`で指定するもの)のキー。
+const MODEL_KEY: &str = "sandbox_model";
+/// モデル名の上限(文字数)。
+const MODEL_MAX_CHARS: usize = 300;
 /// settings.json の上限(環境変数1つの上限 128KB より小さく)。
 const SETTINGS_MAX_BYTES: usize = 64 * 1024;
 /// 1回の指示の上限時間(分)の範囲。
@@ -38,7 +42,7 @@ pub const DEFAULT_ALLOWED_TOOLS: [&str; 12] =
 const SYSTEM_MAX_BYTES: usize = 100 * 1024;
 
 /// コンテナ内で実行するコマンド。可変の値はすべて環境変数で受け取る(シェルへ値を埋め込まない)。
-const CLAUDE_COMMAND: &str = r#"exec claude -p --output-format stream-json --verbose --permission-mode acceptEdits ${MYASSISTANT_DISALLOWED_TOOLS:+--disallowedTools "$MYASSISTANT_DISALLOWED_TOOLS"} ${MYASSISTANT_RESUME:+--resume "$MYASSISTANT_RESUME"} ${MYASSISTANT_SETTINGS:+--settings "$MYASSISTANT_SETTINGS"} --append-system-prompt "$MYASSISTANT_SYSTEM_PROMPT""#;
+const CLAUDE_COMMAND: &str = r#"exec claude -p --output-format stream-json --verbose --permission-mode acceptEdits ${MYASSISTANT_DISALLOWED_TOOLS:+--disallowedTools "$MYASSISTANT_DISALLOWED_TOOLS"} ${MYASSISTANT_RESUME:+--resume "$MYASSISTANT_RESUME"} ${MYASSISTANT_MODEL:+--model "$MYASSISTANT_MODEL"} ${MYASSISTANT_SETTINGS:+--settings "$MYASSISTANT_SETTINGS"} --append-system-prompt "$MYASSISTANT_SYSTEM_PROMPT""#;
 
 /// アプリが決める、秘密でない環境変数の名前。出力の伏せ字の対象から外す。
 pub const NON_SECRET_NAMES: [&str; 2] = ["CLAUDE_CODE_USE_BEDROCK", "ANTHROPIC_MODEL"];
@@ -155,6 +159,35 @@ pub fn load_settings(db: &impl SettingsStore) -> Result<String, AppError> {
 pub fn configured_model(db: &impl SettingsStore) -> Option<String> {
     let Ok(Value::Object(root)) = serde_json::from_str::<Value>(&load_settings(db).ok()?) else { return None };
     root.get("model").and_then(Value::as_str).map(str::trim).filter(|m| !m.is_empty()).map(str::to_owned)
+}
+
+/// チャットで選べるモデル。settings.json の`model`(既定)と、`availableModels`(許可するモデル)を、重複なく並べる。
+pub fn available_models(db: &impl SettingsStore) -> Vec<String> {
+    let Some(Ok(Value::Object(root))) = load_settings(db).ok().map(|s| serde_json::from_str::<Value>(&s)) else { return Vec::new() };
+    let listed = root.get("availableModels").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str);
+    let mut models: Vec<String> = Vec::new();
+    for m in root.get("model").and_then(Value::as_str).into_iter().chain(listed) {
+        let m = m.trim();
+        if !m.is_empty() && m.chars().count() <= MODEL_MAX_CHARS && !m.chars().any(char::is_control) && !models.iter().any(|x| x == m) {
+            models.push(m.to_owned());
+        }
+    }
+    models
+}
+
+/// チャットで選ばれているモデル。選べるモデルの一覧に無くなっていれば`None`(settings.json の`model`に任せる)。
+pub fn selected_model(db: &impl SettingsStore) -> Option<String> {
+    let saved = db.get_setting(MODEL_KEY).ok().flatten()?;
+    available_models(db).into_iter().find(|m| *m == saved)
+}
+
+/// 選んだモデルを保存する。`None`は選択の解除。選べるモデルの一覧に無いものは受け付けない。
+pub fn save_selected_model(db: &impl SettingsStore, model: Option<&str>) -> Result<(), AppError> {
+    match model.map(str::trim).filter(|m| !m.is_empty()) {
+        None => db.set_setting(MODEL_KEY, ""),
+        Some(m) if available_models(db).iter().any(|x| x == m) => db.set_setting(MODEL_KEY, m),
+        Some(_) => Err(AppError::Sandbox("settings.json で許可していないモデルです。".into())),
+    }
 }
 
 /// 検証して保存する。空にすると未設定に戻る。
@@ -388,6 +421,8 @@ pub struct Turn<'a> {
     pub system: &'a str,
     /// 続きの指示なら、前回のセッションID。
     pub resume: Option<&'a str>,
+    /// `--model`で指定するモデル。`None`なら settings.json の`model`に任せる。
+    pub model: Option<&'a str>,
     /// 追加で拒否するツール(コマンド実行やWeb検索を無効にしているときの`Bash`・`WebFetch`など)。
     pub deny: Vec<String>,
     /// ツールを使わない単発の呼び出しか(ナレッジ整理・校正)。許可を空にし、既定のツールをすべて拒否する。
@@ -428,6 +463,12 @@ pub async fn run_turn(turn: Turn<'_>, cancel: &CancelToken, mut on_event: impl F
     vars.extend(internal_vars(&command_policy::load(turn.knowledge_root), &deny, turn.system, turn.resume)?);
     let settings = load_settings(&turn.ctx.db).map_err(|e| e.to_string())?;
     vars.extend(settings_env(&settings)?);
+    if let Some(model) = turn.model.map(str::trim).filter(|m| !m.is_empty()) {
+        if model.chars().count() > MODEL_MAX_CHARS || model.chars().any(char::is_control) {
+            return Err("モデル名が正しくありません。".into());
+        }
+        vars.insert("MYASSISTANT_MODEL".to_owned(), model.to_owned());
+    }
 
     let mut parser = LineParser::default();
     let mut session: Option<String> = None;
@@ -491,7 +532,7 @@ pub async fn run_turn(turn: Turn<'_>, cancel: &CancelToken, mut on_event: impl F
 /// ツールを使わない単発の呼び出し(ナレッジ整理・校正)。会話のセッションは作らず、応答のテキストだけを返す。
 /// Claude Code がエラーで終えた・中断・時間切れは`Err`。
 pub async fn complete(ctx: &WorkspaceCtx, knowledge_root: &Path, system: Option<&str>, prompt: &str, timeout: Option<Duration>, cancel: &CancelToken) -> Result<String, String> {
-    let turn = Turn { ctx, knowledge_root, prompt, system: system.unwrap_or(""), resume: None, deny: Vec::new(), no_tools: true, timeout };
+    let turn = Turn { ctx, knowledge_root, prompt, system: system.unwrap_or(""), resume: None, model: None, deny: Vec::new(), no_tools: true, timeout };
     let r = run_turn(turn, cancel, |_| {}).await?;
     if r.cancelled {
         return Err("中断されました。".into());
@@ -584,6 +625,24 @@ mod tests {
         save_settings(&db, r#"{"model":"mine"}"#).unwrap();
         migrate_legacy_llm(&db).unwrap();
         assert_eq!(load_settings(&db).unwrap(), r#"{"model":"mine"}"#);
+    }
+
+    #[test]
+    fn available_models_come_from_settings_and_selection_is_checked() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::Db::open(&dir.path().join("t.db")).unwrap();
+        assert!(available_models(&db).is_empty());
+        save_settings(&db, r#"{"model":" a ","availableModels":["b","a","","c"]}"#).unwrap();
+        assert_eq!(available_models(&db), vec!["a", "b", "c"]);
+        assert_eq!(selected_model(&db), None);
+        save_selected_model(&db, Some("b")).unwrap();
+        assert_eq!(selected_model(&db).as_deref(), Some("b"));
+        assert!(save_selected_model(&db, Some("x")).is_err());
+        // 許可から外れた選択は無効になる
+        save_settings(&db, r#"{"availableModels":["c"]}"#).unwrap();
+        assert_eq!(selected_model(&db), None);
+        save_selected_model(&db, None).unwrap();
+        assert!(CLAUDE_COMMAND.contains(r#"${MYASSISTANT_MODEL:+--model "$MYASSISTANT_MODEL"}"#));
     }
 
     #[test]
@@ -767,7 +826,7 @@ mod tests {
         std::fs::write(super::super::sandbox_env::path(&ctx.dir), "AWS_ACCESS_KEY_ID=AKIADUMMYNOTREAL0000\nAWS_SECRET_ACCESS_KEY=dummy-not-a-real-secret-0000\nAWS_REGION=us-east-1\n").unwrap();
         let cancel = CancelToken::default();
         let mut events = Vec::new();
-        let turn = Turn { ctx: &ctx, knowledge_root: &knowledge, prompt: "こんにちは", system: "日本語で答える。'\"$(x)", resume: None, deny: vec!["WebFetch".into()], no_tools: false, timeout: None };
+        let turn = Turn { ctx: &ctx, knowledge_root: &knowledge, prompt: "こんにちは", system: "日本語で答える。'\"$(x)", resume: None, model: None, deny: vec!["WebFetch".into()], no_tools: false, timeout: None };
         let r = run_turn(turn, &cancel, |e| events.push(e)).await.unwrap();
         assert!(r.is_error, "{r:?}");
         assert!(r.session_id.is_some(), "{r:?}");
@@ -775,7 +834,7 @@ mod tests {
         assert!(!r.text.contains("dummy-not-a-real-secret"), "{}", r.text);
         // 続きの指示(--resume)も同じ流れで通る
         let resume = r.session_id.clone().unwrap();
-        let turn = Turn { ctx: &ctx, knowledge_root: &knowledge, prompt: "続き", system: "x", resume: Some(&resume), deny: Vec::new(), no_tools: false, timeout: None };
+        let turn = Turn { ctx: &ctx, knowledge_root: &knowledge, prompt: "続き", system: "x", resume: Some(&resume), model: None, deny: Vec::new(), no_tools: false, timeout: None };
         let r2 = run_turn(turn, &cancel, |_| {}).await.unwrap();
         assert!(r2.is_error, "{r2:?}");
         sandbox::remove_agent_blocking_for_test(id);

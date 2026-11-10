@@ -1,7 +1,7 @@
 "use client";
 
 import { useT } from "@/lib/i18n";
-import { Ear, Loader2, Mic, Send, Square, Volume2, VolumeX } from "lucide-react";
+import { Ear, Loader2, MessageSquarePlus, Mic, Send, Square, Volume2, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import ModelPicker from "./ModelPicker";
@@ -17,6 +17,8 @@ type Props = {
   mic: { state: MicState; disabled: boolean; hint: string; onToggle: () => void };
   /** 返答の読み上げ。`on`が偽ならミュート。 */
   speak: { on: boolean; ready: boolean; onToggle: () => void };
+  /** 新しい会話を始める。 */
+  onNewConversation: () => void;
   draft: string;
   onDraft: (text: string) => void;
   onSubmit: () => void;
@@ -27,11 +29,14 @@ type Props = {
   busy: boolean;
   /** 処理中の強制中断。 */
   onStop: () => void;
-  model: { route: Route | null; models: ModelInfo[]; keyStatus: Partial<KeyStatus>; onChange: (route: Route) => void };
+  /** モデルの選択。サンドボックスでは、settings.json で許可したモデル(名前の文字列)から選ぶ。 */
+  model:
+    | { kind: "app"; route: Route | null; models: ModelInfo[]; keyStatus: Partial<KeyStatus>; onChange: (route: Route) => void }
+    | { kind: "sandbox"; models: string[]; selected: string | null; onChange: (model: string) => void };
 };
 
 /** 下部の入力カード。待機・マイク・ミュートの操作と、メッセージ入力欄(モデルの切り替えと送信/停止つき)。 */
-export default function ChatComposer({ standby, mic, speak, draft, onDraft, onSubmit, placeholder, inputDisabled, sendDisabled, busy, onStop, model }: Props) {
+export default function ChatComposer({ standby, mic, onNewConversation, speak, draft, onDraft, onSubmit, placeholder, inputDisabled, sendDisabled, busy, onStop, model }: Props) {
   const t = useT();
   const recording = mic.state === "recording";
   return (
@@ -102,8 +107,35 @@ export default function ChatComposer({ standby, mic, speak, draft, onDraft, onSu
             />
             <div className="flex items-center justify-between gap-2 px-2 pb-2">
               <div className="flex min-w-0 items-center gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t("新しい会話")}
+                  title={t("これまでの会話の流れを引き継がず、新しい会話を始める")}
+                  className="shrink-0"
+                  onClick={onNewConversation}
+                >
+                  <MessageSquarePlus />
+                </Button>
                 <div className="min-w-0 max-w-64">
-                  <ModelPicker compact disabled={busy} route={model.route} models={model.models} keyStatus={model.keyStatus} onChange={model.onChange} />
+                  {model.kind === "app" ? (
+                    <ModelPicker compact disabled={busy} route={model.route} models={model.models} keyStatus={model.keyStatus} onChange={model.onChange} />
+                  ) : model.models.length > 0 && model.selected ? (
+                    <ModelPicker
+                      compact
+                      flat
+                      disabled={busy}
+                      route={{ provider: "anthropic", model: model.selected }}
+                      models={model.models.map((id) => ({ provider: "anthropic", id, label: id, tier: "heavy" }))}
+                      keyStatus={{ anthropic: true }}
+                      onChange={(r) => model.onChange(r.model)}
+                    />
+                  ) : (
+                    <span className="px-2 text-xs text-muted-foreground" title={t("Claude Code の settings.json に availableModels を書くと、ここで選べます")}>
+                      {t("Sandbox 設定のモデル")}
+                    </span>
+                  )}
                 </div>
               </div>
               {busy ? (
