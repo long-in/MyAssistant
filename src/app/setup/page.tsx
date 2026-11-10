@@ -1206,6 +1206,17 @@ export default function Setup() {
   const t = useT();
   const { active } = useWorkspace();
   const router = useRouter();
+  const [tab, setTab] = useState("llm");
+  // チャットの案内から来たときは、Sandbox のタブを開く
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem("setup-tab") === "sandbox") {
+        sessionStorage.removeItem("setup-tab");
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setTab("sandbox");
+      }
+    } catch {}
+  }, []);
   const [status, setStatus] = useState<Partial<KeyStatus>>({});
   const [ttsReady, setTtsReady] = useState(false); // Google Cloudのキー(読み上げ・Google音声認識で共通)
   const [speechReady, setSpeechReady] = useState(false); // 選んだ読み上げエンジンが使える状態か
@@ -1296,7 +1307,7 @@ export default function Setup() {
           }
         />
 
-        <Tabs defaultValue="llm" className="gap-6">
+        <Tabs value={tab} onValueChange={setTab} className="gap-6">
           <TabsList variant="line" className="w-full justify-start overflow-x-auto border-b pb-1">
             <TabsTrigger value="llm" className="flex-none gap-1.5 px-3"><Brain className="size-3.5" />LLM</TabsTrigger>
             <TabsTrigger value="voice" className="flex-none gap-1.5 px-3"><AudioLines className="size-3.5" />{t("音声")}</TabsTrigger>

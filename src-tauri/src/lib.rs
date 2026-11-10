@@ -108,6 +108,8 @@ pub fn run() {
       commands::sandbox::unregister_agent_sandbox_dockerfile,
       commands::sandbox::build_agent_sandbox_image,
       commands::sandbox::build_sandbox_image,
+      commands::sandbox::start_agent_sandbox,
+      commands::sandbox::stop_agent_sandbox,
       commands::sandbox::reset_sandbox,
       commands::sandbox::reset_sandbox_dockerfile,
       commands::sandbox::reveal_sandbox_file,
@@ -254,6 +256,7 @@ pub fn run() {
       }
       app.manage(services::workspace::Workspaces::new(&dir, personal));
       app.manage(commands::chat::SessionContexts::default());
+      services::sandbox::start(app.handle());
       app.manage(services::graph::GraphCache::default());
       app.manage(services::audio::Recorder::default());
       app.manage(services::stt::SttEngine::default());
@@ -307,7 +310,7 @@ pub fn run() {
         };
         let _ = tokio::time::timeout(EXIT_BATCH_TIMEOUT, run).await;
         // 動いているサンドボックスのコンテナを止める
-        let _ = tokio::time::timeout(Duration::from_secs(20), services::sandbox::stop_all()).await;
+        let _ = tokio::time::timeout(Duration::from_secs(20), services::sandbox::stop_all_remembering()).await;
         handle.exit(0);
       });
     }

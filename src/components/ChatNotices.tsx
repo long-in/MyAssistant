@@ -17,6 +17,7 @@ export default function ChatNotices({
   ttsReady,
   voiceReply,
   needModel,
+  needSandbox,
   downloading,
   progress,
   onDownload,
@@ -26,6 +27,8 @@ export default function ChatNotices({
   ttsReady: boolean;
   voiceReply: boolean;
   needModel: boolean;
+  /** サンドボックスのコンテナが起動していない(イメージのビルドとコンテナの起動が必要)。 */
+  needSandbox: boolean;
   downloading: boolean;
   progress: DownloadProgress | null;
   onDownload: () => void;
@@ -33,6 +36,12 @@ export default function ChatNotices({
   const t = useT();
   const router = useRouter();
   const open = () => router.push("/setup");
+  const openSandbox = () => {
+    try {
+      sessionStorage.setItem("setup-tab", "sandbox");
+    } catch {}
+    router.push("/setup");
+  };
   return (
     <>
       {setup && (
@@ -41,6 +50,13 @@ export default function ChatNotices({
           {!ttsReady && voiceReply && <Notice text={setup.tts === "voicevox" ? t("VOICEVOXが未取得のため、読み上げは動作しません(字幕のみ)。") : t("Google Cloudのキーが未登録のため、読み上げは動作しません(字幕のみ)。")} action={t("設定を開く")} onAction={open} />}
           {!setup.sttKey && <Notice text={t("Google Cloudのキーが未登録のため、音声入力は動作しません。")} action={t("設定を開く")} onAction={open} />}
         </div>
+      )}
+      {needSandbox && (
+        <Notice
+          text={`${t("サンドボックスの準備ができていません")}。${t("チャットを使うには、Sandbox 設定でイメージのビルドとコンテナの起動を行ってください。")}`}
+          action={t("Sandbox 設定を開く")}
+          onAction={openSandbox}
+        />
       )}
       {needModel && (
         <div className="hud-panel hud-accent px-5 py-3 text-sm">

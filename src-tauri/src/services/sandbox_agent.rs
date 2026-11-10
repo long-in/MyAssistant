@@ -28,6 +28,8 @@ pub const CLAUDE_SETTINGS_KEY: &str = "sandbox_claude_settings";
 const SETTINGS_MAX_BYTES: usize = 64 * 1024;
 /// 1回の指示の上限時間(分)の範囲。
 pub const TIMEOUT_RANGE: RangeInclusive<u32> = 1..=180;
+/// アイドル自動停止の時間(分)の上限。0は無効。
+pub const IDLE_STOP_MAX: u32 = 24 * 60;
 /// Claude Code の標準のツール。ツールなしの単発の呼び出しでは、これをすべて拒否する。
 /// 許可は settings.json の`permissions.allow`で決める(画面の雛形も同じ一覧)。拒否は`command-policy.json`の拒否で絞る。
 pub const DEFAULT_ALLOWED_TOOLS: [&str; 12] =
@@ -60,11 +62,13 @@ pub struct LlmConfig {
     pub provider: Provider,
     /// 1回の指示の上限時間(分)。
     pub timeout_mins: u32,
+    /// 使われなくなってからコンテナを止めるまでの時間(分)。0なら自動では止めない。
+    pub idle_stop_mins: u32,
 }
 
 impl Default for LlmConfig {
     fn default() -> Self {
-        Self { provider: Provider::Bedrock, timeout_mins: 30 }
+        Self { provider: Provider::Bedrock, timeout_mins: 30, idle_stop_mins: 0 }
     }
 }
 
@@ -73,6 +77,7 @@ impl LlmConfig {
     fn normalized(mut self) -> Result<Self, AppError> {
         self.provider = Provider::Bedrock;
         self.timeout_mins = self.timeout_mins.clamp(*TIMEOUT_RANGE.start(), *TIMEOUT_RANGE.end());
+        self.idle_stop_mins = self.idle_stop_mins.min(IDLE_STOP_MAX);
         Ok(self)
     }
 }
@@ -632,6 +637,9 @@ mod tests {
         assert_eq!(LlmConfig::default().provider, Provider::Bedrock);
         assert_eq!(LlmConfig { timeout_mins: 9999, ..Default::default() }.normalized().unwrap().timeout_mins, 180);
         assert_eq!(LlmConfig { timeout_mins: 0, ..Default::default() }.normalized().unwrap().timeout_mins, 1);
+        // 自動停止は既定で無効(0)で、上限を超える値は丸める
+        assert_eq!(LlmConfig::default().idle_stop_mins, 0);
+        assert_eq!(LlmConfig { idle_stop_mins: 99_999, ..Default::default() }.normalized().unwrap().idle_stop_mins, IDLE_STOP_MAX);
     }
 
     #[test]
