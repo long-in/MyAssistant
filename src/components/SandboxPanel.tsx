@@ -15,6 +15,7 @@ import { Heading, StatusPill } from "@/components/GlobalPanels";
 import SandboxDockerfile from "@/components/SandboxDockerfile";
 import SandboxAgentSettings from "@/components/SandboxAgentSettings";
 import SandboxEnvEditor from "@/components/SandboxEnvEditor";
+import ClaudeSettingsEditor from "@/components/ClaudeSettingsEditor";
 
 /**
  * エージェントごとのサンドボックス(専用のDockerコンテナの中で Claude Code が作業する)の状態と設定、Dockerfile・環境変数の確認。
@@ -122,6 +123,10 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
 
         <div className="border-t pt-4">
           <SandboxEnvEditor key={workspaceId} />
+        </div>
+
+        <div className="border-t pt-4">
+          <ClaudeSettingsEditor key={workspaceId} />
         </div>
       </div>
     </section>

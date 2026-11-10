@@ -1,5 +1,11 @@
 /** 日本語の原文 → 英語。辞書にない文字列は原文のまま表示される。 */
 export const EN: Record<string, string> = {
+  "値を表示して編集": "Show values and edit",
+  "値を伏せる": "Hide values",
+  "env の値は伏せています。編集するには「値を表示して編集」を押してください。": "Values in env are hidden. Press \"Show values and edit\" to edit.",
+  "編集中の内容は破棄されます。保存済みの内容を読み込み直しますか?": "Unsaved edits will be discarded. Reload the saved content?",
+  "Claude Code の settings.json の内容を貼り付けます(JSON のオブジェクト)。コンテナ内の Claude Code へ、指示ごとに --settings で渡します。空で保存すると使いません。": "Paste the contents of Claude Code's settings.json (a JSON object). It is passed to Claude Code in the container with --settings for each instruction. Save it empty to stop using it.",
+  "アプリの「コマンド権限」の拒否は、settings.json では緩められません(許可は追加されます)。env の値は、画面では既定で伏せますが、バックアップ・設定の書き出しにはそのまま含まれます。コンテナの出力に値が出たときは伏せ字にします。": "Denials in the app's Command permissions cannot be loosened by settings.json (allow rules are added). Values in env are hidden on screen by default but are included as-is in backups and settings exports. Values that appear in the container's output are masked.",
   "コンテナ名": "Container name",
   "サンドボックス": "Sandbox",
   "認証情報(AI Link に登録した AWS の一時キー・sandbox.env)は、指示ごとに環境変数で渡します。": "Credentials (temporary AWS keys from AI Link and sandbox.env) are passed as environment variables for each instruction.",

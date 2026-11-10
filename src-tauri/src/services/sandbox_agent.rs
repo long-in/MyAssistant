@@ -22,6 +22,10 @@ use crate::utils::error::AppError;
 
 /// 接続の設定(エージェントごと)のキー。
 pub const LLM_KEY: &str = "sandbox_llm";
+/// Claude Code の settings.json(貼り付けたもの)のキー。値は JSON の文字列で、空は未設定。
+pub const CLAUDE_SETTINGS_KEY: &str = "sandbox_claude_settings";
+/// settings.json の上限(環境変数1つの上限 128KB より小さく)。
+const SETTINGS_MAX_BYTES: usize = 64 * 1024;
 /// 1回の指示の上限時間(分)の範囲。
 pub const TIMEOUT_RANGE: RangeInclusive<u32> = 1..=180;
 const MODEL_MAX_CHARS: usize = 200;
@@ -34,7 +38,7 @@ const TOOL_MAX_CHARS: usize = 200;
 const SYSTEM_MAX_BYTES: usize = 100 * 1024;
 
 /// コンテナ内で実行するコマンド。可変の値はすべて環境変数で受け取る(シェルへ値を埋め込まない)。
-const CLAUDE_COMMAND: &str = r#"exec claude -p --output-format stream-json --verbose --permission-mode acceptEdits ${MYASSISTANT_ALLOWED_TOOLS:+--allowedTools "$MYASSISTANT_ALLOWED_TOOLS"} ${MYASSISTANT_DISALLOWED_TOOLS:+--disallowedTools "$MYASSISTANT_DISALLOWED_TOOLS"} ${MYASSISTANT_RESUME:+--resume "$MYASSISTANT_RESUME"} --append-system-prompt "$MYASSISTANT_SYSTEM_PROMPT""#;
+const CLAUDE_COMMAND: &str = r#"exec claude -p --output-format stream-json --verbose --permission-mode acceptEdits ${MYASSISTANT_ALLOWED_TOOLS:+--allowedTools "$MYASSISTANT_ALLOWED_TOOLS"} ${MYASSISTANT_DISALLOWED_TOOLS:+--disallowedTools "$MYASSISTANT_DISALLOWED_TOOLS"} ${MYASSISTANT_RESUME:+--resume "$MYASSISTANT_RESUME"} ${MYASSISTANT_SETTINGS:+--settings "$MYASSISTANT_SETTINGS"} --append-system-prompt "$MYASSISTANT_SYSTEM_PROMPT""#;
 
 /// アプリが決める、秘密でない環境変数の名前。出力の伏せ字の対象から外す。
 pub const NON_SECRET_NAMES: [&str; 2] = ["CLAUDE_CODE_USE_BEDROCK", "ANTHROPIC_MODEL"];
@@ -113,6 +117,50 @@ pub fn save(db: &impl SettingsStore, cfg: LlmConfig) -> Result<LlmConfig, AppErr
     let cfg = cfg.normalized()?;
     db.set_setting(LLM_KEY, &serde_json::to_string(&cfg).map_err(|e| AppError::Io(e.to_string()))?)?;
     Ok(cfg)
+}
+
+/// 貼り付けた settings.json を検証する。空(空白のみ)は未設定として通す。JSON のオブジェクトで、上限以内であること。
+/// エラーの文面には内容を含めない(位置と理由だけ)。
+pub fn validate_settings(text: &str) -> Result<(), String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(());
+    }
+    if text.len() > SETTINGS_MAX_BYTES {
+        return Err(format!("settings.json が大きすぎます(上限{}KB)。", SETTINGS_MAX_BYTES / 1024));
+    }
+    match serde_json::from_str::<Value>(text) {
+        Ok(Value::Object(_)) => Ok(()),
+        Ok(_) => Err("settings.json は JSON のオブジェクト({ ... })で書いてください。".into()),
+        Err(e) => Err(format!("settings.json を JSON として読めません({}行{}列目)。", e.line(), e.column())),
+    }
+}
+
+/// 保存された settings.json(未設定は空文字)。
+pub fn load_settings(db: &impl SettingsStore) -> Result<String, AppError> {
+    Ok(db.get_setting(CLAUDE_SETTINGS_KEY)?.unwrap_or_default())
+}
+
+/// 検証して保存する。空にすると未設定に戻る。
+pub fn save_settings(db: &impl SettingsStore, text: &str) -> Result<(), AppError> {
+    validate_settings(text).map_err(AppError::Sandbox)?;
+    db.set_setting(CLAUDE_SETTINGS_KEY, text.trim())
+}
+
+/// settings.json の`env`に書かれた値(秘密が入りうる)。出力の伏せ字の対象にする。`MYASSISTANT_SETTINGS`の値(JSON)を渡す。
+pub fn settings_secret_values(settings: Option<&String>) -> Vec<String> {
+    let Some(Ok(Value::Object(root))) = settings.map(|s| serde_json::from_str::<Value>(s)) else { return Vec::new() };
+    match root.get("env") {
+        Some(Value::Object(env)) => env.values().filter_map(|v| v.as_str().map(str::to_owned)).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// コンテナの Claude Code へ`--settings`で渡す値の環境変数。未設定なら何も足さない。
+fn settings_env(text: &str) -> Result<Option<(String, String)>, String> {
+    validate_settings(text)?;
+    let text = text.trim();
+    Ok((!text.is_empty()).then(|| ("MYASSISTANT_SETTINGS".to_owned(), text.to_owned())))
 }
 
 /// アプリが決める環境変数(秘密でない値だけ)。
@@ -364,6 +412,8 @@ pub async fn run_turn(turn: Turn<'_>, cancel: &CancelToken, mut on_event: impl F
         (cfg.clone(), turn.deny.clone())
     };
     vars.extend(internal_vars(&cfg_for_run, &command_policy::load(turn.knowledge_root), &deny, turn.system, turn.resume)?);
+    let settings = load_settings(&turn.ctx.db).map_err(|e| e.to_string())?;
+    vars.extend(settings_env(&settings)?);
 
     let mut parser = LineParser::default();
     let mut session: Option<String> = None;
@@ -498,6 +548,25 @@ mod tests {
         let v = internal_vars(&cfg, &Policy::defaults(), &all, "sys", None).unwrap();
         assert_eq!(v["MYASSISTANT_ALLOWED_TOOLS"], "");
         assert!(v["MYASSISTANT_DISALLOWED_TOOLS"].contains("Bash") && v["MYASSISTANT_DISALLOWED_TOOLS"].contains("WebFetch"));
+    }
+
+    #[test]
+    fn claude_settings_are_validated_and_passed_by_environment() {
+        assert!(CLAUDE_COMMAND.contains(r#"${MYASSISTANT_SETTINGS:+--settings "$MYASSISTANT_SETTINGS"}"#));
+        assert!(validate_settings("").is_ok() && validate_settings(" \n ").is_ok());
+        assert!(validate_settings(r#"{"model":"x","permissions":{"deny":["Bash(rm:*)"]}}"#).is_ok());
+        // 内容は、エラーの文面に出ない
+        let e = validate_settings(r#"{"env":{"TOKEN":"secret-value""#).unwrap_err();
+        assert!(e.contains("JSON") && !e.contains("secret-value"), "{e}");
+        assert!(validate_settings("[1]").is_err() && validate_settings("\"x\"").is_err());
+        assert!(validate_settings(&format!(r#"{{"a":"{}"}}"#, "x".repeat(SETTINGS_MAX_BYTES))).is_err());
+        // `env`の値は、出力の伏せ字の対象になる
+        let json = r#"{"env":{"TOKEN":"abcdefghijkl","N":1},"model":"x"}"#.to_owned();
+        assert_eq!(settings_secret_values(Some(&json)), vec!["abcdefghijkl".to_owned()]);
+        assert!(settings_secret_values(None).is_empty() && settings_secret_values(Some(&"{".to_owned())).is_empty());
+        assert_eq!(settings_env("  ").unwrap(), None);
+        assert_eq!(settings_env(" {\"a\":1} ").unwrap(), Some(("MYASSISTANT_SETTINGS".to_owned(), "{\"a\":1}".to_owned())));
+        assert!(settings_env("{").is_err());
     }
 
     #[test]

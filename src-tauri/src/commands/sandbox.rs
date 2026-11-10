@@ -207,6 +207,20 @@ pub fn set_sandbox_llm(ctx: Ctx, config: sandbox_agent::LlmConfig) -> Result<san
     sandbox_agent::save(&ctx.db, config)
 }
 
+/// 貼り付けた Claude Code の settings.json(未設定は空文字)。コンテナ内の Claude Code へ、実行ごとに`--settings`で渡す。
+#[tauri::command]
+pub fn get_sandbox_claude_settings(ctx: Ctx) -> Result<String, AppError> {
+    supported(&ctx)?;
+    sandbox_agent::load_settings(&ctx.db)
+}
+
+/// 検証して保存する。JSON のオブジェクトでなければ保存しない。空にすると未設定に戻る。
+#[tauri::command]
+pub fn set_sandbox_claude_settings(ctx: Ctx, content: String) -> Result<(), AppError> {
+    supported(&ctx)?;
+    sandbox_agent::save_settings(&ctx.db, &content)
+}
+
 /// このエージェントのコンテナを作り直す(ボリュームは残す)。次のコマンドで新しく作られる。
 #[tauri::command]
 pub async fn reset_sandbox(ctx: Ctx) -> Result<(), AppError> {

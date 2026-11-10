@@ -964,6 +964,8 @@ fn secret_values(vars: &BTreeMap<String, String>) -> Vec<String> {
     vars.iter()
         .filter(|(k, _)| !k.ends_with("REGION") && !k.starts_with("MYASSISTANT_") && !sandbox_agent::NON_SECRET_NAMES.contains(&k.as_str()))
         .map(|(_, v)| v.clone())
+        // 貼り付けた settings.json の`env`の値も伏せる(`MYASSISTANT_SETTINGS`自体は秘密でない値として除く)
+        .chain(sandbox_agent::settings_secret_values(vars.get("MYASSISTANT_SETTINGS")))
         .collect()
 }
 
@@ -1417,6 +1419,13 @@ mod tests {
         let mut vars = BTreeMap::new();
         vars.insert("AWS_REGION".to_owned(), "ap-northeast-1".to_owned());
         vars.insert("AWS_SECRET_ACCESS_KEY".to_owned(), "abcdefghijkl".to_owned());
+        assert_eq!(secret_values(&vars), vec!["abcdefghijkl".to_owned()]);
+    }
+
+    #[test]
+    fn settings_env_values_are_masked() {
+        let mut vars = BTreeMap::new();
+        vars.insert("MYASSISTANT_SETTINGS".to_owned(), r#"{"env":{"TOKEN":"abcdefghijkl"},"model":"claude-x"}"#.to_owned());
         assert_eq!(secret_values(&vars), vec!["abcdefghijkl".to_owned()]);
     }
 

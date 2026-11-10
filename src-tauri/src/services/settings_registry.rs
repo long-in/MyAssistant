@@ -78,6 +78,8 @@ pub const ALL: &[Setting] = &[
     agent(debug_log::ENABLED_KEY, Some(Kind::Flag)),
     // サンドボックスの接続先・モデル・上限時間(秘密は含まない)
     agent(sandbox_agent::LLM_KEY, Some(Kind::Json)),
+    // 貼り付けた Claude Code の settings.json。`env`などに秘密が入りうるが、利用者の指示で書き出し・コピーの対象にしている
+    agent(sandbox_agent::CLAUDE_SETTINGS_KEY, Some(Kind::Json)),
     // 使うプロキシの選択(空は既定、`none`は使わない、それ以外は登録済みのID)。IDは全体設定の一覧のもの
     agent(proxy::CHOICE_KEY, Some(Kind::Text)),
     // ---- エージェントごと(対象外: 端末ごとに異なるもの、エージェント固有のもの) ----
