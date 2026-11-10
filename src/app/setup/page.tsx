@@ -25,7 +25,7 @@ import { copyTargets, type CopyRequest } from "@/lib/copyTargets";
 import { DEFAULT_TUNING, getTuning, setTuning, LEADER_ID, PERSONAL_ID, getAgentData, saveAgentData, errorMessage, updateAgent, AGENT_NAME_MAX, leaderCopyApiKey, leaderGetPrompt, leaderSetPrompt, leaderGetLimit, leaderSetLimit, LEADER_LIMIT_MAX, type DeleteReport } from "@/lib/api";
 import { bumpSettingsVersion, refreshWorkspace, useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
-import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, setCommandPolicy, type CommandPolicy, getShellAccess, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, voicevoxDownloadProgress, sttDownloadProgress, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, loadBatchRoute, loadProofreadRoute, loadSkillsRoute, type Route, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setShellAccess, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
+import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, setCommandPolicy, type CommandPolicy, getShellAccess, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, voicevoxDownloadProgress, sttDownloadProgress, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, loadBatchRoute, loadProofreadRoute, loadRouting, loadSkillsRoute, loadSuggestRoute, type Route, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setShellAccess, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
 import AiSettings from "@/components/AiSettings";
 import { Heading, PageHeader, ProxyChoice, StatusPill, TuningPanel, UsedBy, linkCardClass, type TuningField } from "@/components/GlobalPanels";
 
@@ -1052,9 +1052,9 @@ function VoicevoxPanel({ installed, style, onChanged, onStyle }: { installed: bo
             {t("端末内で音声を合成します(キー不要・無料)。公式配布のCORE・ONNX Runtime・辞書・音声モデル(約90MB)をダウンロードします。")}
           </div>
         </div>
-        <Button size="sm" variant="outline" disabled={busy} onClick={install}>
-          {busy ? <Loader2 className="animate-spin" /> : <Download />}
-          {busy ? t("取得中…") : installed ? t("取得し直す") : t("規約に同意して取得")}
+        <Button size="sm" variant="outline" disabled={active} onClick={install}>
+          {active ? <Loader2 className="animate-spin" /> : <Download />}
+          {active ? t("取得中…") : installed ? t("取得し直す") : t("規約に同意して取得")}
         </Button>
       </div>
       {active && <DownloadBar progress={progress} className="mt-3" />}
@@ -1145,8 +1145,8 @@ function WhisperSourcePanel({ onChanged }: { onChanged: () => void }) {
         <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => setDraft(src.whisper_default)}>
           {t("既定値に戻す")}
         </Button>
-        <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => run("whisper", downloadSttModel, t("Whisperモデルを取得しました。"))}>
-          {busy === "whisper" ? <Loader2 className="animate-spin" /> : <Download />} {t("Whisperモデルを取得し直す(約550MB)")}
+        <Button size="sm" variant="outline" disabled={busy !== null || active} onClick={() => run("whisper", downloadSttModel, t("Whisperモデルを取得しました。"))}>
+          {active ? <Loader2 className="animate-spin" /> : <Download />} {t("Whisperモデルを取得し直す(約550MB)")}
         </Button>
       </div>
       {active && <DownloadBar progress={progress} className="mt-3" />}
@@ -1241,11 +1241,14 @@ export default function Setup() {
   }, [refresh]);
   const { progress: sttProgress, active: sttActive } = useDownloadProgress(sttDownloadProgress, busy === "sttmodel", refresh);
 
-  // 機能ごとのモデル設定から、プロバイダーごとの使用箇所を集計する(チャットは会話ごとの選択のため含めない)
+  // 機能ごとのモデル設定から、プロバイダーごとの使用箇所を集計する。
+  // チャットは最後に選んだモデル(会話の要約と、リーダーからの依頼の実行も同じモデル)。宛先の提案はリーダーが自動で選ぶ。
   useEffect(() => {
     const leader = active.id === LEADER_ID;
     const work = !leader && active.id !== PERSONAL_ID;
     const sources: [string, () => Promise<Route | null>][] = [
+      ...(work || leader ? [] : [["チャット", loadRouting] as [string, () => Promise<Route | null>]]),
+      ...(leader ? [["宛先の提案", loadSuggestRoute] as [string, () => Promise<Route | null>]] : []),
       ["文字起こしの校正", loadProofreadRoute],
       // ワークの整理・スキルの選定は、コンテナ内の Claude Code が行うので、アプリのモデルは使わない
       ...(work ? [] : [["ナレッジの整理", loadBatchRoute] as [string, () => Promise<Route | null>]]),
@@ -1395,22 +1398,22 @@ export default function Setup() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  disabled={busy === "sttmodel"}
+                  disabled={sttActive}
                   onClick={() => run("sttmodel", downloadSttModel, t("高精度モデルをインストールしました。"))}
                 >
-                  {busy === "sttmodel" ? <Loader2 className="animate-spin" /> : <Download />}
-                  {busy === "sttmodel" ? t("ダウンロード中…") : t("更新")}
+                  {sttActive ? <Loader2 className="animate-spin" /> : <Download />}
+                  {sttActive ? t("ダウンロード中…") : t("更新")}
                 </Button>
               </div>
             )}
-            <div className="flex items-center gap-3 border-t py-3">
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium">{t("認識する言語")}</div>
             {sttEngine === "local" && sttActive && (
               <div className="border-b pb-3">
                 <DownloadBar progress={sttProgress} />
               </div>
             )}
+            <div className="flex items-center gap-3 border-t py-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">{t("認識する言語")}</div>
                 <div className="text-xs text-muted-foreground">{t("自動は日本語と英語を判定します。どのエンジンにも適用されます。")}</div>
               </div>
               <select

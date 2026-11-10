@@ -220,6 +220,7 @@ pub fn run() {
       commands::leader::leader_delete_api_key,
       commands::leader::leader_copy_api_key,
       commands::leader::leader_suggest,
+      commands::leader::load_suggest_route,
       commands::leader::leader_dispatch,
       commands::leader::leader_overview,
       commands::leader::leader_set_confirmed,

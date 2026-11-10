@@ -1025,6 +1025,8 @@ export const leaderDeleteApiKey = (provider: Provider) => invoke<void>("leader_d
 /** `from`(`personal`またはエージェントID)のAnthropicのAPIキーを、リーダーへコピーする。コピーできたか(コピー元に無ければ false)。 */
 export const leaderCopyApiKey = (from: string) => invoke<boolean>("leader_copy_api_key", { from });
 /** 宛先の提案(エージェントID)。過去に配布した指示の履歴だけが根拠で、根拠が無ければ空。 */
+/** 宛先の提案に使うモデル(自動選択)。キーが無ければnull。 */
+export const loadSuggestRoute = () => invoke<Route | null>("load_suggest_route");
 export const leaderSuggest = (text: string) => invoke<string[]>("leader_suggest", { text });
 /** 指示を、選んだエージェントへ配布する。宛先は必ず利用者が選ぶ。 */
 export const leaderDispatch = (text: string, agentIds: string[]) =>

@@ -355,7 +355,7 @@ fn parse_suggestion(text: &str, agents: &[Agent]) -> Vec<String> {
 }
 
 /// 提案に使うモデル。軽量なモデルがあればそれを、無ければ既定を使う。キーが無ければ`None`。
-fn suggest_route(ctx: &WorkspaceCtx) -> Option<Route> {
+pub fn suggest_route(ctx: &WorkspaceCtx) -> Option<Route> {
     let available: Vec<Provider> = Provider::ALL.into_iter().filter(|p| ctx.secrets.has_key(*p).unwrap_or(false)).collect();
     llm_router::catalog(ctx)
         .into_iter()
