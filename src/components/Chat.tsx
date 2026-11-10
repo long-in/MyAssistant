@@ -8,7 +8,6 @@ import { toast } from "sonner";
 import { approvalLine } from "@/components/AttentionToasts";
 import { notifyOsIfBackground } from "@/lib/osNotify";
 import { Button } from "@/components/ui/button";
-import WorkspaceBadge from "@/components/WorkspaceBadge";
 import { VoiceOrb } from "./Waveforms";
 import ChatThread from "./ChatThread";
 import ChatComposer from "./ChatComposer";
@@ -1019,7 +1018,6 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   const SMALL = "[@media(max-height:40rem),(max-width:40rem)]";
   return (
     <div className="relative flex h-full flex-col gap-3 p-3">
-      <WorkspaceBadge className="pointer-events-none absolute top-5 right-5 z-10" />
       <ChatNotices setup={setup} keyStatus={keyStatus} ttsReady={ttsReady} voiceReply={voiceReply} needModel={needModel} needSandbox={needSandbox} downloading={dlActive} progress={dlProgress} onDownload={download} />
 
       {/* 確認UIは、ウィンドウが小さくて会話を畳んでいるときも残す */}
