@@ -39,6 +39,8 @@ const TOOL_LABELS: Record<string, string> = {
   draft_dispatch: "配布の下書き",
   remember: "記憶",
   forget: "記憶から外す",
+  web_search: "Web検索",
+  web_fetch: "ページの取得",
   use_skill: "スキルの読み込み",
   create_skill: "スキルの作成",
   update_skill: "スキルの更新",

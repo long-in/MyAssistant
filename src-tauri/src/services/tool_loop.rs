@@ -543,6 +543,37 @@ pub struct Approval {
     pub reason: String,
 }
 
+/// ターンの出力から、Anthropic側で実行されたサーバーツール(検索・ページ取得)の呼び出しと結果を実行ログのイベントにする。
+/// 自前のツールと違い、こちらでは実行しないので、`tool_use`ではなく`server_tool_use`と`*_tool_result`のブロックから拾う。
+fn server_tool_events(content: &[Value]) -> Vec<TaskEvent> {
+    let str_of = |b: &Value, k: &str| b.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
+    let mut events = Vec::new();
+    for b in content {
+        let kind = str_of(b, "type");
+        if kind == "server_tool_use" {
+            events.push(TaskEvent::ToolCall { id: str_of(b, "id"), name: str_of(b, "name"), input: b.get("input").cloned().unwrap_or(Value::Null) });
+        } else if kind == "web_search_tool_result" || kind == "web_fetch_tool_result" {
+            let id = str_of(b, "tool_use_id");
+            let body = b.get("content");
+            // 失敗は、結果の代わりに`error_code`を持つオブジェクトが入る
+            if let Some(code) = body.and_then(|c| c.get("error_code")).and_then(Value::as_str) {
+                events.push(TaskEvent::ToolResult { id, ok: false, preview: code.to_owned() });
+                continue;
+            }
+            let preview = match body {
+                Some(Value::Array(items)) => {
+                    let titles: Vec<String> = items.iter().filter_map(|i| i.get("title").and_then(Value::as_str)).take(3).map(str::to_owned).collect();
+                    format!("{}件: {}", items.len(), titles.join(" / "))
+                }
+                Some(c) => str_of(c, "url"),
+                None => String::new(),
+            };
+            events.push(TaskEvent::ToolResult { id, ok: true, preview });
+        }
+    }
+    events
+}
+
 /// フロントエンドへ流す進捗。
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -686,6 +717,9 @@ where
         };
         let calls = turn.tool_calls();
         let mut text = turn.text();
+        for event in server_tool_events(&turn.content) {
+            emit(event);
+        }
         history.push(json!({ "role": "assistant", "content": turn.content }));
         if calls.is_empty() {
             // サーバーツールの長い処理が途中で止まった場合は、履歴をそのまま返して続きを実行させる
@@ -1280,6 +1314,26 @@ mod tests {
         assert_eq!(history[1]["content"], json!([search, result]));
         // 履歴は user / assistant(中断) / assistant(回答) で、tool_resultは作らない
         assert_eq!(history.len(), 3);
+    }
+
+    #[test]
+    fn server_tool_events_cover_search_and_fetch_with_errors() {
+        let blocks = vec![
+            json!({ "type": "server_tool_use", "id": "s1", "name": "web_search", "input": { "query": "天気" } }),
+            json!({ "type": "web_search_tool_result", "tool_use_id": "s1", "content": [{ "title": "A", "url": "u1" }, { "title": "B", "url": "u2" }] }),
+            json!({ "type": "server_tool_use", "id": "s2", "name": "web_fetch", "input": { "url": "https://example.com" } }),
+            json!({ "type": "web_fetch_tool_result", "tool_use_id": "s2", "content": { "type": "web_fetch_result", "url": "https://example.com" } }),
+            json!({ "type": "server_tool_use", "id": "s3", "name": "web_fetch", "input": { "url": "https://bad.example" } }),
+            json!({ "type": "web_fetch_tool_result", "tool_use_id": "s3", "content": { "type": "web_fetch_tool_error", "error_code": "url_not_accessible" } }),
+            json!({ "type": "text", "text": "答え" }),
+        ];
+        let ev = serde_json::to_value(server_tool_events(&blocks)).unwrap();
+        let ev = ev.as_array().unwrap();
+        assert_eq!(ev.len(), 6);
+        assert_eq!((ev[0]["type"].as_str(), ev[0]["name"].as_str(), ev[0]["input"]["query"].as_str()), (Some("tool_call"), Some("web_search"), Some("天気")));
+        assert_eq!((ev[1]["ok"].as_bool(), ev[1]["preview"].as_str()), (Some(true), Some("2件: A / B")));
+        assert_eq!(ev[3]["preview"], "https://example.com");
+        assert_eq!((ev[5]["ok"].as_bool(), ev[5]["preview"].as_str()), (Some(false), Some("url_not_accessible")));
     }
 
     // ---- スキル ----
