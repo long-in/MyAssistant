@@ -177,6 +177,23 @@ pub async fn build_agent_sandbox_image(ctx: Ctx, force: bool) -> Result<(), AppE
         .map_err(AppError::Sandbox)
 }
 
+/// このエージェントのコンテナを作って起動する(イメージはビルド済みであること)。チャットは、起動してから使える。
+#[tauri::command]
+pub async fn start_agent_sandbox(ctx: Ctx) -> Result<(), AppError> {
+    supported(&ctx)?;
+    let root = crate::services::batch::knowledge_root(&ctx)?;
+    let mounts = sandbox::mounts_for(&ctx, &root).map_err(AppError::Sandbox)?;
+    sandbox::start_container(&ctx, &mounts).await.map(|_| ()).map_err(AppError::Sandbox)
+}
+
+/// このエージェントのコンテナを止める(消さない)。
+#[tauri::command]
+pub async fn stop_agent_sandbox(ctx: Ctx) -> Result<(), AppError> {
+    supported(&ctx)?;
+    let id = ctx.id.clone();
+    sandbox::stop_container(&id).await.map_err(AppError::Sandbox)
+}
+
 /// `/workspace`にマウントするフォルダ(エージェントごとに決まった場所)。無ければ作る。
 #[tauri::command]
 pub fn get_sandbox_workspace_dir(ctx: Ctx) -> Result<String, AppError> {

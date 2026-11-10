@@ -59,6 +59,7 @@ import {
   playBase64Mp3,
   recordingWaveform,
   getSandboxEnabled,
+  getSandboxStatus,
   reportError,
   saveRouting,
   sendChat,
@@ -189,6 +190,26 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   useEffect(() => {
     getSandboxEnabled().then(setSandboxOn).catch(() => {});
   }, []);
+  /** サンドボックスのコンテナが使える状態か(未確認は null)。使えるまでは、指示を送れない。 */
+  const [sandboxReady, setSandboxReady] = useState<boolean | null>(null);
+  useEffect(() => {
+    // 状態はアクティブなエージェントのものだけが取れる
+    if (!sandboxOn || !active) return;
+    let alive = true;
+    const check = () =>
+      getSandboxStatus()
+        .then((s) => alive && setSandboxReady(s.docker === "ready" && s.image_ready && s.container_ready))
+        .catch(() => {});
+    void check();
+    const timer = setInterval(() => void check(), sandboxReady ? 30_000 : 5_000);
+    window.addEventListener("focus", check);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      window.removeEventListener("focus", check);
+    };
+  }, [sandboxOn, active, sandboxReady]);
+  const needSandbox = sandboxOn && sandboxReady === false;
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [keyStatus, setKeyStatus] = useState<Partial<KeyStatus>>({});
   const [mic, setMicState] = useState<Mic>("idle");
@@ -521,7 +542,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   /** 入力欄の文章を送る。送信が始まったら欄を空にし、読み上げ中なら止めてから送る。 */
   const submitDraft = () => {
     const text = draft.trim();
-    if (!text || busy || needModel || mic !== "idle") return;
+    if (!text || busy || needModel || needSandbox || mic !== "idle") return;
     stopSpeech();
     setDraft("");
     void submit(text);
@@ -912,7 +933,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   }, [approvalId]);
 
   useEffect(() => {
-    gate.current = { busy, needModel };
+    gate.current = { busy, needModel: needModel || needSandbox };
     abortRef.current = abortAll;
     working.current = busy || speaking || switching || !!approval || awake || mic === "starting" || mic === "recording" || mic === "transcribing";
     holdRef.current = (down) => {
@@ -921,7 +942,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
         clearTail(); // 離した直後に押し直したら、録音を続ける
         // 承認待ちの間は、押している間だけ録音して返答できる。常時待機の録音中なら、それに替えて始める
         const free = micNow.current === "idle" || micNow.current === "standby";
-        if ((!busy || approvalRef.current) && !needModel && free) void toggleMic(true);
+        if ((!busy || approvalRef.current) && !needModel && !needSandbox && free) void toggleMic(true);
       } else if (micNow.current === "recording") {
         stopAfterTail(); // 長押しを離して少し経ったら録音を止めて送信
       }
@@ -999,7 +1020,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   return (
     <div className="relative flex h-full flex-col gap-3 p-3">
       <WorkspaceBadge className="pointer-events-none absolute top-5 right-5 z-10" />
-      <ChatNotices setup={setup} keyStatus={keyStatus} ttsReady={ttsReady} voiceReply={voiceReply} needModel={needModel} downloading={dlActive} progress={dlProgress} onDownload={download} />
+      <ChatNotices setup={setup} keyStatus={keyStatus} ttsReady={ttsReady} voiceReply={voiceReply} needModel={needModel} needSandbox={needSandbox} downloading={dlActive} progress={dlProgress} onDownload={download} />
 
       {/* 確認UIは、ウィンドウが小さくて会話を畳んでいるときも残す */}
       {switching && (
@@ -1081,7 +1102,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
         standby={{ on: standbyOn, available: wake.words.length > 0, onToggle: toggleStandby }}
         mic={{
           state: mic,
-          disabled: (busy && !approval) || mic === "starting" || mic === "transcribing" || needModel || (speaking && mic !== "recording"),
+          disabled: (busy && !approval) || mic === "starting" || mic === "transcribing" || needModel || needSandbox || (speaking && mic !== "recording"),
           hint: micHint,
           onToggle: () => void toggleMic(),
         }}
@@ -1097,8 +1118,8 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
         onDraft={setDraft}
         onSubmit={submitDraft}
         placeholder={status}
-        inputDisabled={busy || needModel}
-        sendDisabled={!draft.trim() || busy || needModel || mic !== "idle"}
+        inputDisabled={busy || needModel || needSandbox}
+        sendDisabled={!draft.trim() || busy || needModel || needSandbox || mic !== "idle"}
         busy={busy}
         onStop={abortAll}
         model={{ route, models, keyStatus, onChange: changeRoute }}

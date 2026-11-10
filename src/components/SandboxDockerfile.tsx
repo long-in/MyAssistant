@@ -36,9 +36,9 @@ import { Heading, StatusPill } from "@/components/GlobalPanels";
  * - エージェント(`agent`あり): そのエージェント専用のDockerfile。登録があれば共通より優先する。
  *   登録は共通の内容のコピーから始まり、解除すると共通に戻る。
  * 画面内で編集して保存するか、Finderで開いて外部のエディタで編集する(どちらも同じファイル)。
- * 保存すると、次のコマンド実行時に1回だけ再ビルドされ、対象のエージェントのコンテナは新しいイメージで作り直される。
+ * 保存したら、Sandbox 設定でイメージを再ビルドし、コンテナを作り直す(チャットは、準備が済むまで使えない)。
  */
-export default function SandboxDockerfile({ agent, embedded }: { agent?: { id: string }; embedded?: boolean }) {
+export default function SandboxDockerfile({ agent, embedded, onChange }: { agent?: { id: string }; embedded?: boolean; onChange?: () => void }) {
   const t = useT();
   const scope = agent?.id ?? "shared";
   const [saved, setSaved] = useState<string | null>(null);
@@ -125,6 +125,7 @@ export default function SandboxDockerfile({ agent, embedded }: { agent?: { id: s
       setBusy(null);
       setLog("");
       await refreshStatus();
+      onChange?.();
     }
   };
 
@@ -139,7 +140,7 @@ export default function SandboxDockerfile({ agent, embedded }: { agent?: { id: s
         }
         setSaved(draft);
       },
-      t("Dockerfile を保存しました。次のコマンド実行時にイメージを再ビルドします。"),
+      t("Dockerfile を保存しました。イメージを再ビルドしてください。"),
     );
 
   const reload = async () => {
@@ -194,7 +195,7 @@ export default function SandboxDockerfile({ agent, embedded }: { agent?: { id: s
             <ul>
               <li>{t("登録すると、共通の Dockerfile の内容がコピーされます。以後、共通を変更しても専用には反映されません。")}</li>
               <li>{t("画面で編集して保存するか、「ファイルを表示」で外部のエディタで編集できます(同じファイルです)。")}</li>
-              <li>{t("登録・編集・解除をすると、このエージェントのコンテナだけが、次のコマンド実行時に作り直されます。専用ボリュームは残ります。")}</li>
+              <li>{t("登録・編集・解除をしたら、上の手順でイメージを再ビルドし、コンテナを作り直してください。専用ボリュームは残ります。")}</li>
               <li>{t("ユーザー agent、sh、setsid(util-linux)、/workspace と /home/agent が必要です。")}</li>
             </ul>
           </>
@@ -203,7 +204,7 @@ export default function SandboxDockerfile({ agent, embedded }: { agent?: { id: s
             <p>{t("すべてのエージェントのコンテナは、このDockerfileから作る共通のイメージを使います。ただし、専用の Dockerfile を登録したエージェントは、そちらを優先します。")}</p>
             <ul>
               <li>{t("画面で編集して保存するか、「ファイルを表示」で外部のエディタで編集できます(同じファイルです)。")}</li>
-              <li>{t("保存すると、次のコマンド実行時に1回だけ再ビルドし、各エージェントのコンテナを新しいイメージで作り直します。専用ボリュームは残ります。")}</li>
+              <li>{t("保存したら、イメージを再ビルドし、各エージェントのコンテナを作り直してください(エージェントの Sandbox 設定の手順で行います)。専用ボリュームは残ります。")}</li>
               <li>{t("必要なツール(AWS CLI など)はここに入れます。エージェントごとの違いは sandbox.env か、エージェント専用の Dockerfile で与えます。")}</li>
               <li>{t("ユーザー agent、sh、setsid(util-linux)、/workspace と /home/agent が必要です。")}</li>
               <li>{t("環境変数や認証情報はビルドに渡しません。")}</li>
@@ -271,15 +272,17 @@ export default function SandboxDockerfile({ agent, embedded }: { agent?: { id: s
             {t("標準に戻す")}
           </Button>
         )}
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={ready?.docker !== "ready" || !!busy || dirty || building}
-          onClick={() => void run("build", () => (agent ? buildAgentSandboxImage(false) : buildSandboxImage(false)), t("イメージを準備しました。"))}
-        >
-          {building ? <Loader2 className="size-3.5 animate-spin" /> : null}
-          {t("イメージをビルド")}
-        </Button>
+        {!agent && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={ready?.docker !== "ready" || !!busy || dirty || building}
+            onClick={() => void run("build", () => (agent ? buildAgentSandboxImage(false) : buildSandboxImage(false)), t("イメージを準備しました。"))}
+          >
+            {building ? <Loader2 className="size-3.5 animate-spin" /> : null}
+            {t("イメージをビルド")}
+          </Button>
+        )}
       </div>
       {agent && !registered && <p className="text-xs text-muted-foreground">{t("登録がないので、共通の Dockerfile を使います(表示は共通の内容で、編集できません)。")}</p>}
       {dirty && <p className="text-xs text-muted-foreground">{t("ビルドは保存した内容で行います。先に保存してください。")}</p>}

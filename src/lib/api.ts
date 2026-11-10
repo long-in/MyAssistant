@@ -283,6 +283,8 @@ export type DockerState = "missing" | "stopped" | "ready";
 export type SandboxStatus = {
   docker: DockerState;
   container_running: boolean;
+  /** 起動中で、いまのイメージから作られたコンテナがあるか(チャットを使える状態)。 */
+  container_ready: boolean;
   /** このエージェントのコンテナの名前(`myassistant-<ランダム>`)。まだ作っていなければ null。 */
   container_name: string | null;
   /** 専用のDockerfileが登録されているか(あれば共通より優先)。 */
@@ -326,6 +328,10 @@ export const SANDBOX_BUILD_EVENT = "sandbox-build-progress";
 /** `scope`は`shared`(共通のイメージ)またはエージェントID(専用のイメージ)。 */
 export type SandboxBuildProgress = { scope: string; line: string };
 /** このエージェントのコンテナを作り直す(専用ボリュームは残る)。 */
+/** イメージのビルドが済んでいるとき、このエージェントのコンテナを作って起動する。 */
+export const startAgentSandbox = () => invoke<void>("start_agent_sandbox");
+/** コンテナを止める(消さない)。 */
+export const stopAgentSandbox = () => invoke<void>("stop_agent_sandbox");
 export const resetSandbox = () => invoke<void>("reset_sandbox");
 /** Dockerfileを標準の内容で上書きする。 */
 export const resetSandboxDockerfile = () => invoke<void>("reset_sandbox_dockerfile");
@@ -336,7 +342,7 @@ export const openSandboxWorkspaceDir = () => invoke<void>("open_sandbox_workspac
 
 export type SandboxProvider = "anthropic" | "bedrock";
 /** コンテナ内の Claude Code の接続の設定(モデルと許可するツールは settings.json で決める)。 */
-export type SandboxLlm = { provider: SandboxProvider; timeout_mins: number };
+export type SandboxLlm = { provider: SandboxProvider; timeout_mins: number; idle_stop_mins: number };
 /** 貼り付けた Claude Code の settings.json(未設定は空文字)。保存時に検証し、誤りがあれば保存しない。 */
 export const getSandboxClaudeSettings = () => invoke<string>("get_sandbox_claude_settings");
 export const setSandboxClaudeSettings = (content: string) => invoke<void>("set_sandbox_claude_settings", { content });

@@ -64,8 +64,6 @@ pub const KNOWLEDGE_MOUNT: &str = "/knowledge";
 /// `/workspace`にマウントするフォルダの名前。ワークスペースのフォルダ(パーソナルはアプリデータ直下)の中に決まった場所として置く。
 /// ワークスペースのフォルダ全体(`secrets.json`・`timeline.db`・`sandbox.env`がある階層)はマウントしない。
 pub const WORKSPACE_DIR_NAME: &str = "workspace";
-/// 使われなくなったコンテナを止めるまでの時間。
-const IDLE_STOP: Duration = Duration::from_secs(10 * 60);
 const REAP_INTERVAL: Duration = Duration::from_secs(60);
 /// docker CLIの短い操作(inspect・rm・startなど)の待ち時間。
 const CLI_TIMEOUT: Duration = Duration::from_secs(60);
@@ -563,6 +561,8 @@ pub async fn image_status(app_dir: &Path) -> ImageStatus {
 pub struct Status {
     pub docker: DockerState,
     pub container_running: bool,
+    /// 起動中で、いまのイメージから作られたコンテナがあるか(チャットを使える状態)。
+    pub container_ready: bool,
     /// このエージェントのコンテナの名前(まだ作っていなければ`None`)。
     pub container_name: Option<String>,
     /// 専用のDockerfileが登録されているか(登録があれば共通より優先)。
@@ -575,19 +575,21 @@ pub struct Status {
 pub async fn status(id: &str, app_dir: &Path, ws_dir: &Path) -> Status {
     let registered = agent_registered(ws_dir);
     let building = is_building(if registered { id } else { BUILD_KEY });
-    let base = Status { docker: DockerState::Missing, container_running: false, container_name: None, dockerfile_registered: registered, image_ready: false, building };
+    let base = Status { docker: DockerState::Missing, container_running: false, container_ready: false, container_name: None, dockerfile_registered: registered, image_ready: false, building };
     let Some(bin) = find_docker() else { return base };
     if !daemon_up(&bin).await {
         return Status { docker: DockerState::Stopped, ..base };
     }
-    let image_ready = match peek_tag(app_dir, id, ws_dir) {
-        Some(tag) => image_exists(&bin, &tag).await,
+    let tag = peek_tag(app_dir, id, ws_dir);
+    let image_ready = match &tag {
+        Some(tag) => image_exists(&bin, tag).await,
         None => false,
     };
     let container = find_container(&bin, id).await;
     Status {
         docker: DockerState::Ready,
         container_running: container.as_ref().is_some_and(|c| c.running),
+        container_ready: container.as_ref().is_some_and(|c| c.running && Some(&c.image) == tag.as_ref()),
         container_name: container.map(|c| c.name),
         image_ready,
         ..base
@@ -891,6 +893,46 @@ async fn prune_old_images(bin: &Path, id: &str, spec: &ImageSpec) {
     }
 }
 
+/// 準備済みのイメージでコンテナを作って起動する。イメージが未ビルドなら失敗する(ビルドは別の操作)。
+pub async fn start_container(ctx: &WorkspaceCtx, mounts: &Mounts) -> Result<String, String> {
+    let id = ctx.id.as_str();
+    if !is_supported(id) {
+        return Err("リーダーではサンドボックスを使えません。".into());
+    }
+    let bin = require_docker().await?;
+    let spec = resolve_image(&app_dir()?, id, &ctx.dir)?;
+    if !image_exists(&bin, &spec.tag).await {
+        return Err("イメージがビルドされていません。先にイメージをビルドしてください。".into());
+    }
+    let name = ensure_container(&bin, id, &spec, mounts).await?;
+    touch(id);
+    Ok(name)
+}
+
+/// コンテナを止める(消さない。ボリュームも残る)。
+pub async fn stop_container(id: &str) -> Result<(), String> {
+    if !is_supported(id) {
+        return Err("リーダーではサンドボックスを使えません。".into());
+    }
+    let bin = require_docker().await?;
+    let lock = ws_lock(id);
+    let _held = lock.lock().await;
+    for name in container_names(&bin, id).await {
+        let _ = docker(&bin, &["stop", "-t", "3", &name], Duration::from_secs(30)).await;
+    }
+    if let Some(m) = USAGE.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
+        m.remove(id);
+    }
+    Ok(())
+}
+
+/// 使用状況に記録する(アイドル停止の起点にする)。
+fn touch(id: &str) {
+    let mut map = USAGE.lock().unwrap_or_else(|p| p.into_inner());
+    let u = map.get_or_insert_with(Default::default).entry(id.to_owned()).or_insert(Usage { active: 0, last: Instant::now() });
+    u.last = Instant::now();
+}
+
 /// コンテナを作り直す(ボリュームは残す)。
 pub async fn reset_container(id: &str) -> Result<(), String> {
     if !is_supported(id) {
@@ -992,7 +1034,19 @@ pub struct Exec<'a> {
     pub timeout: Duration,
 }
 
-/// イメージとコンテナを用意して、`docker exec`で実行する。出力は伏せ字にしてから`on_chunk`へ渡し、終了後にまとめて返す。
+/// 事前に準備した(ビルド済みのイメージで起動中の)コンテナの名前。実行時にはビルドも起動もしない。
+/// 準備が済んでいなければ`NOT_READY`で失敗する(画面でイメージのビルドとコンテナの起動を行う)。
+async fn running_container(bin: &Path, id: &str, spec: &ImageSpec, mounts: &Mounts) -> Result<String, String> {
+    match find_container(bin, id).await {
+        Some(c) if c.running && c.image == spec.tag && c.mounts == mounts.label() => Ok(c.name),
+        _ => Err(NOT_READY.to_owned()),
+    }
+}
+
+/// イメージのビルドとコンテナの起動を事前に行っていないときのエラー文面。
+pub const NOT_READY: &str = "サンドボックスの準備ができていません。Sandbox の設定で、イメージのビルドとコンテナの起動を行ってください。";
+
+/// イメージとコンテナ(事前に準備したもの)で、`docker exec`で実行する。出力は伏せ字にしてから`on_chunk`へ渡し、終了後にまとめて返す。
 /// 時間切れ・中断・通常の終了のたびに、コンテナ内のプロセスグループごと止める。
 pub async fn exec(req: Exec<'_>, cancel: &CancelToken, mut on_chunk: impl FnMut(Stream, &str)) -> Result<Output, String> {
     let id = req.ctx.id.as_str();
@@ -1001,8 +1055,7 @@ pub async fn exec(req: Exec<'_>, cancel: &CancelToken, mut on_chunk: impl FnMut(
     }
     let bin = require_docker().await?;
     let spec = resolve_image(&app_dir()?, id, &req.ctx.dir)?;
-    build_image(&spec, false, cancel, &mut |l| on_chunk(Stream::Stderr, &format!("[sandbox] {l}\n"))).await?;
-    let container = ensure_container(&bin, id, &spec, req.mounts).await?;
+    let container = running_container(&bin, id, &spec, req.mounts).await?;
     let _use = UseGuard::new(id);
 
     let pidfile = format!("{PIDFILE_DIR}/ma-{}.pid", uuid::Uuid::new_v4().simple());
@@ -1042,15 +1095,21 @@ pub async fn exec(req: Exec<'_>, cancel: &CancelToken, mut on_chunk: impl FnMut(
 
 // ------------------------------------------------------------------ 後始末・常駐
 
-/// 画面へのイベント送出と、アイドルのコンテナの停止を始める。アプリ起動時に1回呼ぶ。
-/// 前回のアプリが動かしたままのコンテナは、ここで止める。
+/// 画面へのイベント送出の準備(アプリデータの場所の決定)。アプリ起動時に1回呼ぶ。
 pub fn init(app: &AppHandle) {
     let _ = APP.set(app.clone());
     if let Ok(dir) = app.path().app_data_dir() {
         let _ = APP_DIR.set(dir);
     }
-    tauri::async_runtime::spawn(async {
+}
+
+/// 前回のアプリが動かしたままのコンテナを止め、前回の終了時に起動していたものを起動し直して、アイドル停止の見張りを始める。
+/// `Workspaces`の登録後に1回呼ぶ。
+pub fn start(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
         stop_all().await;
+        restore_running(&app).await;
         loop {
             tokio::time::sleep(REAP_INTERVAL).await;
             reap_idle().await;
@@ -1058,15 +1117,22 @@ pub fn init(app: &AppHandle) {
     });
 }
 
+/// エージェントごとの自動停止の時間。0(既定)なら止めない。
+fn idle_limit(id: &str) -> Option<Duration> {
+    let app = APP.get()?;
+    let ctx = app.state::<super::workspace::Workspaces>().get(id)?;
+    let mins = sandbox_agent::load(&ctx.db).ok()?.idle_stop_mins;
+    (mins > 0).then(|| Duration::from_secs(u64::from(mins) * 60))
+}
+
 async fn reap_idle() {
-    let idle: Vec<String> = {
+    let active_zero: Vec<String> = {
         let map = USAGE.lock().unwrap_or_else(|p| p.into_inner());
-        map.as_ref()
-            .map(|m| m.iter().filter(|(_, u)| u.active == 0 && u.last.elapsed() >= IDLE_STOP).map(|(k, _)| k.clone()).collect())
-            .unwrap_or_default()
+        map.as_ref().map(|m| m.iter().filter(|(_, u)| u.active == 0).map(|(k, _)| k.clone()).collect()).unwrap_or_default()
     };
+    let candidates: Vec<(String, Duration)> = active_zero.into_iter().filter_map(|id| idle_limit(&id).map(|d| (id, d))).collect();
     let Some(bin) = find_docker() else { return };
-    for id in idle {
+    for (id, limit) in candidates {
         let lock = ws_lock(&id);
         let _held = lock.lock().await;
         // 待っている間に使われていないか確かめる
@@ -1075,7 +1141,7 @@ async fn reap_idle() {
             .unwrap_or_else(|p| p.into_inner())
             .as_ref()
             .and_then(|m| m.get(&id))
-            .is_some_and(|u| u.active == 0 && u.last.elapsed() >= IDLE_STOP);
+            .is_some_and(|u| u.active == 0 && u.last.elapsed() >= limit);
         if still_idle {
             for name in container_names(&bin, &id).await {
                 let _ = docker(&bin, &["stop", "-t", "3", &name], Duration::from_secs(30)).await;
@@ -1087,7 +1153,40 @@ async fn reap_idle() {
     }
 }
 
-/// このアプリのコンテナをすべて止める(アプリ終了時・起動時)。
+/// 起動中のコンテナのエージェントIDを記録するファイル(次回の起動時に、同じコンテナを起動し直す)。
+const RUNNING_FILE: &str = "sandbox-running.json";
+
+/// 起動中のエージェントIDを記録してから、すべてのコンテナを止める(アプリ終了時)。
+pub async fn stop_all_remembering() {
+    if let (Some(bin), Ok(dir)) = (find_docker(), app_dir()) {
+        let filter = format!("label={LABEL_AGENT}");
+        let fmt = format!("{{{{index .Labels \"{LABEL_AGENT}\"}}}}");
+        if let Ok(o) = docker(&bin, &["ps", "--filter", &filter, "--format", &fmt], Duration::from_secs(10)).await {
+            let ids: Vec<&str> = o.stdout.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+            if let Ok(text) = serde_json::to_string(&ids) {
+                let _ = std::fs::write(dir.join(RUNNING_FILE), text);
+            }
+        }
+    }
+    stop_all().await;
+}
+
+/// 前回の終了時に起動していたコンテナを、ビルド済みのイメージがあるものだけ起動し直す。
+/// Dockerが使えない・失敗したときは何もしない(チャットで準備を促す)。
+pub async fn restore_running(app: &AppHandle) {
+    let Ok(dir) = app_dir() else { return };
+    let ids: Vec<String> = std::fs::read_to_string(dir.join(RUNNING_FILE)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    for id in ids {
+        let Some(ctx) = app.state::<super::workspace::Workspaces>().get(&id) else { continue };
+        let Ok(root) = super::batch::knowledge_root(&ctx) else { continue };
+        let Ok(mounts) = mounts_for(&ctx, &root) else { continue };
+        if let Err(e) = start_container(&ctx, &mounts).await {
+            log::warn!("sandbox restore failed ({id}): {e}");
+        }
+    }
+}
+
+/// このアプリのコンテナをすべて止める(アプリ起動時・終了時)。
 pub async fn stop_all() {
     let Some(bin) = find_docker() else { return };
     let filter = format!("label={LABEL_AGENT}");
