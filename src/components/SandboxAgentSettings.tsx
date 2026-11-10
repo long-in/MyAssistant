@@ -15,10 +15,14 @@ import {
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-/** 許可するツールの入力(改行・カンマ区切り)を一覧にする。 */
+/** チェックボックスで選べるツール(Rust 側の `DEFAULT_ALLOWED_TOOLS` と同じ)。 */
+const TOOL_OPTIONS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit", "WebFetch", "WebSearch", "Task", "TodoWrite", "Skill"];
+
+/** 一覧にないツール(`Bash(git status:*)` などのパターン指定)の入力(改行・カンマ区切り)を一覧にする。 */
 const parseTools = (text: string) =>
   text
     .split(/[\n,]/)
@@ -38,6 +42,7 @@ export default function SandboxAgentSettings() {
   const [provider, setProvider] = useState<SandboxProvider>("anthropic");
   const [model, setModel] = useState("");
   const [timeout, setTimeoutMins] = useState("30");
+  const [checked, setChecked] = useState<string[]>([]);
   const [tools, setTools] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -46,7 +51,8 @@ export default function SandboxAgentSettings() {
     setProvider(c.provider);
     setModel(c.model);
     setTimeoutMins(String(c.timeout_mins));
-    setTools(c.allowed_tools.join("\n"));
+    setChecked(c.allowed_tools.filter((x) => TOOL_OPTIONS.includes(x)));
+    setTools(c.allowed_tools.filter((x) => !TOOL_OPTIONS.includes(x)).join("\n"));
   };
 
   useEffect(() => {
@@ -66,7 +72,7 @@ export default function SandboxAgentSettings() {
     provider,
     model: model.trim(),
     timeout_mins: Number.parseInt(timeout, 10) || 30,
-    allowed_tools: parseTools(tools),
+    allowed_tools: [...TOOL_OPTIONS.filter((x) => checked.includes(x)), ...parseTools(tools)],
   });
   const dirty =
     saved !== null &&
@@ -140,9 +146,23 @@ export default function SandboxAgentSettings() {
               spellCheck={false}
             />
           </label>
+          <div className="flex flex-col gap-2 text-xs sm:col-span-2">
+            {t("許可するツール")}
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {TOOL_OPTIONS.map((name) => (
+                <label key={name} className="flex items-center gap-2 font-mono">
+                  <Checkbox
+                    checked={checked.includes(name)}
+                    onCheckedChange={(v) => setChecked((cur) => (v ? [...cur, name] : cur.filter((x) => x !== name)))}
+                  />
+                  {name}
+                </label>
+              ))}
+            </div>
+          </div>
           <label className="flex flex-col gap-1 text-xs sm:col-span-2">
-            {t("許可するツール(1行に1つ)")}
-            <Textarea value={tools} onChange={(e) => setTools(e.target.value)} className="min-h-24 font-mono text-xs" spellCheck={false} />
+            {t("その他の許可(1行に1つ。Bash(git status:*) のような指定)")}
+            <Textarea value={tools} onChange={(e) => setTools(e.target.value)} className="min-h-16 font-mono text-xs" spellCheck={false} />
           </label>
         </div>
         <p className="text-xs text-muted-foreground">
