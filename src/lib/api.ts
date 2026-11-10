@@ -424,12 +424,20 @@ export type GlobalPrefs = { language: "ja" | "en" | null; os_notifications: bool
 export const getGlobalPrefs = () => invoke<GlobalPrefs>("get_global_prefs");
 export const setGlobalLanguage = (language: "ja" | "en") => invoke<void>("set_global_language", { language });
 export const setGlobalOsNotifications = (enabled: boolean) => invoke<void>("set_global_os_notifications", { enabled });
-/** 通信のプロキシ設定。パスワードは返さず、登録の有無だけ。 */
-export type ProxySettings = { enabled: boolean; url: string; username: string; has_password: boolean };
-export const getProxySettings = () => invoke<ProxySettings>("get_proxy_settings");
-/** 保存して次の通信から反映する。passwordはundefinedなら据え置き、空文字なら削除。無効にしてもURLなどは残る。 */
-export const setProxySettings = (enabled: boolean, url: string, username: string, password?: string) =>
-  invoke<ProxySettings>("set_proxy_settings", { enabled, url, username, password: password ?? null });
+/** 登録したプロキシ1件。パスワードは返さず、登録の有無だけ。 */
+export type ProxyEntry = { id: string; name: string; url: string; username: string; has_password: boolean };
+/** プロキシの一覧と、既定のID(なければ空)。 */
+export type ProxyList = { proxies: ProxyEntry[]; default_id: string };
+export const getProxies = () => invoke<ProxyList>("get_proxies");
+/** 追加(idなし)または更新して、次の通信から反映する。passwordはundefinedなら据え置き、空文字なら削除。 */
+export const saveProxy = (id: string | null, name: string, url: string, username: string, password?: string) =>
+  invoke<ProxyList>("save_proxy", { id, name, url, username, password: password ?? null });
+export const deleteProxy = (id: string) => invoke<ProxyList>("delete_proxy", { id });
+/** 既定のプロキシを決める。空文字なら既定なし。 */
+export const setDefaultProxy = (id: string) => invoke<ProxyList>("set_default_proxy", { id });
+/** このエージェントが使うプロキシの選択。空は既定を使う、"none"は使わない、それ以外は登録済みのID。 */
+export const getProxyChoice = () => invoke<string>("get_proxy_choice");
+export const setProxyChoice = (choice: string) => invoke<void>("set_proxy_choice", { choice });
 export const getTuning = () => invoke<Tuning>("get_tuning");
 /** 保存し、範囲内へ丸めた実際の値を返す。 */
 export const setTuning = (tuning: Tuning) => invoke<Tuning>("set_tuning", { tuning });

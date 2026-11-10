@@ -416,13 +416,13 @@ impl Failure {
     }
 }
 
-async fn assume_role(a: &AssumeRole, region: &str, code: Option<&str>) -> Result<(Keys, SystemTime), Failure> {
+async fn assume_role(ctx: &WorkspaceCtx, a: &AssumeRole, region: &str, code: Option<&str>) -> Result<(Keys, SystemTime), Failure> {
     let mut conf = aws_sdk_sts::Config::builder()
         .behavior_version_latest()
         .region(Region::new(region.to_owned()))
         .credentials_provider(a.source.credentials())
         ;
-    conf.set_http_client(super::proxy::aws_http_client());
+    conf.set_http_client(super::proxy::aws_http_client_for(ctx));
     let conf = conf.build();
     let mut req = aws_sdk_sts::Client::from_conf(conf)
         .assume_role()
@@ -467,7 +467,7 @@ async fn assume_with_prompt(ctx: &WorkspaceCtx, profile: &str, a: &AssumeRole, r
             ),
             None => None,
         };
-        match assume_role(a, region, code.as_deref()).await {
+        match assume_role(ctx, a, region, code.as_deref()).await {
             Ok((keys, expires)) => {
                 *session(ctx) = Some(Session { profile: profile.to_owned(), keys: keys.clone(), expires });
                 return Ok(keys);
@@ -576,7 +576,7 @@ pub fn remove_model(ctx: &WorkspaceCtx, id: &str) -> Result<(), AppError> {
 pub async fn invoke_model(ctx: &WorkspaceCtx, model_id: &str, request: &Value, timeout: Duration) -> Result<Value, AppError> {
     for attempt in 0..2 {
         let (keys, region) = credentials(ctx).await?;
-        match invoke_once(&keys, &region, model_id, request, timeout).await {
+        match invoke_once(ctx, &keys, &region, model_id, request, timeout).await {
             Err(f) if f.expired() && attempt == 0 => clear_session(ctx),
             result => return result.map_err(Failure::into_error),
         }
@@ -585,6 +585,7 @@ pub async fn invoke_model(ctx: &WorkspaceCtx, model_id: &str, request: &Value, t
 }
 
 async fn invoke_once(
+    ctx: &WorkspaceCtx,
     keys: &Keys,
     region: &str,
     model_id: &str,
@@ -598,7 +599,7 @@ async fn invoke_once(
         .region(Region::new(region.to_owned()))
         .credentials_provider(keys.credentials())
         ;
-    conf.set_http_client(super::proxy::aws_http_client());
+    conf.set_http_client(super::proxy::aws_http_client_for(ctx));
     let conf = conf.build();
     let out = tokio::time::timeout(
         timeout,
@@ -621,7 +622,7 @@ async fn invoke_once(
 pub async fn fetch_global_models(ctx: &WorkspaceCtx) -> Result<Vec<String>, AppError> {
     for attempt in 0..2 {
         let (keys, region) = credentials(ctx).await?;
-        match list_global_profiles(&keys, &region).await {
+        match list_global_profiles(ctx, &keys, &region).await {
             Err(f) if f.expired() && attempt == 0 => clear_session(ctx),
             result => return result.map_err(Failure::into_error),
         }
@@ -629,14 +630,14 @@ pub async fn fetch_global_models(ctx: &WorkspaceCtx) -> Result<Vec<String>, AppE
     unreachable!("the second attempt always returns")
 }
 
-async fn list_global_profiles(keys: &Keys, region: &str) -> Result<Vec<String>, Failure> {
+async fn list_global_profiles(ctx: &WorkspaceCtx, keys: &Keys, region: &str) -> Result<Vec<String>, Failure> {
     use aws_sdk_bedrock::types::InferenceProfileType;
     let mut conf = aws_sdk_bedrock::Config::builder()
         .behavior_version_latest()
         .region(Region::new(region.to_owned()))
         .credentials_provider(keys.credentials())
         ;
-    conf.set_http_client(super::proxy::aws_http_client());
+    conf.set_http_client(super::proxy::aws_http_client_for(ctx));
     let conf = conf.build();
     let client = aws_sdk_bedrock::Client::from_conf(conf);
     let mut ids = Vec::new();

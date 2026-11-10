@@ -91,7 +91,7 @@ async fn synthesize_inner(ctx: &WorkspaceCtx, text: &str) -> Result<String, AppE
         return Err(AppError::EmptyText);
     }
     let key = ctx.secrets.get_tts_key()?.ok_or_else(|| AppError::KeyMissing("google_tts".into()))?;
-    let client = super::proxy::client_builder()
+    let client = super::proxy::client_builder_for(ctx)
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|_| AppError::Network)?;

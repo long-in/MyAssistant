@@ -52,8 +52,10 @@ impl FromStr for Provider {
 /// Google Cloud TTS用のキー。
 const TTS_ACCOUNT: &str = "google_tts";
 
-/// 通信のプロキシのパスワード(`proxy.rs`専用の保管庫に置く)。
-const PROXY_PASSWORD_ACCOUNT: &str = "proxy_password";
+/// 通信のプロキシのパスワード(`proxy.rs`専用の保管庫に置く)。プロキシのIDごとに`proxy_password:<id>`で持つ。
+const PROXY_PASSWORD_PREFIX: &str = "proxy_password:";
+/// プロキシが1つだった頃のパスワード。起動時の移行(`move_legacy_proxy_password`)でだけ読む。
+const LEGACY_PROXY_PASSWORD_ACCOUNT: &str = "proxy_password";
 
 /// AWS Bedrock用。`~/.aws/config`と`~/.aws/credentials`の貼り付け内容をそのまま保持する。
 const AWS_CONFIG_ACCOUNT: &str = "aws_config";
@@ -65,6 +67,10 @@ const AWS_MODELS_ACCOUNT: &str = "aws_models";
 
 /// `Secrets::backup`で控えた内容。中身はこのモジュールの外へ出さない。
 pub struct SecretsBackup(HashMap<String, String>);
+
+fn proxy_account(id: &str) -> String {
+    format!("{PROXY_PASSWORD_PREFIX}{id}")
+}
 
 /// 1つのワークスペース(`secrets.json`)分のキー保管庫。ワークスペースごとに別インスタンスを持つ。
 pub struct Secrets {
@@ -206,21 +212,35 @@ impl Secrets {
         self.delete_secret(TTS_ACCOUNT)
     }
 
-    pub fn has_proxy_password(&self) -> Result<bool, AppError> {
-        Ok(self.get_secret(PROXY_PASSWORD_ACCOUNT)?.is_some())
+    pub fn has_proxy_password(&self, id: &str) -> Result<bool, AppError> {
+        Ok(self.get_secret(&proxy_account(id))?.is_some())
     }
 
     /// Rust内部のプロキシ設定専用。コマンドとして公開しないこと。
-    pub(crate) fn get_proxy_password(&self) -> Result<Option<String>, AppError> {
-        self.get_secret(PROXY_PASSWORD_ACCOUNT)
+    pub(crate) fn get_proxy_password(&self, id: &str) -> Result<Option<String>, AppError> {
+        self.get_secret(&proxy_account(id))
     }
 
-    pub fn set_proxy_password(&self, password: &str) -> Result<(), AppError> {
-        self.set_secret(PROXY_PASSWORD_ACCOUNT, password)
+    pub fn set_proxy_password(&self, id: &str, password: &str) -> Result<(), AppError> {
+        self.set_secret(&proxy_account(id), password)
     }
 
-    pub fn delete_proxy_password(&self) -> Result<(), AppError> {
-        self.delete_secret(PROXY_PASSWORD_ACCOUNT)
+    pub fn delete_proxy_password(&self, id: &str) -> Result<(), AppError> {
+        self.delete_secret(&proxy_account(id))
+    }
+
+    /// プロキシが1つだった頃のパスワードを、指定したIDのものへ移す(無ければ何もしない)。
+    pub(crate) fn move_legacy_proxy_password(&self, id: &str) -> Result<(), AppError> {
+        if let Some(pw) = self.get_secret(LEGACY_PROXY_PASSWORD_ACCOUNT)? {
+            self.set_secret(&proxy_account(id), &pw)?;
+            self.delete_secret(LEGACY_PROXY_PASSWORD_ACCOUNT)?;
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_legacy_proxy_password_for_test(&self, password: &str) {
+        self.set_secret(LEGACY_PROXY_PASSWORD_ACCOUNT, password).unwrap();
     }
 
     /// そのプロバイダーを使えるか。ローカルはキーではなく、取得済みかどうか(全ワークスペース共通)。
@@ -384,11 +404,11 @@ mod tests {
         sa.set_key(Provider::Anthropic, "ka").unwrap();
         sa.set_tts_key("tts-a").unwrap();
         sb.set_tts_key("tts-b").unwrap();
-        sb.set_proxy_password("pw-b").unwrap();
+        sb.set_proxy_password("p1", "pw-b").unwrap();
         assert_eq!(sb.copy_from(&sa).unwrap(), 2);
         assert_eq!(sb.get_key(Provider::Anthropic).unwrap().as_deref(), Some("ka"));
         assert_eq!(sb.get_tts_key().unwrap().as_deref(), Some("tts-a")); // 上書き
-        assert_eq!(sb.get_proxy_password().unwrap().as_deref(), Some("pw-b")); // 残る
+        assert_eq!(sb.get_proxy_password("p1").unwrap().as_deref(), Some("pw-b")); // 残る
         assert_eq!(sa.get_tts_key().unwrap().as_deref(), Some("tts-a"));
         // 保存済みで、開き直しても残る
         assert!(Secrets::open(b.path()).unwrap().has_key(Provider::Anthropic).unwrap());
