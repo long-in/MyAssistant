@@ -1011,7 +1011,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
       <div className="flex min-h-0 flex-1 flex-col gap-3 md:flex-row">
         <section className={cn("hud-panel hud-accent min-h-0 min-w-0 flex-1 flex-col gap-3 px-5 py-4", `flex ${SMALL}:hidden`)} aria-label={t("会話")}>
           <div className="flex shrink-0 items-center justify-between gap-2">
-            <p className="hud-label">{"// Conversation"}</p>
+            <p className="hud-heading">{"// Conversation"}</p>
             <Button
               type="button"
               variant="outline"
