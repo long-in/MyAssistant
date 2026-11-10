@@ -177,7 +177,7 @@ fn valid_session_id(id: &str) -> bool {
 }
 
 /// アプリが内部で渡す値(`MYASSISTANT_`)。
-fn internal_vars(cfg: &LlmConfig, policy: &Policy, system: &str, resume: Option<&str>) -> Result<BTreeMap<String, String>, String> {
+fn internal_vars(cfg: &LlmConfig, policy: &Policy, extra_deny: &[String], system: &str, resume: Option<&str>) -> Result<BTreeMap<String, String>, String> {
     if system.len() > SYSTEM_MAX_BYTES {
         return Err(format!("システムプロンプトが長すぎます(上限{}KB)。", SYSTEM_MAX_BYTES / 1024));
     }
@@ -187,7 +187,8 @@ fn internal_vars(cfg: &LlmConfig, policy: &Policy, system: &str, resume: Option<
     let mut v = BTreeMap::new();
     v.insert("MYASSISTANT_SYSTEM_PROMPT".to_owned(), system.to_owned());
     v.insert("MYASSISTANT_ALLOWED_TOOLS".to_owned(), cfg.allowed_tools.join(","));
-    v.insert("MYASSISTANT_DISALLOWED_TOOLS".to_owned(), deny_rules(policy).join(","));
+    let deny: Vec<String> = extra_deny.iter().cloned().chain(deny_rules(policy)).collect();
+    v.insert("MYASSISTANT_DISALLOWED_TOOLS".to_owned(), deny.join(","));
     if let Some(id) = resume {
         if !valid_session_id(id) {
             return Err("会話のセッションIDが正しくありません。".into());
@@ -333,6 +334,8 @@ pub struct Turn<'a> {
     pub system: &'a str,
     /// 続きの指示なら、前回のセッションID。
     pub resume: Option<&'a str>,
+    /// 追加で拒否するツール(コマンド実行やWeb検索を無効にしているときの`Bash`・`WebFetch`など)。
+    pub deny: Vec<String>,
 }
 
 /// エラーの文面に添える標準エラーの末尾の文字数。
@@ -356,7 +359,7 @@ pub async fn run_turn(turn: Turn<'_>, cancel: &CancelToken, mut on_event: impl F
     let mounts = sandbox::mounts_for(turn.ctx, turn.knowledge_root)?;
     let mut vars = merge_env(&cfg, sandbox::env_for(turn.ctx).await?);
     check_credentials(&cfg, &vars)?;
-    vars.extend(internal_vars(&cfg, &command_policy::load(turn.knowledge_root), turn.system, turn.resume)?);
+    vars.extend(internal_vars(&cfg, &command_policy::load(turn.knowledge_root), &turn.deny, turn.system, turn.resume)?);
 
     let mut parser = LineParser::default();
     let mut session: Option<String> = None;
@@ -415,6 +418,50 @@ pub async fn run_turn(turn: Turn<'_>, cancel: &CancelToken, mut on_event: impl F
     r.timed_out = out.timed_out;
     r.cancelled = out.cancelled;
     Ok(r)
+}
+
+// ------------------------------------------------------------------ 会話との対応
+
+/// アプリの会話IDと、Claude Code のセッションIDの対応(エージェントごと。端末の会話と対なので書き出しの対象外)。
+pub const SESSIONS_KEY: &str = "sandbox_claude_sessions";
+/// 対応を覚えておく会話の数。古いものから捨てる。
+const SESSIONS_MAX: usize = 50;
+
+/// アプリの会話に対応する Claude Code のセッションID。無ければ`None`(新しいセッションで始める)。
+pub fn claude_session(db: &impl SettingsStore, app_session: &str) -> Option<String> {
+    let map: Vec<(String, String)> = db.get_setting(SESSIONS_KEY).ok().flatten().and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default();
+    map.into_iter().find(|(a, _)| a == app_session).map(|(_, c)| c).filter(|c| valid_session_id(c))
+}
+
+/// アプリの会話と Claude Code のセッションの対応を覚える。
+pub fn remember_session(db: &impl SettingsStore, app_session: &str, claude: &str) -> Result<(), AppError> {
+    if !valid_session_id(claude) {
+        return Ok(());
+    }
+    let mut map: Vec<(String, String)> = db.get_setting(SESSIONS_KEY)?.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default();
+    map.retain(|(a, _)| a != app_session);
+    map.push((app_session.to_owned(), claude.to_owned()));
+    let skip = map.len().saturating_sub(SESSIONS_MAX);
+    let map: Vec<_> = map.into_iter().skip(skip).collect();
+    db.set_setting(SESSIONS_KEY, &serde_json::to_string(&map).map_err(|e| AppError::Io(e.to_string()))?)
+}
+
+/// コンテナ内の作業環境の説明。システムプロンプトの末尾に加える。
+pub fn guide(has_workspace: bool) -> String {
+    let workspace = if has_workspace {
+        "- /workspace: 担当システムのフォルダ(ソースコードなど)。作業ディレクトリの既定。"
+    } else {
+        "- /workspace: 担当システムのフォルダは未設定(空)。作業ディレクトリの既定は /knowledge。"
+    };
+    format!(
+        "作業環境(サンドボックス)\n\
+- このエージェント専用のLinuxコンテナ(Debian)の中で動いている。macOSのコマンド(brew、open、osascriptなど)は使えない。\n\
+{workspace}\n\
+- /knowledge: このエージェントのナレッジ(Markdown)。調べた結果や覚えておくべきことは、既存の構成に合わせてここへ書く。\n\
+- /workspace と /knowledge はホストのフォルダで、変更はそのままホストに反映される。消す・上書きする前によく確かめる。\n\
+- 認証情報(APIキー・AWS)は環境変数として渡されている。値を読み取ったり出力したりしない。AWSのリソースは aws コマンドで扱える。\n\
+- 最終回答は、何をしてどうなったかを短く伝える。音声で読み上げられることがある。"
+    )
 }
 
 #[cfg(test)]
@@ -485,16 +532,48 @@ mod tests {
     fn internal_values_are_passed_by_environment_only() {
         let cfg = LlmConfig::default();
         let p = Policy::defaults();
-        let v = internal_vars(&cfg, &p, "ルール\n'\"$(rm -rf /)", Some("cd6a4042-73d8-4e11-84bc-f7e196eab226")).unwrap();
+        let v = internal_vars(&cfg, &p, &[], "ルール\n'\"$(rm -rf /)", Some("cd6a4042-73d8-4e11-84bc-f7e196eab226")).unwrap();
         assert_eq!(v["MYASSISTANT_SYSTEM_PROMPT"], "ルール\n'\"$(rm -rf /)");
         assert_eq!(v["MYASSISTANT_RESUME"], "cd6a4042-73d8-4e11-84bc-f7e196eab226");
         assert!(v["MYASSISTANT_ALLOWED_TOOLS"].starts_with("Bash,"));
         assert!(v.keys().all(|k| k.starts_with("MYASSISTANT_")));
         // コマンドには値を埋め込まない
         assert!(!CLAUDE_COMMAND.contains("ルール") && CLAUDE_COMMAND.contains("\"$MYASSISTANT_SYSTEM_PROMPT\""));
-        assert!(internal_vars(&cfg, &p, "x", Some("bad id;rm")).is_err());
-        assert!(internal_vars(&cfg, &p, &"a".repeat(SYSTEM_MAX_BYTES + 1), None).is_err());
-        assert!(!internal_vars(&cfg, &p, "x", None).unwrap().contains_key("MYASSISTANT_RESUME"));
+        assert!(internal_vars(&cfg, &p, &[], "x", Some("bad id;rm")).is_err());
+        assert!(internal_vars(&cfg, &p, &[], &"a".repeat(SYSTEM_MAX_BYTES + 1), None).is_err());
+        assert!(!internal_vars(&cfg, &p, &[], "x", None).unwrap().contains_key("MYASSISTANT_RESUME"));
+    }
+
+    #[test]
+    fn extra_deny_is_added_before_policy_rules() {
+        let v = internal_vars(&LlmConfig::default(), &Policy::defaults(), &["Bash".into(), "WebFetch".into()], "x", None).unwrap();
+        assert!(v["MYASSISTANT_DISALLOWED_TOOLS"].starts_with("Bash,WebFetch,Bash("));
+    }
+
+    #[test]
+    fn sessions_are_remembered_per_conversation_and_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::Db::open(&dir.path().join("t.db")).unwrap();
+        assert_eq!(claude_session(&db, "a"), None);
+        remember_session(&db, "a", "s-1").unwrap();
+        remember_session(&db, "b", "s-2").unwrap();
+        remember_session(&db, "a", "s-3").unwrap();
+        assert_eq!(claude_session(&db, "a").as_deref(), Some("s-3"));
+        assert_eq!(claude_session(&db, "b").as_deref(), Some("s-2"));
+        // 不正なIDは覚えない
+        remember_session(&db, "c", "bad id").unwrap();
+        assert_eq!(claude_session(&db, "c"), None);
+        for i in 0..SESSIONS_MAX + 5 {
+            remember_session(&db, &format!("x{i}"), &format!("s-x{i}")).unwrap();
+        }
+        assert_eq!(claude_session(&db, "a"), None);
+        assert!(claude_session(&db, &format!("x{}", SESSIONS_MAX + 4)).is_some());
+    }
+
+    #[test]
+    fn guide_describes_the_mounts() {
+        assert!(guide(true).contains("/workspace: 担当システム") && guide(true).contains("/knowledge"));
+        assert!(guide(false).contains("未設定"));
     }
 
     #[test]
@@ -547,7 +626,7 @@ mod tests {
         std::fs::write(super::super::sandbox_env::path(&ctx.dir), "ANTHROPIC_API_KEY=sk-ant-dummy-not-a-real-key-0000\n").unwrap();
         let cancel = CancelToken::default();
         let mut events = Vec::new();
-        let turn = Turn { ctx: &ctx, knowledge_root: &knowledge, prompt: "こんにちは", system: "日本語で答える。'\"$(x)", resume: None };
+        let turn = Turn { ctx: &ctx, knowledge_root: &knowledge, prompt: "こんにちは", system: "日本語で答える。'\"$(x)", resume: None, deny: vec!["WebFetch".into()] };
         let r = run_turn(turn, &cancel, |e| events.push(e)).await.unwrap();
         assert!(r.is_error, "{r:?}");
         assert!(r.session_id.is_some(), "{r:?}");
@@ -555,7 +634,7 @@ mod tests {
         assert!(!r.text.contains("sk-ant-dummy"), "{}", r.text);
         // 続きの指示(--resume)も同じ流れで通る
         let resume = r.session_id.clone().unwrap();
-        let turn = Turn { ctx: &ctx, knowledge_root: &knowledge, prompt: "続き", system: "x", resume: Some(&resume) };
+        let turn = Turn { ctx: &ctx, knowledge_root: &knowledge, prompt: "続き", system: "x", resume: Some(&resume), deny: Vec::new() };
         let r2 = run_turn(turn, &cancel, |_| {}).await.unwrap();
         assert!(r2.is_error, "{r2:?}");
         sandbox::remove_agent_blocking_for_test(id);

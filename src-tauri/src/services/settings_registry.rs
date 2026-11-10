@@ -82,6 +82,8 @@ pub const ALL: &[Setting] = &[
     agent(batch::KNOWLEDGE_DIR_KEY, None),
     // サンドボックスの/workspaceにマウントするフォルダ。端末ごとに異なるので対象外
     agent(sandbox::WORKSPACE_DIR_KEY, None),
+    // アプリの会話とコンテナ内の Claude Code のセッションの対応。端末の履歴(DB)と対なので対象外
+    agent(sandbox_agent::SESSIONS_KEY, None),
     agent(debug_log::DIR_KEY, None),
     agent(stt::REVISION_KEY, None),
     agent(voicevox::VERSIONS_KEY, None),

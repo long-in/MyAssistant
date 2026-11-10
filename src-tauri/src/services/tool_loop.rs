@@ -32,7 +32,7 @@ use crate::utils::{
 const MAX_STEPS: usize = 20;
 const MAX_STEPS_SHELL: usize = 40;
 /// 中断したときにユーザーへ返す文面。
-const CANCELLED_TEXT: &str = "作業を中断しました。";
+pub const CANCELLED_TEXT: &str = "作業を中断しました。";
 /// `propose_plan`の手順の上限(個数と1件あたりの文字数)。
 const PLAN_MAX_STEPS: usize = 20;
 const PLAN_STEP_CHARS: usize = 300;

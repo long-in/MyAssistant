@@ -21,7 +21,8 @@ use crate::{
         llm_client::SystemPrompt,
         llm_router::{self, ModelInfo, Route},
         memory,
-        chat_session, profile, prompts, sandbox,
+        cancel::CancelToken,
+        chat_session, profile, prompts, sandbox, sandbox_agent,
         secrets::Provider,
         skills, skills_migration,
         agent_data, tuning,
@@ -329,6 +330,140 @@ pub async fn run_recorded(
     result
 }
 
+/// ユーザーが書いた指示の部分(基本情報、データ、記憶)。通常の会話とサンドボックスの会話で共有する。
+/// 基本情報は設定の変更を次の発話から反映するため、セッションのキャッシュに入れず毎回読む。
+/// パーソナルはパーソナルデータ、エージェントは共通データとエージェントデータ(どちらもユーザーが書いた指示)を渡す。エージェントにパーソナルデータは渡さない。
+/// リーダーはリーダープロンプトだけを渡す(パーソナルデータ・共通データ・エージェントデータは渡さない)。
+/// 記憶(覚えておくこと)は、パーソナルとエージェントだけ。リーダーには持たせない。ユーザーの指示として従わせる。
+fn instruction_blocks(app: &AppHandle, ctx: &WorkspaceCtx) -> Result<(Option<String>, Vec<String>, Option<String>), AppError> {
+    let (personal, instructions) = if ctx.id == workspace::PERSONAL_ID {
+        (profile::load(&*ctx.global)?.prompt_block(chrono::Local::now().date_naive()), Vec::new())
+    } else if ctx.id == workspace::LEADER_ID {
+        (None, leader::prompt_block(&leader::load_prompt(&ctx.db)?).into_iter().collect())
+    } else {
+        let shared = agent_data::shared_block(&agent_data::load_shared(app.state::<Workspaces>().root()));
+        (None, shared.into_iter().chain(agent_data::agent_block(&agent_data::load(&ctx.db)?)).collect())
+    };
+    let pinned = match batch::knowledge_root(ctx) {
+        Ok(root) if ctx.id != workspace::LEADER_ID => memory::pinned_block(&root),
+        _ => None,
+    };
+    Ok((personal, instructions, pinned))
+}
+
+/// 画面の進捗表示へ渡すツールの結果の長さ。
+const SANDBOX_PREVIEW_CHARS: usize = 600;
+/// イメージの準備の進捗を、ツール呼び出しの形で見せるときのID。
+const SANDBOX_PREPARE_ID: &str = "sandbox-prepare";
+
+/// サンドボックスの会話の1ターン。コンテナ内の Claude Code に指示を渡し、途中経過を画面へ流して、回答を記録する。
+/// 会話の文脈は Claude Code のセッション(`--resume`)が持つので、アプリの履歴や関連ナレッジは渡さない(Claude Code が /knowledge を読む)。
+async fn send_chat_sandbox(
+    app: &AppHandle,
+    ctx: &Arc<WorkspaceCtx>,
+    contexts: &SessionContexts,
+    session_id: &str,
+    text: &str,
+) -> Result<ChatReply, AppError> {
+    let root = batch::knowledge_root(ctx)?;
+    std::fs::create_dir_all(&root).map_err(|e| AppError::Io(e.to_string()))?;
+    let cfg = sandbox_agent::load(&ctx.db)?;
+    let corrections = contexts
+        .0
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .entry((ctx.id.clone(), session_id.to_owned()))
+        .or_insert_with(|| restore_corrections(ctx))
+        .clone();
+    let base = prompts::load_chat(&ctx.db, &*ctx.global)?;
+    let (personal, instructions, pinned) = instruction_blocks(app, ctx)?;
+    let has_workspace = sandbox::workspace_dir(ctx).map_err(AppError::Sandbox)?.is_some();
+    let system: Vec<String> = std::iter::once(base)
+        .chain(instructions)
+        .chain(pinned)
+        .chain(personal)
+        .chain(corrections)
+        .chain(std::iter::once(sandbox_agent::guide(has_workspace)))
+        .collect();
+    // コマンド実行・Web検索を無効にしているエージェントでは、対応するツールも拒否する
+    let mut deny = Vec::new();
+    if !shell_access(&ctx.db)? {
+        deny.push("Bash".to_owned());
+    }
+    if !web_access(&ctx.db)? {
+        deny.extend(["WebFetch".to_owned(), "WebSearch".to_owned()]);
+    }
+    ctx.db.insert_log(session_id, "user", text, None, None)?;
+    let resume = sandbox_agent::claude_session(&ctx.db, session_id);
+
+    let cancel = CancelToken::default();
+    ctx.shared.task.set_cancel(cancel.clone());
+    let mut preparing = false;
+    let emit = |event: TaskEvent| ctx.shared.task.emit(event);
+    let turn = sandbox_agent::Turn {
+        ctx,
+        knowledge_root: &root,
+        prompt: text,
+        system: &system.join("\n\n"),
+        resume: resume.as_deref(),
+        deny,
+    };
+    let result = sandbox_agent::run_turn(turn, &cancel, |event| {
+        // イメージの準備の進捗は、1つのツール呼び出しとその出力として見せる
+        if let sandbox_agent::AgentEvent::Status { line } = &event {
+            if !preparing {
+                preparing = true;
+                emit(TaskEvent::ToolCall { id: SANDBOX_PREPARE_ID.into(), name: "sandbox_prepare".into(), input: json!({}) });
+            }
+            emit(TaskEvent::CommandOutput { id: SANDBOX_PREPARE_ID.into(), stream: crate::services::shell::Stream::Stderr, text: format!("{line}\n") });
+            return;
+        }
+        if std::mem::take(&mut preparing) {
+            emit(TaskEvent::ToolResult { id: SANDBOX_PREPARE_ID.into(), ok: true, preview: "準備しました".into() });
+        }
+        emit(match event {
+            sandbox_agent::AgentEvent::Text { text } => TaskEvent::Text { text },
+            sandbox_agent::AgentEvent::ToolUse { id, name, input } => TaskEvent::ToolCall { id, name, input },
+            sandbox_agent::AgentEvent::ToolResult { id, content, is_error } => {
+                TaskEvent::ToolResult { id, ok: !is_error, preview: content.chars().take(SANDBOX_PREVIEW_CHARS).collect() }
+            }
+            sandbox_agent::AgentEvent::Status { .. } => unreachable!(),
+        });
+    })
+    .await;
+    ctx.shared.task.clear_cancel();
+    let r = result.map_err(AppError::Sandbox)?;
+    // 中断・時間切れでも、それまでの作業はセッションに残るので、続きの指示で引き継ぐ
+    if let Some(id) = &r.session_id
+        && !r.is_error
+    {
+        sandbox_agent::remember_session(&ctx.db, session_id, id)?;
+    }
+    log::info!("sandbox turn: cost_usd={:?} turns={:?} usage={}", r.cost_usd, r.num_turns, r.usage.clone().unwrap_or(Value::Null));
+    if r.is_error {
+        return Err(AppError::Sandbox(if r.text.trim().is_empty() { "Claude Code がエラーで終了しました。".into() } else { r.text }));
+    }
+    if r.timed_out {
+        return Err(AppError::Sandbox(format!("上限時間({}分)を超えたため中断しました。続きは、もう一度指示してください。", cfg.timeout_mins)));
+    }
+    let content = if r.cancelled { tool_loop::CANCELLED_TEXT.to_owned() } else { r.text };
+    let model = if cfg.model.is_empty() { "default".to_owned() } else { cfg.model.clone() };
+    // 実行中に削除されたエージェントへは、応答もキャプチャも書かない
+    ctx.ensure_alive()?;
+    ctx.db.insert_log(session_id, "assistant", &content, Some(SANDBOX_PROVIDER), Some(&model))?;
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    match knowledge::append_capture(&root, session_id, text, &content, &now) {
+        Ok(()) => {
+            let _ = app.emit(batch::KNOWLEDGE_UPDATED_EVENT, ());
+        }
+        Err(e) => log::warn!("capture failed: {e}"),
+    }
+    Ok(ChatReply { content, provider: SANDBOX_PROVIDER, model })
+}
+
+/// サンドボックスの会話の応答の記録に使う接続先の名前。
+const SANDBOX_PROVIDER: &str = "claude_code";
+
 async fn send_chat_inner(
     app: &AppHandle,
     ctx: &Arc<WorkspaceCtx>,
@@ -339,6 +474,10 @@ async fn send_chat_inner(
     route: Route,
     skill: Option<String>,
 ) -> Result<ChatReply, AppError> {
+    // サンドボックスが有効なら、会話はコンテナ内の Claude Code が受け持つ(リーダーは対象外)
+    if sandbox_enabled(ctx)? {
+        return send_chat_sandbox(app, ctx, contexts, &session_id, text).await;
+    }
     let available: Vec<Provider> = Provider::ALL
         .into_iter()
         .filter(|p| ctx.secrets.has_key(*p).unwrap_or(false))
@@ -382,22 +521,7 @@ async fn send_chat_inner(
         }
         None => (None, skills::prepare(&ctx, &root, text, previous, may_manage, recent_mention).await),
     };
-    // 基本情報は設定の変更を次の発話から反映するため、セッションのキャッシュに入れず毎回読む
-    // パーソナルはパーソナルデータ、エージェントは共通データとエージェントデータ(どちらもユーザーが書いた指示)を渡す。エージェントにパーソナルデータは渡さない
-    // リーダーはリーダープロンプトだけを渡す(パーソナルデータ・共通データ・エージェントデータは渡さない)
-    let (personal, instructions) = if ctx.id == workspace::PERSONAL_ID {
-        (profile::load(&*ctx.global)?.prompt_block(chrono::Local::now().date_naive()), Vec::new())
-    } else if ctx.id == workspace::LEADER_ID {
-        (None, leader::prompt_block(&leader::load_prompt(&ctx.db)?).into_iter().collect())
-    } else {
-        let shared = agent_data::shared_block(&agent_data::load_shared(app.state::<Workspaces>().root()));
-        (None, shared.into_iter().chain(agent_data::agent_block(&agent_data::load(&ctx.db)?)).collect())
-    };
-    // 記憶(覚えておくこと)は、パーソナルとエージェントだけ。リーダーには持たせない。ユーザーの指示として従わせる
-    let pinned = match batch::knowledge_root(&ctx) {
-        Ok(root) if ctx.id != workspace::LEADER_ID => memory::pinned_block(&root),
-        _ => None,
-    };
+    let (personal, instructions, pinned) = instruction_blocks(app, ctx)?;
     let system = assemble_system(SystemParts {
         base,
         instructions: instructions.into_iter().chain(pinned).collect(),
