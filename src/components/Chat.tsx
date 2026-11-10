@@ -47,7 +47,6 @@ import {
   downloadSttModel,
   getSttEngine,
   getTtsEngine,
-  aquaKeyRegistered,
   ttsKeyRegistered,
   getKeyStatus,
   getVoiceTiming,
@@ -257,10 +256,10 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   // 対話画面へ戻るたびに、設定画面などでの変更(キー・モデル・待機設定)を読み直す
   useEffect(() => {
     if (!active) return;
-    Promise.all([listModels(), loadRouting(), getKeyStatus(), fetchTtsReady(), getWakeConfig(), getVoiceTiming(), getTtsEngine(), getSttEngine(), ttsKeyRegistered(), aquaKeyRegistered(), sttModelReady()])
-      .then(([m, r, k, t, w, u, te, se, gk, ak, sm]) => {
+    Promise.all([listModels(), loadRouting(), getKeyStatus(), fetchTtsReady(), getWakeConfig(), getVoiceTiming(), getTtsEngine(), getSttEngine(), ttsKeyRegistered(), sttModelReady()])
+      .then(([m, r, k, t, w, u, te, se, gk, sm]) => {
         tuning.current = u;
-        setSetup({ tts: te, stt: se, sttKey: se === "google" ? gk : se === "aqua" ? ak : true });
+        setSetup({ tts: te, stt: se, sttKey: se === "google" ? gk : true });
         setNeedModel(se === "local" && !sm);
         setModels(m);
         setRoute(r);

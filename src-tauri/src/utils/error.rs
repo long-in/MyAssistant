@@ -232,7 +232,7 @@ impl AppError {
 struct ErrorPayload<'a> {
     code: &'a str,
     message: String,
-    /// 発生元API("anthropic" | "bedrock" | "local" | "google_tts" | "google_stt" | "aqua_stt" | "voicevox")。不明な場合はnull。
+    /// 発生元API("anthropic" | "bedrock" | "local" | "google_tts" | "google_stt" | "voicevox")。不明な場合はnull。
     source: Option<&'static str>,
 }
 

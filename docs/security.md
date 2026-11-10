@@ -36,10 +36,10 @@
 ## API キー(`secrets.rs`)
 
 - 保存先は、ワークスペースごとの `secrets.json`(パーソナルはアプリデータ直下、エージェントは `workspaces/<UUID>/` 配下。所有者のみ読み書き可の権限 0600)。**平文の JSON** であり、OS のキーチェーンは使っていない。この点は設定画面にも明記している。
-- 取得関数(`get_key` / `get_aqua_key` / `get_tts_key`)は Rust 内部の HTTP クライアント専用で、**Tauri コマンドとして公開しない**。コマンドとして出すのは登録有無・保存・削除だけ。
+- 取得関数(`get_key` / `get_tts_key`)は Rust 内部の HTTP クライアント専用で、**Tauri コマンドとして公開しない**。コマンドとして出すのは登録有無・保存・削除だけ。
 - 保存は一時ファイルへ書いてからリネームする(書き込み途中の破損を避ける)。
 - 保存前に疎通確認を行い、成功したときだけ保存する(モデル一覧取得・音声一覧取得・認証のみの確認。いずれも読み取り専用で課金されない)。
-- キーの種類: Anthropic、Amazon Bedrock(下記)、Google Cloud(TTS と Google STT で共通)、Aqua Voice(Google とは別)。
+- キーの種類: Anthropic、Amazon Bedrock(下記)、Google Cloud(TTS と Google STT で共通)。
 - エラーの `message` には API キーを含めない。キーはリクエストヘッダーにのみ載り、デバッグログの本文にも含まれない。
 - 設定のエクスポートには含めない。アプリ全体のバックアップ([backup.md](backup.md))には、平文のまま含める。zip は 0600 で書き出し(任意のパスワードで AES-256 暗号化もできる)、リストアで戻した `secrets.json` も 0600 にする。
 
@@ -89,7 +89,6 @@
 | Amazon Bedrock | Anthropic と同様(AWS の指定リージョンへ送信) |
 | Anthropic(Web 検索・取得) | 検索語・URL(ナレッジや会話の内容を含めないよう指示) |
 | Google Cloud | 応答テキスト(TTS)、録音(Google STT を選んだときのみ) |
-| Aqua Voice | 録音(Aqua を選んだときのみ) |
 | GitHub(`github.com`) | VOICEVOX・ローカル LLM(llama.cpp)の取得時のみ。ダウンロード要求(送信する内容はない) |
 | Hugging Face(`huggingface.co`) | Whisper・ローカル LLM(Qwen)のモデルの取得時のみ。ダウンロード要求(送信する内容はない) |
 

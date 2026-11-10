@@ -11,7 +11,7 @@ use crate::{
         llm_router::{self, Route},
         proofread, pronunciation, secrets, settings_transfer::MAX_FILE_BYTES, stt,
         stt::SttEngine,
-        stt_aqua, stt_google, tts,
+        stt_google, tts,
         tts::Voice,
         voicevox::{self, VoicevoxEngine},
         vad::{self, VadEngine},
@@ -24,7 +24,7 @@ use crate::{
 pub const STT_ENGINE_KEY: &str = "stt_engine";
 
 /// 選択できる音声認識エンジン。
-pub const STT_ENGINES: [&str; 3] = ["local", "google", "aqua"];
+pub const STT_ENGINES: [&str; 2] = ["local", "google"];
 
 /// 音声認識エンジンの設定値。未設定・不明な値はローカルWhisper。
 fn stt_engine(db: &Db) -> Result<&'static str, AppError> {
@@ -258,8 +258,6 @@ async fn transcribe_recording(
     }
     let text = if engine == "google" {
         stt_google::transcribe(ctx, &samples, &language).await?
-    } else if engine == "aqua" {
-        stt_aqua::transcribe(ctx, &samples, &language).await?
     } else {
         let model = model_path(app)?;
         let app = app.clone();
@@ -559,22 +557,3 @@ pub fn delete_tts_key(ctx: Ctx) -> Result<(), AppError> {
     ctx.secrets.delete_tts_key()
 }
 
-#[tauri::command]
-pub fn aqua_key_registered(ctx: Ctx) -> Result<bool, AppError> {
-    ctx.secrets.has_aqua_key()
-}
-
-#[tauri::command]
-pub async fn save_aqua_key(ctx: Ctx, key: String) -> Result<(), AppError> {
-    let key = key.trim();
-    if key.is_empty() {
-        return Err(AppError::EmptyKey);
-    }
-    stt_aqua::verify_key(key).await?;
-    ctx.secrets.set_aqua_key(key)
-}
-
-#[tauri::command]
-pub fn delete_aqua_key(ctx: Ctx) -> Result<(), AppError> {
-    ctx.secrets.delete_aqua_key()
-}

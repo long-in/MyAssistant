@@ -82,7 +82,7 @@ export default function CopyConfirmModal({ request, targets, onClose, onCopied }
           <li>{t("設定: モデル・音声・調整値・デバッグモード")}</li>
           <li>{t("コマンド権限")}</li>
           <li>{t("Bedrockのモデル一覧")}</li>
-          {request.includeKeys && <li className="font-medium text-destructive">{t("APIキー(Anthropic・AWS・Google・Aqua)")}</li>}
+          {request.includeKeys && <li className="font-medium text-destructive">{t("APIキー(Anthropic・AWS・Google)")}</li>}
           {request.includeDictionary && <li className="font-medium text-destructive">{t("読み上げ辞書(コピー先の辞書は置き換わる)")}</li>}
         </ul>
         <p className="mt-3 text-xs font-medium text-muted-foreground">{t("コピーしないもの")}</p>

@@ -12,7 +12,7 @@
 
 | `kind` | 内容 | 記録元 |
 | --- | --- | --- |
-| `api` | API の 1 往復(`api` 名、URL、リクエスト、ステータス、レスポンス)。`api` は `anthropic` / `bedrock` / `google_tts` / `google_stt` / `aqua_stt` | `llm_client.rs`、`tts.rs`、`stt_google.rs`、`stt_aqua.rs` |
+| `api` | API の 1 往復(`api` 名、URL、リクエスト、ステータス、レスポンス)。`api` は `anthropic` / `bedrock` / `google_tts` / `google_stt` | `llm_client.rs`、`tts.rs`、`stt_google.rs` |
 | `transcription` | 音声認識の結果(エンジン、言語、秒数、語彙ヒント、文字起こし)。VAD で発話なしと判定して認識を省いた場合は、その理由 | `commands/voice.rs` |
 
 - API キーはヘッダーにのみ載るため、本文には含まれない。

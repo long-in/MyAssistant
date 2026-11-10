@@ -37,7 +37,6 @@ pub mod profile;
 pub mod proxy;
 pub mod pronunciation;
 pub mod stt;
-pub mod stt_aqua;
 pub mod stt_google;
 pub mod tts;
 pub mod tuning;

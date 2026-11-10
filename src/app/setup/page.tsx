@@ -23,7 +23,7 @@ import { copyTargets, type CopyRequest } from "@/lib/copyTargets";
 import { DEFAULT_TUNING, getTuning, setTuning, LEADER_ID, PERSONAL_ID, getAgentData, saveAgentData, errorMessage, updateAgent, AGENT_NAME_MAX, leaderCopyApiKey, leaderGetPrompt, leaderSetPrompt, leaderGetLimit, leaderSetLimit, LEADER_LIMIT_MAX, type DeleteReport } from "@/lib/api";
 import { bumpSettingsVersion, refreshWorkspace, useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
-import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, aquaKeyRegistered, deleteAquaKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, setCommandPolicy, type CommandPolicy, getShellAccess, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, saveAquaKey, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setShellAccess, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
+import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, setCommandPolicy, type CommandPolicy, getShellAccess, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setShellAccess, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
 import AiSettings from "@/components/AiSettings";
 import { Heading, PageHeader, StatusPill, TuningPanel, type TuningField } from "@/components/GlobalPanels";
 
@@ -1086,29 +1086,14 @@ const VERSION_FIELDS: { key: keyof VoicevoxVersions; label: string }[] = [
   { key: "dict", label: "辞書" },
 ];
 
-/** 取得するWhisperモデル・VOICEVOXのバージョン。保存は次回の取得から効き、取得済みのものは取得し直すまで変わらない。 */
-function ModelSourcesPanel({ onChanged }: { onChanged: () => void }) {
-  const t = useT();
+/** 取得バージョン欄の共通部分: 取得済みの値の読み込みと、保存・取得の実行(成功したら再読み込みして親へ知らせる)。 */
+function useModelSources(onChanged: () => void) {
   const [src, setSrc] = useState<ModelSources | null>(null);
-  const [revision, setRevision] = useState("");
-  const [versions, setVersions] = useState<VoicevoxVersions | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-
-  const load = useCallback(
-    () =>
-      getModelSources()
-        .then((s) => {
-          setSrc(s);
-          setRevision(s.whisper_revision);
-          setVersions(s.voicevox);
-        })
-        .catch((e) => toast.error(reportError(e))),
-    [],
-  );
+  const load = useCallback(() => getModelSources().then(setSrc).catch((e) => toast.error(reportError(e))), []);
   useEffect(() => {
     load();
   }, [load]);
-
   const run = async (id: string, fn: () => Promise<void>, ok: string) => {
     setBusy(id);
     try {
@@ -1122,30 +1107,61 @@ function ModelSourcesPanel({ onChanged }: { onChanged: () => void }) {
       setBusy(null);
     }
   };
+  return { src, busy, run };
+}
 
-  if (!src || !versions) return null;
-  const installed = src.voicevox_installed;
-  const changed = installed !== null && VERSION_FIELDS.some(({ key }) => installed[key] !== src.voicevox[key]);
-  const edited = revision !== src.whisper_revision || VERSION_FIELDS.some(({ key }) => versions[key] !== src.voicevox[key]);
-  const save = () =>
-    run(
-      "save",
-      async () => {
-        await setWhisperRevision(revision);
-        await setVoicevoxVersions(versions);
-      },
-      t("取得バージョンを保存しました。"),
-    );
+/** 取得するWhisperモデルのバージョン。保存は次回の取得から効き、取得済みのものは取得し直すまで変わらない。 */
+function WhisperSourcePanel({ onChanged }: { onChanged: () => void }) {
+  const t = useT();
+  const { src, busy, run } = useModelSources(onChanged);
+  const [draft, setDraft] = useState<string | null>(null); // 編集中の値(未編集なら保存済みの値を使う)
+  if (!src) return null;
+  const revision = draft ?? src.whisper_revision;
+  const edited = revision !== src.whisper_revision;
 
   return (
     <details className="border-t py-3">
       <summary className="cursor-pointer text-sm font-medium">{t("取得バージョン(上級者向け)")}</summary>
       <p className="mt-2 text-xs text-muted-foreground">
-        {t("モデルや音声ライブラリの更新に合わせて、取得するバージョンを変えられます。取得元(GitHub・Hugging Face)は変えられません。保存後に各項目の取得ボタンを押すと反映されます。")}
+        {t("モデルの更新に合わせて、取得するバージョンを変えられます。取得元(Hugging Face)は変えられません。保存後に取得ボタンを押すと反映されます。")}
       </p>
       <div className="mt-3 grid grid-cols-[8rem_1fr] items-center gap-x-3 gap-y-2 text-sm">
         <label htmlFor="ms-whisper">{t("Whisperモデル")}</label>
-        <Input id="ms-whisper" maxLength={64} placeholder={src.whisper_default} value={revision} onChange={(e) => setRevision(e.target.value)} />
+        <Input id="ms-whisper" maxLength={64} placeholder={src.whisper_default} value={revision} onChange={(e) => setDraft(e.target.value)} />
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button size="sm" disabled={busy !== null || !edited} onClick={() => run("save", () => setWhisperRevision(revision).then(() => setDraft(null)), t("取得バージョンを保存しました。"))}>
+          {busy === "save" && <Loader2 className="animate-spin" />} {t("保存")}
+        </Button>
+        <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => setDraft(src.whisper_default)}>
+          {t("既定値に戻す")}
+        </Button>
+        <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => run("whisper", downloadSttModel, t("Whisperモデルを取得しました。"))}>
+          {busy === "whisper" ? <Loader2 className="animate-spin" /> : <Download />} {t("Whisperモデルを取得し直す(約550MB)")}
+        </Button>
+      </div>
+    </details>
+  );
+}
+
+/** 取得するVOICEVOXのバージョン。保存は次回の取得から効き、取得済みのものは取得し直すまで変わらない。 */
+function VoicevoxSourcePanel({ onChanged }: { onChanged: () => void }) {
+  const t = useT();
+  const { src, busy, run } = useModelSources(onChanged);
+  const [draft, setDraft] = useState<VoicevoxVersions | null>(null); // 編集中の値(未編集なら保存済みの値を使う)
+  if (!src) return null;
+  const versions = draft ?? src.voicevox;
+  const installed = src.voicevox_installed;
+  const changed = installed !== null && VERSION_FIELDS.some(({ key }) => installed[key] !== src.voicevox[key]);
+  const edited = VERSION_FIELDS.some(({ key }) => versions[key] !== src.voicevox[key]);
+
+  return (
+    <details className="border-t py-3">
+      <summary className="cursor-pointer text-sm font-medium">{t("取得バージョン(上級者向け)")}</summary>
+      <p className="mt-2 text-xs text-muted-foreground">
+        {t("音声ライブラリの更新に合わせて、取得するバージョンを変えられます。取得元(GitHub・Hugging Face)は変えられません。保存後にVOICEVOXを取得し直すと反映されます。")}
+      </p>
+      <div className="mt-3 grid grid-cols-[8rem_1fr] items-center gap-x-3 gap-y-2 text-sm">
         {VERSION_FIELDS.map(({ key, label }) => (
           <div key={key} className="contents">
             <label htmlFor={`ms-${key}`}>{key === "core" || key === "onnxruntime" ? `VOICEVOX ${label}` : `VOICEVOX ${t(label)}`}</label>
@@ -1154,33 +1170,17 @@ function ModelSourcesPanel({ onChanged }: { onChanged: () => void }) {
               maxLength={64}
               placeholder={src.voicevox_default[key]}
               value={versions[key]}
-              onChange={(e) => setVersions({ ...versions, [key]: e.target.value })}
+              onChange={(e) => setDraft({ ...versions, [key]: e.target.value })}
             />
           </div>
         ))}
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Button size="sm" disabled={busy !== null || !edited} onClick={save}>
+        <Button size="sm" disabled={busy !== null || !edited} onClick={() => run("save", () => setVoicevoxVersions(versions).then(() => setDraft(null)), t("取得バージョンを保存しました。"))}>
           {busy === "save" && <Loader2 className="animate-spin" />} {t("保存")}
         </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy !== null}
-          onClick={() => {
-            setRevision(src.whisper_default);
-            setVersions(src.voicevox_default);
-          }}
-        >
+        <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => setDraft(src.voicevox_default)}>
           {t("既定値に戻す")}
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy !== null}
-          onClick={() => run("whisper", downloadSttModel, t("Whisperモデルを取得しました。"))}
-        >
-          {busy === "whisper" ? <Loader2 className="animate-spin" /> : <Download />} {t("Whisperモデルを取得し直す(約550MB)")}
         </Button>
       </div>
       {installed && (
@@ -1203,7 +1203,6 @@ export default function Setup() {
   const [ttsEngine, setTtsEngineState] = useState<TtsEngine>("voicevox");
   const [vvInstalled, setVvInstalled] = useState(false);
   const [vvStyle, setVvStyle] = useState(3);
-  const [aquaReady, setAquaReady] = useState(false);
   const [sttEngine, setSttEngineState] = useState<SttEngine>("local");
   const [sttLang, setSttLang] = useState<SttLanguage>("auto");
   const [sttUpgradable, setSttUpgradable] = useState(false);
@@ -1211,8 +1210,8 @@ export default function Setup() {
 
   const refresh = useCallback(
     () =>
-      Promise.all([getKeyStatus(), ttsKeyRegistered(), aquaKeyRegistered(), getSttEngine(), getSttLanguage(), sttModelUpgradable(), getTtsEngine(), voicevoxInstalled(), getVoicevoxStyle(), fetchTtsReady()])
-        .then(([s, t, a, e, l, u, te, vi, vs, sr]) => {
+      Promise.all([getKeyStatus(), ttsKeyRegistered(), getSttEngine(), getSttLanguage(), sttModelUpgradable(), getTtsEngine(), voicevoxInstalled(), getVoicevoxStyle(), fetchTtsReady()])
+        .then(([s, t, e, l, u, te, vi, vs, sr]) => {
           setTtsEngineState(te);
           setVvInstalled(vi);
           setVvStyle(vs);
@@ -1221,7 +1220,6 @@ export default function Setup() {
           setSttUpgradable(u);
           setStatus(s);
           setTtsReady(t);
-          setAquaReady(a);
           setSttEngineState(e);
         })
         .catch((e) => toast.error(reportError(e))),
@@ -1327,16 +1325,16 @@ export default function Setup() {
           <TabsContent value="voice" className="flex flex-col gap-6">
           {/* 音声認識(入力) */}
           <section className="hud-panel hud-accent px-5 py-4">
-            <Heading title="Voice Input" help={t("音声認識")} status={<StatusPill on>{sttEngine === "local" ? t("ローカル (Whisper)") : sttEngine === "google" ? "Google Cloud" : "Aqua Voice"}</StatusPill>}>
-              <p>{t("音声認識のエンジンがローカルの間は、Whisperで認識します(無料)。Aqua Voiceは音声認識のみで、読み上げ(TTS)には対応していません。")}</p>
+            <Heading title="Voice Input" help={t("音声認識")} status={<StatusPill on>{sttEngine === "local" ? t("ローカル (Whisper)") : "Google Cloud"}</StatusPill>}>
+              <p>{t("音声認識のエンジンがローカルの間は、Whisperで認識します(無料)。")}</p>
               <ul>
-                <li>{t("GoogleとAquaは録音音声を送信し、課金対象です。")}</li>
+                <li>{t("Googleは録音音声を送信し、課金対象です。")}</li>
               </ul>
             </Heading>
             <div className="flex items-center gap-3 border-t py-3">
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">{t("音声認識エンジン")}</div>
-                <div className="text-xs text-muted-foreground">{t("ローカルのWhisperは無料。GoogleとAquaは録音音声を送信し、課金対象です。")}</div>
+                <div className="text-xs text-muted-foreground">{t("ローカルのWhisperは無料。Googleは録音音声を送信し、課金対象です。")}</div>
               </div>
               <select
                 aria-label={t("音声認識エンジン")}
@@ -1350,24 +1348,7 @@ export default function Setup() {
               >
                 <option value="local">{t("ローカル (Whisper)")}</option>
                 <option value="google" disabled={!ttsReady}>Google Cloud</option>
-                <option value="aqua" disabled={!aquaReady}>Aqua Voice</option>
               </select>
-            </div>
-            <div className="flex flex-col gap-2 pb-3">
-            <KeyRow
-              card
-              title="Aqua Voice"
-              description={t("音声認識用のAPIキー(読み上げには使えません)")}
-              registered={aquaReady}
-              busy={busy === "aqua"}
-              onSave={(k) => run("aqua", () => saveAquaKey(k), t("APIキーを保存しました。"))}
-              onDelete={() =>
-                run("aqua", async () => {
-                  await deleteAquaKey();
-                  if (sttEngine === "aqua") await setSttEngine("local"); // キーがないAqua認識は使えない
-                })
-              }
-            />
             </div>
             {sttEngine === "local" && sttUpgradable && (
               <div className="flex items-center gap-3 border-t py-3">
@@ -1412,15 +1393,9 @@ export default function Setup() {
                 <option value="ko">한국어</option>
               </select>
             </div>
+            <WhisperSourcePanel onChanged={refresh} />
           </section>
 
-          {/* モデルの取得元 */}
-          <section className="hud-panel hud-accent px-5 py-4">
-            <Heading title="Model Sources" help={t("モデルの取得元")}>
-              <p>{t("音声認識(Whisper)と読み上げ(VOICEVOX)のモデルの取得元と版を指定します。")}</p>
-            </Heading>
-            <ModelSourcesPanel onChanged={refresh} />
-          </section>
           {/* 読み上げ(出力) */}
           <section className="hud-panel hud-accent px-5 py-4">
             <Heading title="Voice Output" help={t("読み上げ")} status={<StatusPill on={speechReady}>{ttsEngine === "voicevox" ? "VOICEVOX" : "Google Cloud"}</StatusPill>}>
@@ -1471,6 +1446,7 @@ export default function Setup() {
               onChanged={refresh}
               onStyle={(id) => run("vv-style", () => setVoicevoxStyle(id))}
             />
+            <VoicevoxSourcePanel onChanged={refresh} />
             <VoicePhrases ready={speechReady} engine={ttsEngine} style={vvStyle} />
             <PronunciationDictionary />
           </section>

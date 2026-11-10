@@ -15,7 +15,6 @@ export const SOURCE_LABELS: Record<string, string> = {
   local: "Local (Qwen)",
   google_tts: "Google Cloud Text-to-Speech",
   google_stt: "Google Cloud Speech-to-Text",
-  aqua_stt: "Aqua Voice",
   voicevox: "VOICEVOX",
 };
 
@@ -466,7 +465,7 @@ export const saveAgentData = (note: AgentNote) => invoke<AgentNote>("save_agent_
 export const getSharedData = () => invoke<AgentNote>("get_shared_data");
 export const saveSharedData = (note: AgentNote) => invoke<AgentNote>("save_shared_data", { note });
 
-export type SttEngine = "local" | "google" | "aqua";
+export type SttEngine = "local" | "google";
 export const getSttEngine = () => invoke<SttEngine>("get_stt_engine");
 export const setSttEngine = (engine: SttEngine) => invoke<void>("set_stt_engine", { engine });
 /** 音声認識の言語。autoは自動判定。 */
@@ -568,9 +567,6 @@ export const ttsKeyRegistered = () => invoke<boolean>("tts_key_registered");
 export const saveTtsKey = (key: string) => invoke<void>("save_tts_key", { key });
 export const deleteTtsKey = () => invoke<void>("delete_tts_key");
 
-export const aquaKeyRegistered = () => invoke<boolean>("aqua_key_registered");
-export const saveAquaKey = (key: string) => invoke<void>("save_aqua_key", { key });
-export const deleteAquaKey = () => invoke<void>("delete_aqua_key");
 
 /** 通信系の障害はUI表示に加えてローカルのビープ音でも通知する。 */
 const AUDIBLE_ERRORS = new Set([

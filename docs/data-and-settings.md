@@ -114,7 +114,7 @@ erDiagram
 | `sandbox_enabled` | `0` / `1` | 無効 | 全体設定の Sandbox(全体設定のため、設定の書き出し・コピーの対象外) |
 | `sandbox_llm` | 接続先・モデル・上限時間(分)・許可するツール(JSON) | Anthropic API・既定のモデル・30分 | Sandbox |
 | `sandbox_claude_sessions` | 会話 ID と Claude Code のセッション ID の対応(JSON、直近 50 件) | なし | なし(端末の会話と対なので対象外) |
-| `stt_engine` | `local` / `google` / `aqua` | `local` | Voice Link |
+| `stt_engine` | `local` / `google` | `local` | Voice Link |
 | `stt_language` | `auto` / `ja` / `en` / `zh` / `ko` | `auto` | Voice Link |
 | `tts_engine` | `google` / `voicevox` | `voicevox` | Voice Link |
 | `voicevox_style` | VOICEVOX のスタイル ID(数値の文字列) | `3`(ずんだもん ノーマル) | Voice Link |
@@ -155,7 +155,7 @@ erDiagram
 
 - `usage_logs` を当月(ローカル時間)で集計し、プロバイダー・モデル別に表示する(`UsageHud`)。
 - 金額は `src/lib/pricing.ts` の単価(100 万トークンあたり、USD)からの**概算**で、請求額とは一致しない場合がある。単価が未登録のモデルは金額を出さない。
-- このアプリ経由の呼び出しだけのローカル集計。Web 検索の追加料金や、Google Cloud・Aqua Voice の利用料は含まない。
+- このアプリ経由の呼び出しだけのローカル集計。Web 検索の追加料金や、Google Cloud の利用料は含まない。
 
 ## 設定のエクスポート・インポート(`settings_transfer.rs`)
 

@@ -36,7 +36,7 @@ export default function ChatNotices({
         <div className="flex flex-col gap-2 empty:hidden">
           {!Object.values(keyStatus).some(Boolean) && Object.keys(keyStatus).length > 0 && <Notice text={t("APIキーが未登録のため、AIが応答できません。")} action={t("設定を開く")} onAction={open} />}
           {!ttsReady && voiceReply && <Notice text={setup.tts === "voicevox" ? t("VOICEVOXが未取得のため、読み上げは動作しません(字幕のみ)。") : t("Google Cloudのキーが未登録のため、読み上げは動作しません(字幕のみ)。")} action={t("設定を開く")} onAction={open} />}
-          {!setup.sttKey && <Notice text={setup.stt === "aqua" ? t("Aqua Voiceのキーが未登録のため、音声入力は動作しません。") : t("Google Cloudのキーが未登録のため、音声入力は動作しません。")} action={t("設定を開く")} onAction={open} />}
+          {!setup.sttKey && <Notice text={t("Google Cloudのキーが未登録のため、音声入力は動作しません。")} action={t("設定を開く")} onAction={open} />}
         </div>
       )}
       {needModel && (
