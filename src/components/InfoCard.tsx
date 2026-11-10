@@ -8,6 +8,7 @@ import { Moon, Sun } from "lucide-react";
 /** 大時計(東京)の下に並べる都市。タイムゾーンは IANA 名で、サマータイムは Intl が反映する。 */
 const WORLD_CLOCKS = [
   { name: "香港", zone: "Asia/Hong_Kong" },
+  { name: "韓国", zone: "Asia/Seoul" },
   { name: "サンフランシスコ", zone: "America/Los_Angeles" },
   { name: "ドイツ", zone: "Europe/Berlin" },
 ] as const;
