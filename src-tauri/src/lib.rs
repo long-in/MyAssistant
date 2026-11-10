@@ -92,6 +92,8 @@ pub fn run() {
       commands::sandbox::get_sandbox_dockerfile,
       commands::sandbox::set_sandbox_dockerfile,
       commands::sandbox::get_sandbox_workspace_dir,
+      commands::sandbox::get_sandbox_llm,
+      commands::sandbox::set_sandbox_llm,
       commands::sandbox::set_sandbox_workspace_dir,
       commands::sandbox::get_agent_sandbox_dockerfile,
       commands::sandbox::register_agent_sandbox_dockerfile,

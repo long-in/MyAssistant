@@ -8,7 +8,7 @@ use crate::{
         cancel::CancelToken,
         global_settings::SettingsStore,
         sandbox::{self, DockerfileState, ImageStatus, Status},
-        sandbox_env,
+        sandbox_agent, sandbox_env,
         workspace::{Ctx, WorkspaceCtx, Workspaces},
     },
     utils::error::AppError,
@@ -179,6 +179,19 @@ pub fn set_sandbox_workspace_dir(ws: State<'_, Workspaces>, ctx: Ctx, path: Opti
     let saved = dir.to_string_lossy().into_owned();
     ctx.db.set_setting(sandbox::WORKSPACE_DIR_KEY, &saved)?;
     Ok(Some(saved))
+}
+
+/// コンテナ内の Claude Code の接続先・モデル・上限時間。
+#[tauri::command]
+pub fn get_sandbox_llm(ctx: Ctx) -> Result<sandbox_agent::LlmConfig, AppError> {
+    supported(&ctx)?;
+    sandbox_agent::load(&ctx.db)
+}
+
+#[tauri::command]
+pub fn set_sandbox_llm(ctx: Ctx, config: sandbox_agent::LlmConfig) -> Result<sandbox_agent::LlmConfig, AppError> {
+    supported(&ctx)?;
+    sandbox_agent::save(&ctx.db, config)
 }
 
 /// このエージェントのコンテナを作り直す(ボリュームは残す)。次のコマンドで新しく作られる。

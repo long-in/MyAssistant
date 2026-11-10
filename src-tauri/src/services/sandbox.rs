@@ -25,7 +25,7 @@ use tokio::{
 use super::{
     aws,
     cancel::CancelToken,
-    sandbox_env,
+    sandbox_agent, sandbox_env,
     shell::{self, Output, Stream},
     workspace::{LEADER_ID, PERSONAL_ID, WorkspaceCtx},
 };
@@ -967,7 +967,7 @@ pub struct Request<'a> {
 }
 
 /// 渡す環境変数(`sandbox.env`とAWSの一時キー)。同じ名前は`sandbox.env`が優先。
-async fn env_for(ctx: &WorkspaceCtx) -> Result<BTreeMap<String, String>, String> {
+pub(crate) async fn env_for(ctx: &WorkspaceCtx) -> Result<BTreeMap<String, String>, String> {
     let mut vars = BTreeMap::new();
     if ctx.secrets.has_aws().unwrap_or(false) {
         let pairs = aws::env_pairs(ctx).await.map_err(|e| format!("AWSの認証情報を取得できませんでした: {e}"))?;
@@ -977,9 +977,12 @@ async fn env_for(ctx: &WorkspaceCtx) -> Result<BTreeMap<String, String>, String>
     Ok(vars)
 }
 
-/// 伏せる値。リージョンのように秘密でない値は除く。
+/// 伏せる値。リージョンや、アプリが決めるモデル名のように秘密でない値は除く。
 fn secret_values(vars: &BTreeMap<String, String>) -> Vec<String> {
-    vars.iter().filter(|(k, _)| !k.ends_with("REGION")).map(|(_, v)| v.clone()).collect()
+    vars.iter()
+        .filter(|(k, _)| !k.ends_with("REGION") && !sandbox_agent::NON_SECRET_NAMES.contains(&k.as_str()))
+        .map(|(_, v)| v.clone())
+        .collect()
 }
 
 /// コマンドをそのエージェントのコンテナで実行する。`shell::run`と同じ`Output`を返す。
