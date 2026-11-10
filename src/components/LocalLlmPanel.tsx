@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Download, Loader2, Trash2, X } from "lucide-react";
+import { Download, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { useT } from "@/lib/i18n";
 import {
@@ -15,6 +15,7 @@ import {
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { DownloadBar } from "@/components/DownloadBar";
 import { StatusPill, UsedBy, linkCardClass } from "@/components/GlobalPanels";
 
 const GB = 1024 ** 3;
@@ -84,7 +85,6 @@ export default function LocalLlmPanel({ onChanged, usedBy = [] }: { onChanged: (
   const installed = !!status?.installed;
   const busy = action !== null;
   const downloading = action === "download" || elsewhere;
-  const percent = progress && progress.total > 0 ? Math.floor((progress.downloaded / progress.total) * 100) : null;
   const size = status ? (status.size / GB).toFixed(1) : "4.7";
 
   return (
@@ -119,17 +119,7 @@ export default function LocalLlmPanel({ onChanged, usedBy = [] }: { onChanged: (
         )}
       </div>
       <UsedBy features={usedBy} linked={installed} />
-      {downloading && (
-        <div className="mt-3 flex items-center gap-3 pl-5" role="status">
-          <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-          <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
-            <div className="h-full bg-primary transition-[width]" style={{ width: `${percent ?? 0}%` }} />
-          </div>
-          <span className="w-24 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
-            {progress ? `${(progress.downloaded / GB).toFixed(2)} / ${(progress.total / GB).toFixed(1)} GB` : t("取得中…")}
-          </span>
-        </div>
-      )}
+      {downloading && <DownloadBar progress={progress ?? status?.progress ?? null} className="mt-3 pl-5" />}
       {confirming && (
         <div className="mt-3 flex items-center gap-2 pl-5 text-xs">
           <span className="min-w-0 flex-1">{t("取得したllama.cppとモデルを削除します。よろしいですか?")}</span>

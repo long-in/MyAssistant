@@ -21,6 +21,7 @@ import InfoCard from "./InfoCard";
 import { applyTaskEvent, emptyLog } from "./ExecutionLog";
 import { type Turn } from "./Reply";
 import OrbReadout, { type Phase } from "./OrbReadout";
+import { useDownloadProgress } from "./DownloadBar";
 import { cn } from "@/lib/utils";
 import { isPlainSpace, matchShortcut } from "@/lib/shortcuts";
 import { judgeAnswer } from "@/lib/voiceApproval";
@@ -45,6 +46,7 @@ import {
   taskCancel,
   cancelRecording,
   downloadSttModel,
+  sttDownloadProgress,
   getSttEngine,
   getTtsEngine,
   ttsKeyRegistered,
@@ -201,6 +203,8 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   const keyHeld = useRef(false);
   const [needModel, setNeedModel] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  // 別の画面で始めたモデルの取得が続いていれば、戻ったときも進み具合を見せる
+  const { progress: dlProgress, active: dlActive } = useDownloadProgress(sttDownloadProgress, downloading, () => setNeedModel(false));
   const [ttsReady, setTtsReady] = useState(false);
   /** 設定不足の案内に使う、読み込み済みの設定の状況。読み込むまでは案内しない。 */
   const [setup, setSetup] = useState<SetupState | null>(null);
@@ -995,7 +999,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   return (
     <div className="relative flex h-full flex-col gap-3 p-3">
       <WorkspaceBadge className="pointer-events-none absolute top-5 right-5 z-10" />
-      <ChatNotices setup={setup} keyStatus={keyStatus} ttsReady={ttsReady} voiceReply={voiceReply} needModel={needModel} downloading={downloading} onDownload={download} />
+      <ChatNotices setup={setup} keyStatus={keyStatus} ttsReady={ttsReady} voiceReply={voiceReply} needModel={needModel} downloading={dlActive} progress={dlProgress} onDownload={download} />
 
       {/* 確認UIは、ウィンドウが小さくて会話を畳んでいるときも残す */}
       {switching && (

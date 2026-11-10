@@ -425,9 +425,9 @@ export function ProxyPanel() {
       <Heading title="Proxy" help={t("プロキシ")} status={<StatusPill on={!!defaultName}>{defaultName ?? t("オフ")}</StatusPill>}>
         <p>{t("このアプリの外向きの通信(AI・音声・モデルの取得・AWS)を、プロキシ経由にします。複数を登録でき、使うものを選べます。")}</p>
         <ul>
-          <li>{t("既定のプロキシは、エージェントが「既定を使う」にしているときと、モデルの取得・キーの確認など、エージェントに紐づかない通信に使います。")}</li>
+          <li>{t("既定のプロキシは、エージェントが「全体設定に従う」にしているときと、モデルの取得・キーの確認など、エージェントに紐づかない通信に使います。")}</li>
           <li>{t("エージェントごとの選択は、各エージェントの設定の「その他」で行います。")}</li>
-          <li>{t("プロキシを削除すると、それを選んでいたエージェントは既定を使います。")}</li>
+          <li>{t("プロキシを削除すると、それを選んでいたエージェントは全体設定に従います。")}</li>
           <li>{t("保存すると、次の通信から反映されます(再起動は不要です)。")}</li>
           <li>{t("localhost宛て(VOICEVOXやローカルLLM)は、常にプロキシを通しません。")}</li>
           <li>{t("パスワードは端末内に保存し、画面には表示しません。設定の書き出し・コピーには含まれません(アプリ全体のバックアップには含まれます)。")}</li>
@@ -538,11 +538,11 @@ export function ProxyChoice() {
   const DEFAULT = "__default__";
   const defaultName = list?.proxies.find((p) => p.id === list.default_id)?.name;
   const items = [
-    { value: DEFAULT, label: t("既定を使う({name})", { name: defaultName ?? t("使わない") }) },
+    { value: DEFAULT, label: t("全体設定に従う({name})", { name: defaultName ?? t("プロキシなし") }) },
     { value: "none", label: t("使わない") },
     ...(list?.proxies ?? []).map((p) => ({ value: p.id, label: p.name })),
   ];
-  // 削除されたIDを選んでいたときは、既定として扱われる
+  // 削除されたIDを選んでいたときは、全体設定に従う扱いになる
   const current = choice === "none" || list?.proxies.some((p) => p.id === choice) ? choice : DEFAULT;
   const change = async (v: string) => {
     const next = v === DEFAULT ? "" : v;
@@ -560,8 +560,8 @@ export function ProxyChoice() {
           <p>{t("このエージェントのAI・音声・AWSの通信に使うプロキシを選びます。")}</p>
           <ul>
             <li>{t("プロキシの登録と既定は、全体設定の「その他」で行います。")}</li>
-            <li>{t("モデルの取得・キーの確認など、エージェントに紐づかない通信は、常に既定のプロキシを使います。")}</li>
-            <li>{t("選んだプロキシが削除されたときは、既定を使います。")}</li>
+            <li>{t("モデルの取得・キーの確認など、エージェントに紐づかない通信は、常に全体設定の既定のプロキシを使います。")}</li>
+            <li>{t("選んだプロキシが削除されたときは、全体設定に従います。")}</li>
           </ul>
         </Heading>
         <p className="text-xs text-muted-foreground">{t("このエージェントの通信に使うプロキシ")}</p>

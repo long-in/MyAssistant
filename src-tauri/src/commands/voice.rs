@@ -7,7 +7,7 @@ use crate::{
     db::Db,
     services::{
         audio::Recorder,
-        batch, debug_log, knowledge,
+        batch, debug_log, download_progress::Progress, knowledge,
         llm_router::{self, Route},
         proofread, pronunciation, sandbox, secrets, settings_transfer::MAX_FILE_BYTES, stt,
         stt::SttEngine,
@@ -98,6 +98,18 @@ pub async fn download_stt_model(app: AppHandle, ctx: Ctx) -> Result<(), AppError
     let dir = app.path().app_data_dir().map_err(|e| AppError::Stt(e.to_string()))?;
     let revision = stt::revision(&ctx.db)?;
     stt::download_model(&stt::preferred_model_path(&dir), &revision).await
+}
+
+/// ローカル音声認識モデルの取得中の進み具合(取得中でなければ`None`)。画面を切り替えて戻ったときの表示に使う。
+#[tauri::command]
+pub fn stt_download_progress() -> Option<Progress> {
+    stt::download_progress()
+}
+
+/// ローカル音声合成(VOICEVOX)の取得中の進み具合(取得中でなければ`None`)。
+#[tauri::command]
+pub fn voicevox_download_progress() -> Option<Progress> {
+    voicevox::download_progress()
 }
 
 /// ローカル音声の取得元バージョン。`installed`は取得済みのもの(未取得・記録なしは`None`)。

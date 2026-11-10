@@ -111,8 +111,9 @@ export const deleteApiKey = (provider: Provider) =>
   invoke<void>("delete_api_key", { provider });
 
 /** 端末内のLLM(llama-serverとモデル)の取得状況。`size`は取得する合計(バイト)。 */
-export type LocalLlmStatus = { installed: boolean; downloading: boolean; label: string; size: number };
-export type DownloadProgress = { downloaded: number; total: number };
+/** 取得の進み具合。`bytes`が偽のときは単位のない割合(複数ファイルの工程など)で、`downloaded / total`だけを使う。 */
+export type DownloadProgress = { downloaded: number; total: number; bytes: boolean };
+export type LocalLlmStatus = { installed: boolean; downloading: boolean; label: string; size: number; progress: DownloadProgress | null };
 export const localLlmStatus = () => invoke<LocalLlmStatus>("local_llm_status");
 /** 取得の進み具合を`onProgress`へ流す。取得済みのモデルは取り直さない。 */
 export const downloadLocalLlm = (onProgress: (p: DownloadProgress) => void) => {
@@ -487,6 +488,8 @@ export const sttModelReady = () => invoke<boolean>("stt_model_ready");
 /** 高精度モデルへ更新できるか(旧モデルだけインストール済み)。 */
 export const sttModelUpgradable = () => invoke<boolean>("stt_model_upgradable");
 export const downloadSttModel = () => invoke<void>("download_stt_model");
+/** 音声認識モデルの取得中の進み具合(取得中でなければnull)。 */
+export const sttDownloadProgress = () => invoke<DownloadProgress | null>("stt_download_progress");
 export const startRecording = () => invoke<void>("start_recording");
 /** 録音を文字起こしせずに破棄する。 */
 export const cancelRecording = () => invoke<void>("cancel_recording");
@@ -541,6 +544,8 @@ export type VoicevoxSpeaker = { name: string; styles: { id: number; name: string
 export const voicevoxInstalled = () => invoke<boolean>("voicevox_installed");
 /** VOICEVOX COREと辞書・音声モデルを取得する(約90MB)。取得済みでも取得し直す。 */
 export const installVoicevox = () => invoke<void>("install_voicevox");
+/** VOICEVOXの取得中の進み具合(取得中でなければnull)。 */
+export const voicevoxDownloadProgress = () => invoke<DownloadProgress | null>("voicevox_download_progress");
 /** 取得済みの音声モデルの話者とスタイル。 */
 export const voicevoxSpeakers = () => invoke<VoicevoxSpeaker[]>("voicevox_speakers");
 export const getVoicevoxStyle = () => invoke<number>("get_voicevox_style");
@@ -1020,6 +1025,8 @@ export const leaderDeleteApiKey = (provider: Provider) => invoke<void>("leader_d
 /** `from`(`personal`またはエージェントID)のAnthropicのAPIキーを、リーダーへコピーする。コピーできたか(コピー元に無ければ false)。 */
 export const leaderCopyApiKey = (from: string) => invoke<boolean>("leader_copy_api_key", { from });
 /** 宛先の提案(エージェントID)。過去に配布した指示の履歴だけが根拠で、根拠が無ければ空。 */
+/** 宛先の提案に使うモデル(自動選択)。キーが無ければnull。 */
+export const loadSuggestRoute = () => invoke<Route | null>("load_suggest_route");
 export const leaderSuggest = (text: string) => invoke<string[]>("leader_suggest", { text });
 /** 指示を、選んだエージェントへ配布する。宛先は必ず利用者が選ぶ。 */
 export const leaderDispatch = (text: string, agentIds: string[]) =>

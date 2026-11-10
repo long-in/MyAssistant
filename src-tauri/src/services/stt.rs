@@ -9,7 +9,10 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 use crate::{
     db::Db,
-    services::vad,
+    services::{
+        download_progress::{Progress, Slot},
+        vad,
+    },
     utils::{error::AppError, version},
 };
 
@@ -74,9 +77,17 @@ pub fn model_upgradable(app_data_dir: &Path) -> bool {
     !MODELS[0].ready(app_data_dir) && MODELS[1..].iter().any(|m| m.ready(app_data_dir))
 }
 
+static DOWNLOAD: Slot = Slot::new();
+
+/// モデルを取得中なら、その進み具合。
+pub fn download_progress() -> Option<Progress> {
+    DOWNLOAD.get()
+}
+
 /// 一時ファイルへ書き出してからリネームする(中断時に壊れたモデルを残さない)。
 pub async fn download_model(path: &Path, revision: &str) -> Result<(), AppError> {
     version::validate(revision)?;
+    let progress = DOWNLOAD.begin().ok_or_else(|| AppError::Stt("already downloading".into()))?;
     let model = MODELS
         .iter()
         .find(|m| path.file_name().is_some_and(|f| f == m.file))
@@ -88,9 +99,13 @@ pub async fn download_model(path: &Path, revision: &str) -> Result<(), AppError>
         return Err(AppError::from_status(res.status().as_u16()));
     }
     let tmp = path.with_extension("part");
+    let total = res.content_length().unwrap_or(0);
     let mut file = tokio::fs::File::create(&tmp).await.map_err(|e| AppError::Stt(e.to_string()))?;
+    let mut done = 0u64;
     while let Some(chunk) = res.chunk().await.map_err(AppError::from_reqwest)? {
         file.write_all(&chunk).await.map_err(|e| AppError::Stt(e.to_string()))?;
+        done += chunk.len() as u64;
+        progress.set(Progress::bytes(done, total));
     }
     file.flush().await.map_err(|e| AppError::Stt(e.to_string()))?;
     drop(file);

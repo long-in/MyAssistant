@@ -15,7 +15,7 @@ use crate::{
         llm_router::{self, Route},
         secrets::{self, Provider},
         agent_data::Note,
-        workspace::{PERSONAL_ID, Agent, Workspaces},
+        workspace::{Ctx, PERSONAL_ID, Agent, Workspaces},
     },
     utils::error::AppError,
 };
@@ -101,6 +101,12 @@ pub fn leader_copy_api_key(ws: State<'_, Workspaces>, from: String) -> Result<bo
 pub async fn leader_suggest(ws: State<'_, Workspaces>, text: String) -> Result<Vec<String>, AppError> {
     let leader = ws.ensure_leader()?;
     leader::suggest(&leader, &ws.list(), &text).await
+}
+
+/// 宛先の提案に使うモデル(軽量なモデルを自動で選ぶ)。設定画面の「使用中の機能」の表示に使う。キーが無ければ`None`。
+#[tauri::command]
+pub fn load_suggest_route(ctx: Ctx) -> Option<Route> {
+    leader::suggest_route(&ctx)
 }
 
 /// 配布の宛先ごとの結果。

@@ -12,7 +12,19 @@ use libloading::Library;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
-use crate::{db::Db, utils::{error::AppError, version}};
+use crate::{
+    db::Db,
+    utils::{error::AppError, version},
+};
+
+use super::download_progress::{Progress, Slot};
+
+static DOWNLOAD: Slot = Slot::new();
+
+/// 取得中なら、その進み具合(取得するファイル数に対する割合)。
+pub fn download_progress() -> Option<Progress> {
+    DOWNLOAD.get()
+}
 
 /// 取得バージョンの設定キー(JSON)。未設定の項目は`Versions::default()`の値。
 pub const VERSIONS_KEY: &str = "voicevox_versions";
@@ -146,15 +158,22 @@ pub fn installed(app_data: &Path) -> bool {
 }
 
 /// `url`を`dest`へ保存する。一時ファイル経由で置き、`min_bytes`未満(途中切れ)は失敗にする。
-async fn download(url: &str, dest: &Path, min_bytes: u64) -> Result<(), AppError> {
+/// `on_fraction`へ、サイズが分かる間はこのファイルの進み(0〜1)を流す。
+async fn download(url: &str, dest: &Path, min_bytes: u64, on_fraction: impl Fn(f64)) -> Result<(), AppError> {
     let mut res = super::proxy::get(url).await?;
     if !res.status().is_success() {
         return Err(AppError::from_status(res.status().as_u16()));
     }
     let tmp = dest.with_extension("part");
     let mut file = tokio::fs::File::create(&tmp).await.map_err(|e| AppError::Io(e.to_string()))?;
+    let total = res.content_length().filter(|&n| n > 0);
+    let mut done = 0u64;
     while let Some(chunk) = res.chunk().await.map_err(AppError::from_reqwest)? {
         file.write_all(&chunk).await.map_err(|e| AppError::Io(e.to_string()))?;
+        done += chunk.len() as u64;
+        if let Some(total) = total {
+            on_fraction(done as f64 / total as f64);
+        }
     }
     file.flush().await.map_err(|e| AppError::Io(e.to_string()))?;
     drop(file);
@@ -195,7 +214,12 @@ fn place(from: &Path, to: &Path) -> Result<(), AppError> {
 
 /// `versions`のCOREと、ONNX Runtime・辞書・音声モデルを取得して配置する。取得済みでも再取得する。
 pub async fn install(app_data: &Path, versions: &Versions) -> Result<(), AppError> {
-    install_inner(app_data, versions).await.map_err(|e| e.with_source("voicevox"))
+    let Some(progress) = DOWNLOAD.begin() else {
+        return Err(AppError::Voicevox("already downloading".into()).with_source("voicevox"));
+    };
+    let result = install_inner(app_data, versions).await.map_err(|e| e.with_source("voicevox"));
+    drop(progress);
+    result
 }
 
 async fn install_inner(app_data: &Path, v: &Versions) -> Result<(), AppError> {
@@ -215,15 +239,18 @@ async fn install_inner(app_data: &Path, v: &Versions) -> Result<(), AppError> {
 
 async fn fetch_all(l: &Layout, work: &Path, core_arch: &str, onnx_arch: &str, v: &Versions) -> Result<(), AppError> {
     let gh = "https://github.com";
+    // 進み具合は、取得するファイル数(CORE・ONNX Runtime・辞書・音声モデル)に対する割合で出す
+    let n = 3 + MODEL_FILES.len();
+    let at = |done: usize| move |fraction: f64| DOWNLOAD.set(Progress::steps(done, n, fraction));
 
     let zip = work.join("core.zip");
-    download(&format!("{gh}/VOICEVOX/voicevox_core/releases/download/{core}/voicevox_core-{core_arch}-{core}.zip", core = v.core), &zip, 1 << 20).await?;
+    download(&format!("{gh}/VOICEVOX/voicevox_core/releases/download/{core}/voicevox_core-{core_arch}-{core}.zip", core = v.core), &zip, 1 << 20, at(0)).await?;
     let out = work.join("core");
     extract("unzip", &["-q", "-o"], &zip, &out).await?;
     place(&out.join(format!("voicevox_core-{core_arch}-{}/lib/libvoicevox_core.dylib", v.core)), &l.core())?;
 
     let tgz = work.join("onnxruntime.tgz");
-    download(&format!("{gh}/VOICEVOX/onnxruntime-builder/releases/download/voicevox_onnxruntime-{ort}/voicevox_onnxruntime-{onnx_arch}-{ort}.tgz", ort = v.onnxruntime), &tgz, 1 << 20).await?;
+    download(&format!("{gh}/VOICEVOX/onnxruntime-builder/releases/download/voicevox_onnxruntime-{ort}/voicevox_onnxruntime-{onnx_arch}-{ort}.tgz", ort = v.onnxruntime), &tgz, 1 << 20, at(1)).await?;
     let out = work.join("onnxruntime");
     tokio::fs::create_dir_all(&out).await.map_err(|e| AppError::Io(e.to_string()))?;
     extract("tar", &["-xzf"], &tgz, &out).await?;
@@ -233,16 +260,16 @@ async fn fetch_all(l: &Layout, work: &Path, core_arch: &str, onnx_arch: &str, v:
     )?;
 
     let tgz = work.join("dict.tgz");
-    download(&format!("{gh}/r9y9/open_jtalk/releases/download/{}/{}.tar.gz", v.dict_release, v.dict_name()), &tgz, 1 << 20).await?;
+    download(&format!("{gh}/r9y9/open_jtalk/releases/download/{}/{}.tar.gz", v.dict_release, v.dict_name()), &tgz, 1 << 20, at(2)).await?;
     let out = work.join("dict");
     tokio::fs::create_dir_all(&out).await.map_err(|e| AppError::Io(e.to_string()))?;
     extract("tar", &["-xzf"], &tgz, &out).await?;
     place(&out.join(v.dict_name()), &l.dict())?;
 
     // 音声モデルは最後に置く(`installed`の判定に使うため、これが揃えば完了)
-    for model in MODEL_FILES {
+    for (i, model) in MODEL_FILES.iter().enumerate() {
         let tmp = work.join(model);
-        download(&format!("{gh}/VOICEVOX/voicevox_vvm/releases/download/{}/{model}", v.models), &tmp, 1 << 20).await?;
+        download(&format!("{gh}/VOICEVOX/voicevox_vvm/releases/download/{}/{model}", v.models), &tmp, 1 << 20, at(3 + i)).await?;
         place(&tmp, &l.models().join(model))?;
     }
     Ok(())
