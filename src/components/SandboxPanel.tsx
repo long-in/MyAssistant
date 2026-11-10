@@ -15,6 +15,7 @@ import { Heading, StatusPill } from "@/components/GlobalPanels";
 import SandboxDockerfile from "@/components/SandboxDockerfile";
 import SandboxAgentSettings from "@/components/SandboxAgentSettings";
 import SandboxEnvEditor from "@/components/SandboxEnvEditor";
+import ClaudeSettingsEditor from "@/components/ClaudeSettingsEditor";
 
 /**
  * エージェントごとのサンドボックス(専用のDockerコンテナの中で Claude Code が作業する)の状態と設定、Dockerfile・環境変数の確認。
@@ -71,7 +72,7 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
             <p>{t("このエージェントへの指示を、専用のDockerコンテナの中の Claude Code が受け持ちます。調査・編集・コマンドの実行はすべてコンテナの中で行います。")}</p>
             <ul>
               <li>{t("コンテナから見えるのは、担当フォルダ(/workspace)、ナレッジ(/knowledge)、専用ボリュームだけです。ほかのエージェントや ~/.aws には届きません。")}</li>
-              <li>{t("認証情報(AI Link に登録した API キー・AWS の一時キー・sandbox.env)は、指示ごとに環境変数で渡します。")}</li>
+              <li>{t("認証情報(AI Link に登録した AWS の一時キー・sandbox.env)は、指示ごとに環境変数で渡します。")}</li>
               <li>{t("Dockerが使えないときは、ホストでは実行せずエラーにします。")}</li>
               <li>{t("コマンドはLinux(Debian)上で動きます。brew や open などmacOS向けのコマンドは使えません。")}</li>
               <li>{t("sandbox.env(コンテナへ渡す環境変数)は、この画面で編集できます。")}</li>
@@ -122,6 +123,10 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
 
         <div className="border-t pt-4">
           <SandboxEnvEditor key={workspaceId} />
+        </div>
+
+        <div className="border-t pt-4">
+          <ClaudeSettingsEditor key={workspaceId} />
         </div>
       </div>
     </section>

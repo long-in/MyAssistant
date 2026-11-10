@@ -948,9 +948,9 @@ pub struct Request<'a> {
     pub timeout: Duration,
 }
 
-/// 渡す環境変数(アプリに登録したAPIキー・AWSの一時キー・`sandbox.env`)。同じ名前は後のものが優先(`sandbox.env`が最優先)。
+/// 渡す環境変数(AWSの一時キー・`sandbox.env`)。同じ名前は後のものが優先(`sandbox.env`が最優先)。
 pub(crate) async fn env_for(ctx: &WorkspaceCtx) -> Result<BTreeMap<String, String>, String> {
-    let mut vars = ctx.secrets.sandbox_env().map_err(|e| e.to_string())?;
+    let mut vars = BTreeMap::new();
     if ctx.secrets.has_aws().unwrap_or(false) {
         let pairs = aws::env_pairs(ctx).await.map_err(|e| format!("AWSの認証情報を取得できませんでした: {e}"))?;
         vars.extend(pairs);
@@ -964,6 +964,8 @@ fn secret_values(vars: &BTreeMap<String, String>) -> Vec<String> {
     vars.iter()
         .filter(|(k, _)| !k.ends_with("REGION") && !k.starts_with("MYASSISTANT_") && !sandbox_agent::NON_SECRET_NAMES.contains(&k.as_str()))
         .map(|(_, v)| v.clone())
+        // 貼り付けた settings.json の`env`の値も伏せる(`MYASSISTANT_SETTINGS`自体は秘密でない値として除く)
+        .chain(sandbox_agent::settings_secret_values(vars.get("MYASSISTANT_SETTINGS")))
         .collect()
 }
 
@@ -1417,6 +1419,13 @@ mod tests {
         let mut vars = BTreeMap::new();
         vars.insert("AWS_REGION".to_owned(), "ap-northeast-1".to_owned());
         vars.insert("AWS_SECRET_ACCESS_KEY".to_owned(), "abcdefghijkl".to_owned());
+        assert_eq!(secret_values(&vars), vec!["abcdefghijkl".to_owned()]);
+    }
+
+    #[test]
+    fn settings_env_values_are_masked() {
+        let mut vars = BTreeMap::new();
+        vars.insert("MYASSISTANT_SETTINGS".to_owned(), r#"{"env":{"TOKEN":"abcdefghijkl"},"model":"claude-x"}"#.to_owned());
         assert_eq!(secret_values(&vars), vec!["abcdefghijkl".to_owned()]);
     }
 

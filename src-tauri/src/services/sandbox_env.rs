@@ -57,9 +57,6 @@ const TEMPLATE: &str = "\
 # 値は必要なら \"...\" か '...' で囲めます(複数行の値は使えません)。値が空の行は渡しません。
 # AWS の認証情報は、このエージェントの AWS の設定から一時キーを発行して渡すので、ここには書かなくてかまいません。
 # このファイルは他のエージェントやナレッジからは見えず、コンテナの中にも置かれません。
-
-# Claude Code の API キー(接続先が Anthropic API のとき必要)。アプリに登録した API キーが自動で渡されるので、別のキーを使うときだけ書きます。
-ANTHROPIC_API_KEY=
 ";
 
 /// ファイルが無ければ、説明と既定の名前(値は空)を入れたファイルを、所有者のみ読み書きできる権限で作る。
@@ -275,12 +272,11 @@ mod tests {
     }
 
     #[test]
-    fn template_has_the_default_names_with_empty_values() {
+    fn template_has_only_comments() {
         let dir = tempfile::tempdir().unwrap();
         let text = read(dir.path()).unwrap();
-        assert!(text.contains("\nANTHROPIC_API_KEY=\n"));
-        assert_eq!(parse(&text).unwrap().get("ANTHROPIC_API_KEY").map(String::as_str), Some(""));
-        // 値が空の名前は渡さない
+        // 雛形は説明だけで、渡す変数は無い
+        assert!(parse(&text).unwrap().is_empty());
         assert!(load(dir.path()).unwrap().is_empty());
         #[cfg(unix)]
         {

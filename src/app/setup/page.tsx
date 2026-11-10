@@ -1317,7 +1317,7 @@ export default function Setup() {
                   <li>{t("Amazon Bedrockは、APIキーではなく~/.aws/configと~/.aws/credentialsの中身を貼り付けて登録します。MFA付きのスイッチロール(role_arn + source_profile)に対応し、コードが必要なときは入力欄が開きます。")}</li>
                   <li>{t("Bedrockでは、インターネット検索・ページ取得は使えません(ナレッジのファイル操作とコマンド実行は使えます)。")}</li>
                   <li>{t("キーは疎通確認に成功した場合のみ、この端末のアプリデータ内に保存されます。")}</li>
-                  {active.id !== LEADER_ID && active.id !== PERSONAL_ID && <li>{t("ワークのエージェントでは、登録した Anthropic の API キーが、コンテナ内の Claude Code へ指示ごとの環境変数で渡されます。")}</li>}
+                  {active.id !== LEADER_ID && active.id !== PERSONAL_ID && <li>{t("ワークのエージェントでは、登録した AWS の設定から発行した一時キーが、コンテナ内の Claude Code へ指示ごとの環境変数で渡されます(接続先は Bedrock 固定です)。")}</li>}
                   <li>{t("保存先は平文のJSONファイルです(OSのキーチェーンは使っていません)。")}</li>
                 </ul>
               </Heading>

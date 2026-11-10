@@ -3,12 +3,11 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useT } from "@/lib/i18n";
-import { type SandboxLlm, type SandboxProvider, getSandboxLlm, reportError, setSandboxLlm } from "@/lib/api";
+import { type SandboxLlm, getSandboxLlm, reportError, setSandboxLlm } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Heading } from "@/components/GlobalPanels";
 
 /** チェックボックスで選べるツール(Rust 側の `DEFAULT_ALLOWED_TOOLS` と同じ)。 */
@@ -22,14 +21,13 @@ const parseTools = (text: string) =>
     .filter(Boolean);
 
 /**
- * ワークのエージェントの LLM。専用のDockerコンテナの中の Claude Code の接続先(Anthropic API / Bedrock)・モデル・
+ * ワークのエージェントの LLM。専用のDockerコンテナの中の Claude Code の接続先(Amazon Bedrock 固定)・モデル・
  * 1回の指示の上限時間・許可するツールを設定する(LLM タブに置く)。
- * 認証は、AI Link に登録した API キーと AWS の設定が、指示ごとの環境変数でコンテナへ渡される(sandbox.env の同名が優先)。
+ * 認証は、AI Link に登録した AWS の設定から発行した一時キーが、指示ごとの環境変数でコンテナへ渡される(sandbox.env の同名が優先)。
  */
 export default function ClaudeCodeSettings() {
   const t = useT();
   const [saved, setSaved] = useState<SandboxLlm | null>(null);
-  const [provider, setProvider] = useState<SandboxProvider>("anthropic");
   const [model, setModel] = useState("");
   const [timeout, setTimeoutMins] = useState("30");
   const [checked, setChecked] = useState<string[]>([]);
@@ -38,7 +36,6 @@ export default function ClaudeCodeSettings() {
 
   const apply = (c: SandboxLlm) => {
     setSaved(c);
-    setProvider(c.provider);
     setModel(c.model);
     setTimeoutMins(String(c.timeout_mins));
     setChecked(c.allowed_tools.filter((x) => TOOL_OPTIONS.includes(x)));
@@ -50,7 +47,7 @@ export default function ClaudeCodeSettings() {
   }, []);
 
   const draft = (): SandboxLlm => ({
-    provider,
+    provider: "bedrock",
     model: model.trim(),
     timeout_mins: Number.parseInt(timeout, 10) || 30,
     allowed_tools: [...TOOL_OPTIONS.filter((x) => checked.includes(x)), ...parseTools(tools)],
@@ -60,7 +57,6 @@ export default function ClaudeCodeSettings() {
     (() => {
       const d = draft();
       return (
-        d.provider !== saved.provider ||
         d.model !== saved.model ||
         d.timeout_mins !== saved.timeout_mins ||
         d.allowed_tools.join("\n") !== saved.allowed_tools.join("\n")
@@ -84,24 +80,12 @@ export default function ClaudeCodeSettings() {
       <Heading title="Claude Code" help={t("コンテナ内のAI")}>
         <p>{t("このエージェントへの指示は、専用のDockerコンテナの中の Claude Code が受け持ちます。ここで、その接続先・モデル・上限時間・許可するツールを設定します。")}</p>
         <ul>
-          <li>{t("認証は、下の AI Link に登録した API キー(Anthropic API)か AWS の設定(Bedrock)が、指示ごとの環境変数でコンテナへ渡されます。ファイルとしてはコンテナに置きません。")}</li>
+          <li>{t("認証は、下の AI Link に登録した AWS の設定から発行した一時キーが、指示ごとの環境変数でコンテナへ渡されます。ファイルとしてはコンテナに置きません。")}</li>
           <li>{t("別のキーを使いたいときは、Sandbox タブの sandbox.env に同じ名前で書くと、そちらが優先されます。")}</li>
           <li>{t("下の AI Settings のモデル選択や AI Limits の一部は、チャットでは使われません(ナレッジ整理などホスト側の処理でだけ使われます)。")}</li>
         </ul>
       </Heading>
       <div className="grid gap-2 sm:grid-cols-2">
-        <label className="flex flex-col gap-1 text-xs">
-          {t("接続先")}
-          <Select value={provider} onValueChange={(v) => setProvider(v as SandboxProvider)}>
-            <SelectTrigger size="sm">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="anthropic">Anthropic API</SelectItem>
-              <SelectItem value="bedrock">Amazon Bedrock</SelectItem>
-            </SelectContent>
-          </Select>
-        </label>
         <label className="flex flex-col gap-1 text-xs">
           {t("1回の指示の上限時間(分)")}
           <Input type="number" min={1} max={180} value={timeout} onChange={(e) => setTimeoutMins(e.target.value)} />
@@ -111,7 +95,7 @@ export default function ClaudeCodeSettings() {
           <Input
             value={model}
             onChange={(e) => setModel(e.target.value)}
-            placeholder={provider === "bedrock" ? "us.anthropic.claude-..." : "claude-..."}
+            placeholder="us.anthropic.claude-..."
             className="font-mono"
             spellCheck={false}
           />
@@ -136,9 +120,7 @@ export default function ClaudeCodeSettings() {
         </label>
       </div>
       <p className="text-xs text-muted-foreground">
-        {provider === "bedrock"
-          ? t("このエージェントに登録した AWS の設定から、一時キーを発行して渡します(MFA が必要なら、その都度入力を求めます)。")
-          : t("AI Link に登録した Anthropic の API キーを渡します。未登録なら、sandbox.env に ANTHROPIC_API_KEY を書いてください。")}
+        {t("このエージェントに登録した AWS の設定から、一時キーを発行して渡します(MFA が必要なら、その都度入力を求めます)。")}
       </p>
       <p className="text-xs text-muted-foreground">
         {t("拒否は「コマンド権限」の拒否の項目が使われます。コマンド実行や Web 検索を無効にしていると、対応するツールも使えません。")}

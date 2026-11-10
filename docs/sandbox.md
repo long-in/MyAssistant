@@ -26,7 +26,7 @@
    │ ① 指示(stdin)+ 認証情報(実行ごとに環境変数)
    ▼ docker exec -i ... claude -p --output-format stream-json --verbose [--resume <セッションID>]
 [エージェント専用コンテナ  myassistant-<ランダム8桁>]
-   Claude Code ──→ Anthropic API(APIキー) / Amazon Bedrock(AWS 一時キー)
+   Claude Code ──→ Amazon Bedrock(AWS 一時キー)
       │ 調査・編集・コマンド(git、AWS CLI など)
    /workspace   = 担当システムのフォルダ(エージェントごとに決まった場所。読み書き)
    /knowledge   = そのエージェントのナレッジ(読み書き)
@@ -71,17 +71,17 @@
 
 すべて**実行ごとに環境変数で渡し**、ファイルとしてはコンテナに置きません。
 
-- **Anthropic API**: アプリ(AI Link)に登録した Anthropic の API キーを、`ANTHROPIC_API_KEY` として渡す(`Secrets::sandbox_env` が唯一の取得口)。`sandbox.env` に同じ名前があれば、そちらが優先される。どちらも無ければ、実行せずにエラーにする。
-- **Amazon Bedrock**: アプリに登録したそのエージェントの AWS 設定から、**ホスト側で STS の一時キーを発行して渡す**(ロールの引き受けと MFA の入力はホストで行う)。Claude Code 向けに `CLAUDE_CODE_USE_BEDROCK=1` を渡す。リージョンは AWS 設定のプロファイル(`AWS_REGION`)から取る。
-- **AWS のリソース**: Bedrock と同じ一時キーで、コンテナ内の AWS CLI などからも使える。接続先が Anthropic API でも、AWS 設定が登録されていれば渡す。
-- **接続先とモデル**: エージェントの設定で、接続先(Anthropic API / Bedrock)とモデルを選ぶ。秘密でない値(`CLAUDE_CODE_USE_BEDROCK` `ANTHROPIC_MODEL` など)はアプリが決めて渡す。`sandbox.env` に同じ名前があれば、そちらが優先される。
-- 必要な認証情報が無いとき(Anthropic API で `ANTHROPIC_API_KEY` が無い、Bedrock で AWS のキーかリージョンが無い、MFA を入力しなかった)は、実行せずにエラーにする。
+- **Amazon Bedrock(固定)**: 接続先は Bedrock だけ(以前の Anthropic API は廃止。保存済みの旧設定は読み込み時に Bedrock へ直す)。アプリに登録したそのエージェントの AWS 設定から、**ホスト側で STS の一時キーを発行して渡す**(ロールの引き受けと MFA の入力はホストで行う)。Claude Code 向けに `CLAUDE_CODE_USE_BEDROCK=1` を渡す。リージョンは AWS 設定のプロファイル(`AWS_REGION`)から取る。
+- **AWS のリソース**: Bedrock と同じ一時キーで、コンテナ内の AWS CLI などからも使える。AWS 設定が登録されていれば渡す。
+- **Claude Code の settings.json**: 利用者が貼り付けた内容(JSON のオブジェクト、64KB まで)を、アプリの設定 `sandbox_claude_settings` に保存する。実行ごとに環境変数 `MYASSISTANT_SETTINGS` で渡し、`claude --settings` へ与える(ファイルとしてコンテナには置かない。`~/.claude/settings.json` には書かない)。保存時に検証し、誤りは行・列と理由だけを返す(内容は含めない)。アプリが決める `--allowedTools` `--disallowedTools` `--permission-mode` は引数で渡すため、settings.json の拒否はアプリの拒否に加わるだけで緩められない(許可は追加される)。`env` の値は、画面では既定で伏せ(「値を表示して編集」で本文を出す)、コンテナの出力に出たときは伏せ字にする(`sandbox.env` と同じ)。設定の書き出し・バックアップにはそのまま含まれる。
+- **接続先とモデル**: エージェントの設定でモデルを選ぶ(接続先は Bedrock 固定)。秘密でない値(`CLAUDE_CODE_USE_BEDROCK` `ANTHROPIC_MODEL` など)はアプリが決めて渡す。`sandbox.env` に同じ名前があれば、そちらが優先される。
+- 必要な認証情報が無いとき(AWS のキーかリージョンが無い、MFA を入力しなかった)は、実行せずにエラーにする。
 - MFA: 一時キーはメモリにキャッシュし、期限内は MFA を聞かない。指示ごとに実行し直すため、毎回期限内のキーが渡る。1回の指示が一時キーの期限を超えると、その途中で AWS の呼び出しが失敗する。AWS 設定の `duration_seconds` を長くして避ける(ロールの最大セッション時間まで。最大 12 時間)。
 
 ### 環境変数(`sandbox.env`)
 
 - 置き場所: `<アプリデータ>/workspaces/<UUID>/sandbox.env`(パーソナルはアプリデータ直下)。dotenv 形式、権限 0600。コンテナにはマウントしない。
-- 既定の内容: 初めて画面を開いたとき(またはファイルが無いとき)、説明のコメントと `ANTHROPIC_API_KEY=`(値は空)を入れたファイルを作る。すでにあるファイルは書き換えない。
+- 既定の内容: 初めて画面を開いたとき(またはファイルが無いとき)、説明のコメントだけを入れたファイルを作る(渡す変数は無い)。すでにあるファイルは書き換えない。
 - **値が空の行はコンテナへ渡さない**(空のキーで上書きしないため)。
 - 書式: `NAME=value`(1行に1つ)。`#` のコメント、`export ` の接頭辞、`"..."` / `'...'` の囲みに対応。複数行の値は不可。
 - **実行のたびに読み直す**ので、保存すれば次の指示から反映される。
@@ -168,8 +168,9 @@
 - 各エージェントの「Sandbox」タブ(リーダーでは出ない。全体設定で無効でも準備できる):
   - 有効/無効の表示、Docker・コンテナの状態、コンテナ名、コンテナを作り直す。
   - `/workspace` にマウントするフォルダの場所の表示、「Finder で開く」、注意書き。
-  - Claude Code の接続先(Anthropic API / Bedrock)・モデル・1回の指示の上限時間・許可するツール(`sandbox_llm`。設定の書き出し・コピーの対象)。
+  - Claude Code のモデル(接続先は Bedrock 固定)・1回の指示の上限時間・許可するツール(`sandbox_llm`。設定の書き出し・コピーの対象)。
   - 専用の Dockerfile の登録・編集。
+  - Claude Code の settings.json のエディタ(貼り付け・保存・変更を破棄・再読み込み。`sandbox_claude_settings`。設定の書き出し・コピーの対象)。
   - `sandbox.env` のエディタ(値を含めて表示・編集、保存・変更を破棄・再読み込み・ファイルを表示)と、渡す変数の名前・検証結果。
 - 実行ログと進行中の表示は、Claude Code のツール(`Bash`・`Read`・`Edit` など)を分かる名前で表示する。
 

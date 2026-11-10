@@ -337,6 +337,9 @@ export const openSandboxWorkspaceDir = () => invoke<void>("open_sandbox_workspac
 export type SandboxProvider = "anthropic" | "bedrock";
 /** コンテナ内の Claude Code の接続の設定。 */
 export type SandboxLlm = { provider: SandboxProvider; model: string; timeout_mins: number; allowed_tools: string[] };
+/** 貼り付けた Claude Code の settings.json(未設定は空文字)。保存時に検証し、誤りがあれば保存しない。 */
+export const getSandboxClaudeSettings = () => invoke<string>("get_sandbox_claude_settings");
+export const setSandboxClaudeSettings = (content: string) => invoke<void>("set_sandbox_claude_settings", { content });
 export const getSandboxLlm = () => invoke<SandboxLlm>("get_sandbox_llm");
 export const setSandboxLlm = (config: SandboxLlm) => invoke<SandboxLlm>("set_sandbox_llm", { config });
 
