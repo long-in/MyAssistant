@@ -14,8 +14,7 @@
 - **AIへの指示**: ベースプロンプト、共通データ、パーソナルデータ。
 - **音声**: 起動ワード、音声入力の待ち時間。
 - **Sandbox**: サンドボックスの有効/無効と、共通の Dockerfile([sandbox.md](sandbox.md))。
-- **一般**: 表示言語、OS通知、ナレッジ整理の間隔、ワークの有効化・無効化(`work_enabled`。バックアップ・設定のコピーの対象外。[workspace.md](workspace.md))、通信のプロキシ([proxy.md](proxy.md))。`/global#work` で、このタブを開く。
-- **バックアップ**: 全体設定の書き出し・取り込みと、アプリ全体のバックアップ([backup.md](backup.md))。
+- **その他**: 表示言語、OS通知、ナレッジ整理の間隔、ワークの有効化・無効化(`work_enabled`。バックアップ・設定のコピーの対象外。[workspace.md](workspace.md))、通信のプロキシ([proxy.md](proxy.md))、全体設定の書き出し・取り込みと、アプリ全体のバックアップ([backup.md](backup.md))。`/global#work` で、このタブを開く。
 
 ## 項目
 
