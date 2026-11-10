@@ -160,6 +160,8 @@ export type AwsMfaPrompt = {
 };
 
 export const getAwsStatus = () => invoke<AwsStatus>("get_aws_status");
+/** 保存済みの`~/.aws/config`・`credentials`の全文。本人が確認・編集するためだけに使う(ログや表示以外へ渡さない)。 */
+export const getAwsFiles = () => invoke<{ config: string; credentials: string }>("get_aws_files");
 /** このワークスペースの`secrets.json`をFinderで開く。 */
 export const revealSecretsFile = () => invoke<void>("reveal_secrets_file");
 /** 貼り付け中の内容から読み取れるプロファイル一覧(保存しない)。 */
