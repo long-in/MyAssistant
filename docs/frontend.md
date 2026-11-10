@@ -75,18 +75,30 @@ Next.js 16(App Router、`output: "export"`)の静的サイト。Tauri の WebVie
 
 ## 設定画面の構成
 
-各節は `Heading`(タイトル + ヘルプ)で区切る。
+タブで分け、タブの中の各節は `Heading`(タイトル + ヘルプ)で区切る。タブ名は中身を表す名前にし、性質の違う設定を1つのタブに混ぜない。
 
-| 節 | 内容 |
+### エージェントの設定(`/setup`)
+
+| タブ | 節 |
 | --- | --- |
-| AI Link / Voice Link | API キー(Anthropic / Amazon Bedrock / Google Cloud / Aqua Voice)、音声認識エンジン・言語、Whisper モデルのダウンロード、定型音声の作成 |
-| Web Search / Command Tasks / Command Policy | ツールの有効化、コマンドの許可・ask・拒否 |
-| Sandbox | リーダー以外。全体設定の有効/無効の表示(切り替えは全体設定画面)、コンテナの状態・作り直し、`/workspace` のフォルダの場所の表示と「Finder で開く」、Claude Code の接続先・モデル・上限時間・許可するツール、専用の Dockerfile の登録と編集、`sandbox.env` のエディタ(値を含めて表示・編集)と検証結果([sandbox.md](sandbox.md)) |
-| Debug Mode | デバッグログ |
-| Agent Data | エージェントデータ([workspace.md](workspace.md))。パーソナルデータは Global Settings([global-settings.md](global-settings.md)) |
-| Limits | 検索回数などの上限 |
-| Backup | 設定のエクスポート・インポート |
-| Global Settings(`/global`) | 全エージェント共通の項目: Base Prompt / Personal Data / Knowledge Interval / Wake Words / Voice Timing / Proofread / Language / OS Notifications / Backup([global-settings.md](global-settings.md)) |
+| AI接続 | AI Link(API キー)、AWS、端末内の LLM。リーダーは API キーのコピー |
+| AIの動作 | Agent Data(リーダーは Leader Prompt・上限)、Limits(検索回数などの上限)、AI Settings(機能ごとのモデルとプロンプト) |
+| 音声 | Voice Output、Voice Input、Model Sources |
+| 権限 | Web Search、Command Tasks、Command Policy(リーダーには無い) |
+| Sandbox | リーダー以外。全体設定の有効/無効の表示(切り替えは全体設定。無効でも準備できる)、コンテナの状態・作り直し、`/workspace` の場所と「Finder で開く」、Claude Code の接続先・モデル・上限時間・許可するツール、専用の Dockerfile、`sandbox.env` のエディタ([sandbox.md](sandbox.md)) |
+| エージェント | 名前・色の編集、設定の書き出し・取り込み(Backup)、設定のコピー、Debug Mode、削除 |
+
+### 全体設定(`/global`)
+
+| タブ | 節 |
+| --- | --- |
+| AIへの指示 | Base Prompt、Shared Data、Personal Data |
+| 音声 | Wake Words、Voice Timing |
+| Sandbox | 有効/無効のスイッチ、共通の Dockerfile(Sandbox Image) |
+| 一般 | Language、OS Notifications、Knowledge Interval、Work(ワークの有効化)、Proxy |
+| バックアップ | 全体設定の書き出し・取り込み、App Backup(アプリ全体) |
+
+詳細は [global-settings.md](global-settings.md)。
 
 キーの登録時は、疎通確認に成功したときだけ保存する。
 

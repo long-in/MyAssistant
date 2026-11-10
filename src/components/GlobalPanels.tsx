@@ -366,7 +366,7 @@ export function SandboxSwitch() {
           <li>{t("コンテナから見えるのは、そのエージェントの担当フォルダ(/workspace)、ナレッジ(/knowledge)、専用ボリュームだけです。ほかのエージェントや ~/.aws には届きません。")}</li>
           <li>{t("Dockerが使えないときは、ホストでは実行せずエラーにします。")}</li>
           <li>{t("コマンドはLinux(Debian)上で動きます。brew や open などmacOS向けのコマンドは使えません。")}</li>
-          <li>{t("イメージは、下の Sandbox Image の共通 Dockerfile から作ります。エージェントの設定の「権限」タブで専用の Dockerfile を登録したエージェントは、そちらを優先します。sandbox.env もそのタブで確認できます。")}</li>
+          <li>{t("イメージは、下の Sandbox Image の共通 Dockerfile から作ります。エージェントの設定の「Sandbox」タブで専用の Dockerfile を登録したエージェントは、そちらを優先します。sandbox.env もそのタブで編集できます。")}</li>
         </ul>
       </Heading>
       <label className="flex items-center justify-between gap-4 text-sm">

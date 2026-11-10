@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AppWindow, AudioLines, Brain, Briefcase } from "lucide-react";
+import { Archive, AudioLines, Container, MessageSquareText, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import {
   BaseInstructions,
@@ -46,7 +46,7 @@ export default function GlobalSettings() {
   const [speechReady, setSpeechReady] = useState(false);
   const [ttsEngine, setTtsEngine] = useState<TtsEngine>("voicevox");
   const [sttEngine, setSttEngine] = useState<SttEngine>("local");
-  const [tab, setTab] = useState("ai");
+  const [tab, setTab] = useState("prompt");
   const [hasLeader, setHasLeader] = useState(false);
   const [workOn, setWorkOn] = useState(false);
   const [wakeOn, setWakeOn] = useState(false);
@@ -64,10 +64,10 @@ export default function GlobalSettings() {
       .catch(() => {});
   }, []);
 
-  // レールの「WORK」ボタンなどから `#work` で開かれたときは、「ワーク」のタブを開く(静的エクスポートのため、保存値はマウント後に読む)
+  // レールの「WORK」ボタンなどから `#work` で開かれたときは、ワークの有効化がある「一般」のタブを開く(静的エクスポートのため、保存値はマウント後に読む)
   useEffect(() => {
     const sync = () => {
-      if (location.hash === "#work") setTab("work");
+      if (location.hash === "#work") setTab("general");
     };
     sync();
     window.addEventListener("hashchange", sync);
@@ -103,13 +103,14 @@ export default function GlobalSettings() {
 
         <Tabs value={tab} onValueChange={setTab} className="gap-6">
           <TabsList variant="line" className="w-full justify-start overflow-x-auto border-b pb-1">
-            <TabsTrigger value="ai" className="flex-none gap-1.5 px-3"><Brain className="size-3.5" />{t("AIの動作")}</TabsTrigger>
+            <TabsTrigger value="prompt" className="flex-none gap-1.5 px-3"><MessageSquareText className="size-3.5" />{t("AIへの指示")}</TabsTrigger>
             <TabsTrigger value="voice" className="flex-none gap-1.5 px-3"><AudioLines className="size-3.5" />{t("音声")}</TabsTrigger>
-            <TabsTrigger value="app" className="flex-none gap-1.5 px-3"><AppWindow className="size-3.5" />{t("アプリ")}</TabsTrigger>
-            <TabsTrigger value="work" className="flex-none gap-1.5 px-3"><Briefcase className="size-3.5" />{t("ワーク")}</TabsTrigger>
+            <TabsTrigger value="sandbox" className="flex-none gap-1.5 px-3"><Container className="size-3.5" />Sandbox</TabsTrigger>
+            <TabsTrigger value="general" className="flex-none gap-1.5 px-3"><SlidersHorizontal className="size-3.5" />{t("一般")}</TabsTrigger>
+            <TabsTrigger value="backup" className="flex-none gap-1.5 px-3"><Archive className="size-3.5" />{t("バックアップ")}</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="ai" className="flex flex-col gap-6">
+          <TabsContent value="prompt" className="flex flex-col gap-6">
             <BaseInstructions />
             <SharedData />
             <PersonalData />
@@ -136,19 +137,22 @@ export default function GlobalSettings() {
         />
           </TabsContent>
 
-          <TabsContent value="app" className="flex flex-col gap-6">
-            <BatchInterval />
-            <LanguageSetting />
-            <OsNotifications />
+          <TabsContent value="sandbox" className="flex flex-col gap-6">
             <SandboxSwitch />
             <SandboxDockerfile />
-            <ProxyPanel />
-            <GlobalBackup />
-            <AppBackup />
           </TabsContent>
 
-          <TabsContent value="work" className="flex flex-col gap-6">
+          <TabsContent value="general" className="flex flex-col gap-6">
+            <LanguageSetting />
+            <OsNotifications />
+            <BatchInterval />
             <WorkEnable />
+            <ProxyPanel />
+          </TabsContent>
+
+          <TabsContent value="backup" className="flex flex-col gap-6">
+            <GlobalBackup />
+            <AppBackup />
           </TabsContent>
         </Tabs>
       </div>

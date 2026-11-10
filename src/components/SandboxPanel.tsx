@@ -42,9 +42,8 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
       .catch((e) => toast.error(reportError(e)));
   }, []);
 
-  // 有効になったときに状態を読む
+  // 全体設定で無効でも、有効にする前に準備できるよう状態を読む
   useEffect(() => {
-    if (!enabled) return;
     let cancelled = false;
     getSandboxStatus()
       .then((s) => {
@@ -54,7 +53,7 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [enabled]);
+  }, []);
 
   const run = async (key: string, fn: () => Promise<void>, ok?: string) => {
     setBusy(key);
@@ -89,55 +88,53 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
           <p className="text-xs text-muted-foreground">
             {enabled
               ? t("有効です。このエージェントへの指示は、専用のDockerコンテナの中の Claude Code が受け持ちます。切り替えは全体設定で行います。")
-              : t("無効です。指示はこのアプリが直接処理し、コマンドはホストで実行されます。切り替えは全体設定で行います。")}
+              : t("全体設定で無効になっています。今は、指示をこのアプリが直接処理し、コマンドはホストで実行されます。有効にする前に、ここで準備できます。")}
           </p>
         </div>
         <StatusPill on={!!enabled}>{enabled ? t("オン") : t("オフ")}</StatusPill>
       </div>
 
-      {enabled && (
-        <div className="flex flex-col gap-4 border-t pt-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <StatusPill on={status?.docker === "ready"}>{dockerLabel}</StatusPill>
-            <StatusPill on={!!status?.container_running}>{status?.container_running ? t("コンテナ: 実行中") : t("コンテナ: 停止")}</StatusPill>
-            <Button size="icon-sm" variant="ghost" onClick={() => void refresh()} aria-label={t("状態を更新")}>
-              <RefreshCw className="size-3.5" />
-            </Button>
-          </div>
-          {status?.container_name && (
-            <p className="text-xs text-muted-foreground">
-              {t("コンテナ名")}: <span className="font-mono">{status.container_name}</span>
-            </p>
-          )}
-          {status?.docker === "missing" && (
-            <p className="text-xs text-muted-foreground">{t("Dockerが見つかりません。Docker Desktop などをインストールして起動してください。")}</p>
-          )}
-          {status?.docker === "stopped" && (
-            <p className="text-xs text-muted-foreground">{t("Dockerに接続できません。Docker Desktop などを起動してください。")}</p>
-          )}
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={status?.docker !== "ready" || !!busy}
-              onClick={() => run("reset", resetSandbox, t("コンテナを作り直します(次のコマンドで作成されます)。"))}
-            >
-              {t("コンテナを作り直す")}
-            </Button>
-          </div>
-
-          <div className="border-t pt-4">
-            <SandboxAgentSettings key={workspaceId} />
-          </div>
-
-          <SandboxDockerfile key={workspaceId} agent={{ id: workspaceId }} embedded />
-
-          <div className="border-t pt-4">
-            <SandboxEnvEditor key={workspaceId} />
-          </div>
+      <div className="flex flex-col gap-4 border-t pt-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusPill on={status?.docker === "ready"}>{dockerLabel}</StatusPill>
+          <StatusPill on={!!status?.container_running}>{status?.container_running ? t("コンテナ: 実行中") : t("コンテナ: 停止")}</StatusPill>
+          <Button size="icon-sm" variant="ghost" onClick={() => void refresh()} aria-label={t("状態を更新")}>
+            <RefreshCw className="size-3.5" />
+          </Button>
         </div>
-      )}
+        {status?.container_name && (
+          <p className="text-xs text-muted-foreground">
+            {t("コンテナ名")}: <span className="font-mono">{status.container_name}</span>
+          </p>
+        )}
+        {status?.docker === "missing" && (
+          <p className="text-xs text-muted-foreground">{t("Dockerが見つかりません。Docker Desktop などをインストールして起動してください。")}</p>
+        )}
+        {status?.docker === "stopped" && (
+          <p className="text-xs text-muted-foreground">{t("Dockerに接続できません。Docker Desktop などを起動してください。")}</p>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={status?.docker !== "ready" || !!busy}
+            onClick={() => run("reset", resetSandbox, t("コンテナを作り直します(次のコマンドで作成されます)。"))}
+          >
+            {t("コンテナを作り直す")}
+          </Button>
+        </div>
+
+        <div className="border-t pt-4">
+          <SandboxAgentSettings key={workspaceId} />
+        </div>
+
+        <SandboxDockerfile key={workspaceId} agent={{ id: workspaceId }} embedded />
+
+        <div className="border-t pt-4">
+          <SandboxEnvEditor key={workspaceId} />
+        </div>
+      </div>
     </section>
   );
 }

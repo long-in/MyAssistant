@@ -3,7 +3,7 @@ import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Archive, ArrowRight, AudioLines, Brain, Check, ChevronDown, Download, KeyRound, Loader2, Pencil, Play, Plug, Plus, ShieldCheck, Square, Trash2, Upload, X } from "lucide-react";
+import { ArrowRight, AudioLines, Bot, Brain, Check, Container, ChevronDown, Download, KeyRound, Loader2, Pencil, Play, Plug, Plus, ShieldCheck, Square, Trash2, Upload, X } from "lucide-react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -1268,10 +1268,11 @@ export default function Setup() {
         <Tabs defaultValue="ai" className="gap-6">
           <TabsList variant="line" className="w-full justify-start overflow-x-auto border-b pb-1">
             <TabsTrigger value="ai" className="flex-none gap-1.5 px-3"><Plug className="size-3.5" />{t("AI接続")}</TabsTrigger>
-            <TabsTrigger value="voice" className="flex-none gap-1.5 px-3"><AudioLines className="size-3.5" />{t("音声")}</TabsTrigger>
             <TabsTrigger value="behavior" className="flex-none gap-1.5 px-3"><Brain className="size-3.5" />{t("AIの動作")}</TabsTrigger>
+            <TabsTrigger value="voice" className="flex-none gap-1.5 px-3"><AudioLines className="size-3.5" />{t("音声")}</TabsTrigger>
             {active.id !== LEADER_ID && <TabsTrigger value="access" className="flex-none gap-1.5 px-3"><ShieldCheck className="size-3.5" />{t("権限")}</TabsTrigger>}
-            <TabsTrigger value="data" className="flex-none gap-1.5 px-3"><Archive className="size-3.5" />{t("その他")}</TabsTrigger>
+            {active.id !== LEADER_ID && <TabsTrigger value="sandbox" className="flex-none gap-1.5 px-3"><Container className="size-3.5" />Sandbox</TabsTrigger>}
+            <TabsTrigger value="agent" className="flex-none gap-1.5 px-3"><Bot className="size-3.5" />{t("エージェント")}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="ai" className="flex flex-col gap-6">
@@ -1485,12 +1486,16 @@ export default function Setup() {
             <TabsContent value="access" className="flex flex-col gap-6">
               <WebAccess />
               <ShellAccess />
-              <SandboxPanel key={active.id} workspaceId={active.id} />
               <CommandPolicyEditor />
             </TabsContent>
           )}
+          {active.id !== LEADER_ID && (
+            <TabsContent value="sandbox" className="flex flex-col gap-6">
+              <SandboxPanel key={active.id} workspaceId={active.id} />
+            </TabsContent>
+          )}
 
-          <TabsContent value="data" className="flex flex-col gap-6">
+          <TabsContent value="agent" className="flex flex-col gap-6">
           <EditAgent />
           <SettingsTransfer />
           <CopyIntoAgent />
