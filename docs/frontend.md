@@ -81,6 +81,7 @@ Next.js 16(App Router、`output: "export"`)の静的サイト。Tauri の WebVie
 | --- | --- |
 | AI Link / Voice Link | API キー(Anthropic / Amazon Bedrock / Google Cloud / Aqua Voice)、音声認識エンジン・言語、Whisper モデルのダウンロード、定型音声の作成 |
 | Web Search / Command Tasks / Command Policy | ツールの有効化、コマンドの許可・ask・拒否 |
+| Sandbox | リーダー以外。全体設定の有効/無効の表示(切り替えは全体設定画面)、コンテナの状態・作り直し、専用の Dockerfile の登録と編集、`sandbox.env` の名前一覧と検証結果([sandbox.md](sandbox.md)) |
 | Debug Mode | デバッグログ |
 | Agent Data | エージェントデータ([workspace.md](workspace.md))。パーソナルデータは Global Settings([global-settings.md](global-settings.md)) |
 | Limits | 検索回数などの上限 |

@@ -3,7 +3,7 @@
 //! - バックアップは1つのzipにまとめる。パスワードを指定すると、すべてのファイル(manifestを含む)をAES-256で暗号化する(ファイル名は見える)。中身は`manifest.json`(ファイルごとのSHA-256つき)と、次の3種類。
 //!   - `shared/`: エージェント一覧・全体設定・削除済みエージェントから残したナレッジ
 //!   - `ws/<id>/timeline.db`: `VACUUM INTO`で取った一貫したスナップショット(稼働中のDBを生コピーしない)
-//!   - `ws/<id>/`のそのほか: `secrets.json`(APIキー。平文のまま)・読み上げ辞書・ナレッジ(保存先がアプリデータの外でも含める)
+//!   - `ws/<id>/`のそのほか: `secrets.json`(APIキー。平文のまま)・`sandbox.env`(サンドボックスの環境変数。平文のまま)・`sandbox/`(共通のDockerfile)・`agent-sandbox/`(エージェント専用のDockerfile)・読み上げ辞書・ナレッジ(保存先がアプリデータの外でも含める)
 //! - Whisper・VOICEVOX・固定音声などの再取得できるものは含めない。
 //! - リストアは2段階。`prepare`がzipを検証しながら展開し(何も差し替えない)、確認後に再起動して、
 //!   次回起動のDBを開く前に`apply_pending`が現在のデータを`restore-backup-<日時>/`へ退避して差し替える。
@@ -25,6 +25,7 @@ use crate::{
     services::{
         batch::KNOWLEDGE_DIR_KEY,
         pronunciation::DICTIONARY_FILE,
+        sandbox_env,
         workspace::{DB_FILE, DIR_NAME as WORKSPACES_DIR_NAME, KEPT_DIR_NAME, PERSONAL_ID, REGISTRY_FILE},
     },
     utils::error::AppError,
@@ -36,6 +37,10 @@ const APP_NAME: &str = "MyAssistant";
 const MANIFEST: &str = "manifest.json";
 /// `Secrets`の保存ファイル名。
 const SECRETS_FILE: &str = "secrets.json";
+/// サンドボックスの環境変数ファイル(平文)と、Dockerfileなどを置くフォルダ。エージェントだけが持つ。
+const SANDBOX_ENV_FILE: &str = sandbox_env::FILE_NAME;
+const SANDBOX_DIR: &str = "sandbox";
+const AGENT_SANDBOX_DIR: &str = "agent-sandbox";
 const GLOBAL_FILE: &str = "global_settings.json";
 const KNOWLEDGE_DIR: &str = "knowledge";
 /// 展開先。リストアの確認が済むまで、ここから外へは何も出さない。
@@ -135,8 +140,8 @@ fn entry_allowed(name: &str, ids: &[String]) -> bool {
     match parts.as_slice() {
         ["shared", f] => *f == REGISTRY_FILE || *f == GLOBAL_FILE,
         ["shared", k, _, ..] => *k == KEPT_DIR_NAME,
-        ["ws", id, f] => ids.iter().any(|i| i == id) && [DB_FILE, SECRETS_FILE, DICTIONARY_FILE].contains(f),
-        ["ws", id, k, _, ..] => ids.iter().any(|i| i == id) && *k == KNOWLEDGE_DIR,
+        ["ws", id, f] => ids.iter().any(|i| i == id) && [DB_FILE, SECRETS_FILE, DICTIONARY_FILE, SANDBOX_ENV_FILE].contains(f),
+        ["ws", id, k, _, ..] => ids.iter().any(|i| i == id) && (*k == KNOWLEDGE_DIR || *k == SANDBOX_DIR || *k == AGENT_SANDBOX_DIR),
         _ => false,
     }
 }
@@ -271,11 +276,15 @@ fn create_inner(root: &Path, dest: &Path, part: &Path, work: &Path, now: String,
         snapshot_db(&dir.join(DB_FILE), &snap)?;
         let custom = custom_knowledge_dir(&snap);
         p.add_file(&format!("ws/{id}/{DB_FILE}"), &snap)?;
-        for name in [SECRETS_FILE, DICTIONARY_FILE] {
+        for name in [SECRETS_FILE, DICTIONARY_FILE, SANDBOX_ENV_FILE] {
             if dir.join(name).is_file() {
                 p.add_file(&format!("ws/{id}/{name}"), &dir.join(name))?;
             }
         }
+        // サンドボックスのDockerfileなど(ビルドの文脈。環境変数ファイルは含まれない)
+        p.add_tree(&format!("ws/{id}/{SANDBOX_DIR}"), &dir.join(SANDBOX_DIR))?;
+        // エージェント専用のDockerfile(登録があるときだけ)
+        p.add_tree(&format!("ws/{id}/{AGENT_SANDBOX_DIR}"), &dir.join(AGENT_SANDBOX_DIR))?;
         let knowledge = custom.as_deref().map(PathBuf::from).unwrap_or_else(|| dir.join(KNOWLEDGE_DIR));
         // アプリデータごと含んでしまう保存先(モデル等まで入る)は取り込まない
         let encloses_root = knowledge.canonicalize().is_ok_and(|k| root_canon.starts_with(&k));
@@ -388,7 +397,7 @@ fn prepare_inner(src: &Path, stage: &Path, password: Option<&str>) -> Result<Pre
         }
         let mut out = File::create(&target).map_err(io)?;
         #[cfg(unix)]
-        if name.ends_with(SECRETS_FILE) {
+        if name.ends_with(SECRETS_FILE) || name.ends_with(SANDBOX_ENV_FILE) {
             use std::os::unix::fs::PermissionsExt;
             let _ = out.set_permissions(std::fs::Permissions::from_mode(0o600));
         }
@@ -522,7 +531,7 @@ fn swap(
         let from_dir = stage.join("ws").join(&w.id);
         let dir = workspace_dir(root, &w.id);
         std::fs::create_dir_all(&dir).map_err(io)?;
-        for name in [DB_FILE, SECRETS_FILE, DICTIONARY_FILE, KNOWLEDGE_DIR] {
+        for name in [DB_FILE, SECRETS_FILE, DICTIONARY_FILE, SANDBOX_ENV_FILE, SANDBOX_DIR, AGENT_SANDBOX_DIR, KNOWLEDGE_DIR] {
             let from = from_dir.join(name);
             if exists(&from) {
                 move_to(&from, &dir.join(name))?;
@@ -577,6 +586,9 @@ mod tests {
         let agent = root.join(WORKSPACES_DIR_NAME).join("agent-a");
         std::fs::create_dir_all(agent.join(KNOWLEDGE_DIR)).unwrap();
         std::fs::write(agent.join(KNOWLEDGE_DIR).join("a.md"), marker).unwrap();
+        std::fs::write(agent.join(SANDBOX_ENV_FILE), format!("TOKEN={marker}\n")).unwrap();
+        std::fs::create_dir_all(agent.join(SANDBOX_DIR)).unwrap();
+        std::fs::write(agent.join(SANDBOX_DIR).join("Dockerfile"), format!("FROM {marker}\n")).unwrap();
         let sdb = Db::open(&agent.join(DB_FILE)).unwrap();
         sdb.set_setting("marker", marker).unwrap();
         drop(sdb);
@@ -618,6 +630,9 @@ mod tests {
         assert_eq!(db.get_setting(KNOWLEDGE_DIR_KEY).unwrap(), None);
         assert_eq!(std::fs::read_to_string(dst.join(SECRETS_FILE)).unwrap(), "{\"k\":\"new\"}");
         assert_eq!(std::fs::read_to_string(dst.join("workspaces/agent-a/knowledge/a.md")).unwrap(), "new");
+        // サンドボックスの環境変数とDockerfileも戻る
+        assert_eq!(std::fs::read_to_string(dst.join("workspaces/agent-a/sandbox.env")).unwrap(), "TOKEN=new\n");
+        assert_eq!(std::fs::read_to_string(dst.join("workspaces/agent-a/sandbox/Dockerfile")).unwrap(), "FROM new\n");
         assert_eq!(std::fs::read_to_string(dst.join(WORKSPACES_DIR_NAME).join(REGISTRY_FILE)).unwrap(), "[\"new\"]");
         // モデルは触らない。展開先と予約は片付く
         assert!(dst.join("models/keep.bin").is_file());
@@ -634,6 +649,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(&zip).unwrap().permissions().mode() & 0o777, 0o600);
             assert_eq!(std::fs::metadata(dst.join(SECRETS_FILE)).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(std::fs::metadata(dst.join("workspaces/agent-a/sandbox.env")).unwrap().permissions().mode() & 0o777, 0o600);
         }
     }
 

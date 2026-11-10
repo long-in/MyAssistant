@@ -44,7 +44,7 @@ const DEFAULT_DENY: [&str; 22] = [
 const OUTSIDE_REASON: &str = "読み取り系以外のコマンドは、ナレッジのディレクトリの中でしか実行できません。作業ディレクトリとパスをナレッジの中にしてください。";
 
 /// 引数にこの文字列を含むコマンドは拒否する(APIキー等を含むアプリのデータ)。
-const DEFAULT_PROTECTED: [&str; 2] = ["secrets.json", "timeline.db"];
+const DEFAULT_PROTECTED: [&str; 3] = ["secrets.json", "timeline.db", "sandbox.env"];
 
 /// システム領域とみなすパスの接頭辞。ここへの書き込み・リダイレクトを拒否する。
 const DEFAULT_SYSTEM_PATHS: [&str; 8] = ["/System", "/usr", "/bin", "/sbin", "/etc", "/Library", "/private/etc", "/dev"];
@@ -71,7 +71,7 @@ const DEFAULT_ASK: [&str; 22] = [
 ];
 
 /// ポリシーファイルの現在の版。この版より古いファイルは、初期値の拒否・askを足して読み込む。
-const POLICY_VERSION: u32 = 3;
+const POLICY_VERSION: u32 = 4;
 
 fn legacy_version() -> u32 {
     1
@@ -946,6 +946,7 @@ mod tests {
         for c in [
             "cat ~/Library/Application\\ Support/app/secrets.json",
             "cat '/x/timeline.db'",
+            "cat /x/workspaces/abc/sandbox.env",
             // WALのファイルと、マイグレーション前の複製も同じ名前で始まるので守られる
             "cp /x/timeline.db-wal /tmp/",
             "sqlite3 /x/timeline.db.bak-v0 .dump",
@@ -1095,7 +1096,7 @@ mod tests {
             assert!(p.deny.iter().any(|i| i == want), "{want}");
         }
         assert!(p.deny_words.contains(&"rm".to_owned()) && p.deny_words.contains(&"sudo".to_owned()));
-        assert!(p.protected.contains(&"secrets.json".to_owned()));
+        assert!(p.protected.contains(&"secrets.json".to_owned()) && p.protected.contains(&"sandbox.env".to_owned()));
         assert!(p.ask.contains(&"git push".to_owned()));
         assert!(p.system_paths.contains(&"/etc".to_owned()));
     }
@@ -1140,7 +1141,7 @@ mod tests {
         assert!(p.ask.contains(&"git push".to_owned()));
         assert!(matches!(classify("rm x", &p), Verdict::Deny(_)));
         // 移行した内容が書き戻されている
-        assert!(fs::read_to_string(&file).unwrap().contains("\"version\": 3"));
+        assert!(fs::read_to_string(&file).unwrap().contains("\"version\": 4"));
     }
 
     #[test]
@@ -1175,7 +1176,7 @@ mod tests {
         let file = root.join(POLICY_DIR).join(POLICY_FILE);
         assert!(file.is_file());
         // ユーザーが編集した内容が次回から使われる(空のリストも空のまま)
-        fs::write(&file, r#"{ "version": 3, "allow": ["make"], "deny": ["curl"], "ask": [] }"#).unwrap();
+        fs::write(&file, r#"{ "version": 4, "allow": ["make"], "deny": ["curl"], "ask": [] }"#).unwrap();
         let p = load(&root);
         assert_eq!((p.allow, p.deny, p.ask), (vec!["make".to_owned()], vec!["curl".to_owned()], vec![]));
         // 壊れていれば許可リストは空。拒否などは初期値のまま

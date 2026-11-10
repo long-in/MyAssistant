@@ -302,6 +302,14 @@ mod tests {
     }
 
     #[test]
+    fn sandbox_flag_is_global_and_not_exported() {
+        let (_da, a) = mem();
+        a.set_legacy_setting(chat::SANDBOX_ENABLED_KEY, "1");
+        let exported = collect(&a, Policy::defaults(), "t".into()).unwrap();
+        assert!(!exported.settings.contains_key(chat::SANDBOX_ENABLED_KEY));
+    }
+
+    #[test]
     fn agent_export_excludes_global_items() {
         let (_da, a) = mem();
         for key in [profile::KEY, chat::BASE_INSTRUCTIONS_KEY, wake::WORDS_KEY, batch::BATCH_INTERVAL_KEY] {

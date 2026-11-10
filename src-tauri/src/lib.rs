@@ -84,6 +84,22 @@ pub fn run() {
       commands::chat::get_tuning,
       commands::chat::set_tuning,
       commands::chat::set_web_access,
+      commands::sandbox::get_sandbox_enabled,
+      commands::sandbox::set_sandbox_enabled,
+      commands::sandbox::get_sandbox_status,
+      commands::sandbox::get_sandbox_files,
+      commands::sandbox::get_sandbox_image_status,
+      commands::sandbox::get_sandbox_dockerfile,
+      commands::sandbox::set_sandbox_dockerfile,
+      commands::sandbox::get_agent_sandbox_dockerfile,
+      commands::sandbox::register_agent_sandbox_dockerfile,
+      commands::sandbox::set_agent_sandbox_dockerfile,
+      commands::sandbox::unregister_agent_sandbox_dockerfile,
+      commands::sandbox::build_agent_sandbox_image,
+      commands::sandbox::build_sandbox_image,
+      commands::sandbox::reset_sandbox,
+      commands::sandbox::reset_sandbox_dockerfile,
+      commands::sandbox::reveal_sandbox_file,
       commands::chat::get_shell_access,
       commands::chat::set_shell_access,
       commands::chat::get_voice_timing,
@@ -214,6 +230,7 @@ pub fn run() {
       services::aws::init(app.handle());
       // 端末内のLLMは、取得物の場所だけを覚えておき、使うときに起動する
       services::local_llm::init(&dir);
+      services::sandbox::init(app.handle());
       // パーソナルは従来どおりアプリデータ直下(`timeline.db` / `secrets.json` / `knowledge`)
       let personal = services::workspace::WorkspaceCtx::open(services::workspace::PERSONAL_ID, &dir)?;
       // 全体設定は、初回だけパーソナルの現在値を初期値として取り込む
@@ -278,6 +295,8 @@ pub fn run() {
           }
         };
         let _ = tokio::time::timeout(EXIT_BATCH_TIMEOUT, run).await;
+        // 動いているサンドボックスのコンテナを止める
+        let _ = tokio::time::timeout(Duration::from_secs(20), services::sandbox::stop_all()).await;
         handle.exit(0);
       });
     }
