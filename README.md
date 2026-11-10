@@ -54,7 +54,6 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
   - 次から選べます。
     - ローカルの Whisper(既定。初回にモデルをダウンロード)
     - Google Cloud Speech-to-Text
-    - Aqua Voice
   - Whisper のモデルは `ggml-large-v3-turbo-q5_0.bin`(約574MB)または `ggml-small.bin`(約466MB)です。
   - Silero VAD で声のない入力を除き、無音への幻聴を防ぎます。
 - **文字起こしの校正(オプション)**
@@ -265,7 +264,6 @@ npm run tauri build
 | Claude | Anthropic API キー |
 | Claude(Bedrock 経由) | `~/.aws/config` と `~/.aws/credentials` の中身(設定画面へそのまま貼り付け)。MFA 付きのスイッチロール(`role_arn` + `source_profile` + `mfa_serial`)に対応。Web 検索・ページ取得は使えない |
 | 音声出力 / Google STT | Google Cloud API キー |
-| Aqua Voice(STT) | Aqua Voice API キー |
 | ローカル LLM(Qwen 2.5 7B) | キー不要。設定画面の「AI Link」からダウンロードする。Web 検索・ページ取得は使えない。メモリ 16GB 以上を推奨 |
 
 ### 2. 音声まわりを準備する

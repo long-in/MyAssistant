@@ -15,8 +15,7 @@ flowchart LR
   VAD -- はい --> ENG{"エンジン"}
   ENG -- local --> W["Whisper"]
   ENG -- google --> G["Google STT"]
-  ENG -- aqua --> A["Aqua Voice"]
-  W & G & A --> TXT["文字起こし"]
+  W & G --> TXT["文字起こし"]
   TXT --> PR{"校正モデル設定あり?"}
   PR -- はい --> LLM["LLM で校正"]
   PR -- いいえ --> OUT["結果"]
@@ -57,7 +56,6 @@ flowchart LR
 | --- | --- | --- | --- |
 | `local` | 端末内(whisper.cpp、Metal) | モデルファイル | 課金なし。ネットワーク不要 |
 | `google` | Google Cloud Speech-to-Text(REST・同期) | Google Cloud API キー(Voice Link) | 約 1 分(58 秒)を超える録音は送らない |
-| `aqua` | Aqua Voice API(Avalon `avalon-v1.5`) | Aqua Voice キー(Voice Link) | 認証は Google とは別のキー。60 秒のタイムアウト |
 
 ### ローカル Whisper(`stt.rs`)
 
@@ -75,10 +73,9 @@ flowchart LR
 - `[BLANK_AUDIO]`・`(音楽)` などの注釈と `♪` は除去する(`clean_transcript`)。
 - **語彙ヒント(initial prompt)**: 起動ワード(有効時)と、訂正済みの用語(直近 8 件)を「、」でつないだ最大 100 文字のヒントを渡す。長すぎると無音で語彙を復唱する幻聴を招くため短く保つ。
 
-### Google / Aqua
+### Google
 
 - Google: 16kHz mono を LINEAR16 にして送る。`auto` は日本語を主言語に英語を候補へ加え、自動句読点を有効にする。
-- Aqua: 16bit PCM の WAV を multipart で送る。`auto` は API の自動判定に任せる。キー登録時は、無音の短い録音で認証だけを確かめる。
 
 ## 校正(`proofread.rs`)
 

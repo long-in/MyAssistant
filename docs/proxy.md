@@ -19,7 +19,7 @@
 ## 反映のしかた
 
 - 起動時に `proxy::init` が保存済みの設定を読み、保存のたびに `proxy::reload` がメモリの設定を入れ替える。通信は呼び出しのたびにクライアントを作るので、**保存した次の通信から**反映される(再起動は不要)。
-- reqwest を使う通信(Anthropic・Google TTS/STT・Aqua・キー確認・Whisper/VOICEVOX/ローカルLLMの取得)は `proxy::client_builder()` / `proxy::get()` を通す。
+- reqwest を使う通信(Anthropic・Google TTS/STT・キー確認・Whisper/VOICEVOX/ローカルLLMの取得)は `proxy::client_builder()` / `proxy::get()` を通す。
 - AWS SDK(Bedrock・STS)は、`proxy::aws_http_client()` が返すHTTPクライアントを設定する(無効なら SDK の既定のまま)。
 - `localhost` / `127.0.0.1` / `::1` 宛て(VOICEVOX・ローカルLLM のサーバーへの通信)は常にプロキシを通さない。
 - 無効のときは従来どおり(reqwest は環境変数 `HTTP(S)_PROXY` 等に従う。AWS SDK はプロキシ無し)。

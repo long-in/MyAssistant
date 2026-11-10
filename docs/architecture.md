@@ -18,7 +18,7 @@ flowchart LR
     WS --> KN[("ナレッジ<br/>Markdown")]
   end
   API -- invoke / Channel / event --> CMD
-  SVC -- HTTPS --> EXT["Anthropic / Amazon Bedrock<br/>Google Cloud / Aqua Voice"]
+  SVC -- HTTPS --> EXT["Anthropic / Amazon Bedrock<br/>Google Cloud"]
   SVC --> MIC["マイク (cpal)"]
 ```
 
