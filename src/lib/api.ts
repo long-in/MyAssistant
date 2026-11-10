@@ -319,6 +319,17 @@ export type SandboxBuildProgress = { scope: string; line: string };
 export const resetSandbox = () => invoke<void>("reset_sandbox");
 /** Dockerfileを標準の内容で上書きする。 */
 export const resetSandboxDockerfile = () => invoke<void>("reset_sandbox_dockerfile");
+/** `/workspace`にマウントするフォルダ(未設定なら null)。 */
+export const getSandboxWorkspaceDir = () => invoke<string | null>("get_sandbox_workspace_dir");
+/** `/workspace`にマウントするフォルダを設定する。null で解除。保存した(正規化した)パスを返す。 */
+export const setSandboxWorkspaceDir = (path: string | null) => invoke<string | null>("set_sandbox_workspace_dir", { path });
+
+export type SandboxProvider = "anthropic" | "bedrock";
+/** コンテナ内の Claude Code の接続の設定。 */
+export type SandboxLlm = { provider: SandboxProvider; model: string; timeout_mins: number; allowed_tools: string[] };
+export const getSandboxLlm = () => invoke<SandboxLlm>("get_sandbox_llm");
+export const setSandboxLlm = (config: SandboxLlm) => invoke<SandboxLlm>("set_sandbox_llm", { config });
+
 /** このエージェントのDockerfile。専用の登録があればその内容、なければ共通の内容(読み取り専用)。登録があれば共通より優先する。 */
 export const getAgentSandboxDockerfile = () => invoke<{ registered: boolean; content: string }>("get_agent_sandbox_dockerfile");
 /** 共通のDockerfileをコピーして、専用として登録する。 */

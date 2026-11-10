@@ -113,6 +113,19 @@ const TOOL_ACTIVITY: Record<string, string> = {
   create_skill: "スキルを作成しています…",
   update_skill: "スキルを更新しています…",
   delete_skill: "スキルを削除しています…",
+  // サンドボックス(コンテナ内の Claude Code)のツール
+  sandbox_prepare: "サンドボックスを準備しています…",
+  Bash: "コマンドを実行しています…",
+  Read: "ファイルを読んでいます…",
+  Write: "ファイルを作成しています…",
+  Edit: "ファイルを編集しています…",
+  NotebookEdit: "ファイルを編集しています…",
+  Glob: "ファイルを検索しています…",
+  Grep: "ファイルを検索しています…",
+  WebFetch: "ページを読んでいます…",
+  WebSearch: "Webを検索しています…",
+  Task: "サブエージェントに任せています…",
+  TodoWrite: "作業を整理しています…",
 };
 
 /** `standby`: 常時待機が起動ワードを聞き取るために録音している。手動の操作が始まれば譲る。 */

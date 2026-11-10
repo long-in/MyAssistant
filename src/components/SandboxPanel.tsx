@@ -18,9 +18,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Heading, StatusPill } from "@/components/GlobalPanels";
 import SandboxDockerfile from "@/components/SandboxDockerfile";
+import SandboxAgentSettings from "@/components/SandboxAgentSettings";
 
 /**
- * エージェントごとのサンドボックス(専用のDockerコンテナでコマンドを実行する)の状態と、Dockerfile・環境変数の確認。
+ * エージェントごとのサンドボックス(専用のDockerコンテナの中で Claude Code が作業する)の状態と設定、Dockerfile・環境変数の確認。
  * 有効/無効は全体設定(`SandboxSwitch`)で切り替えるので、ここにスイッチは無い。
  * Dockerfileと環境変数(sandbox.env)はワークスペースのファイルで、ここでは状態の確認とFinderでの表示だけを行う。
  * 環境変数の値は画面へ渡されない(名前だけ表示する)。
@@ -85,9 +86,10 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
       <div className="flex items-center justify-between gap-4">
         <div>
           <Heading title="Sandbox" help={t("サンドボックス")}>
-            <p>{t("このエージェントのコマンドを、専用のDockerコンテナの中で実行します。")}</p>
+            <p>{t("このエージェントへの指示を、専用のDockerコンテナの中の Claude Code が受け持ちます。調査・編集・コマンドの実行はすべてコンテナの中で行います。")}</p>
             <ul>
-              <li>{t("コンテナから見えるのは、このエージェントのナレッジ(/workspace)と専用ボリュームだけです。ほかのエージェントや ~/.aws には届きません。")}</li>
+              <li>{t("コンテナから見えるのは、担当フォルダ(/workspace)、ナレッジ(/knowledge)、専用ボリュームだけです。ほかのエージェントや ~/.aws には届きません。")}</li>
+              <li>{t("認証情報(sandbox.env と AWS の一時キー)は、指示ごとに環境変数で渡します。")}</li>
               <li>{t("Dockerが使えないときは、ホストでは実行せずエラーにします。")}</li>
               <li>{t("コマンドはLinux(Debian)上で動きます。brew や open などmacOS向けのコマンドは使えません。")}</li>
               <li>{t("sandbox.env はこのエージェントのフォルダにあり、編集できます。")}</li>
@@ -95,8 +97,8 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
           </Heading>
           <p className="text-xs text-muted-foreground">
             {enabled
-              ? t("有効です。このエージェントのコマンドは専用のDockerコンテナで実行されます。切り替えは全体設定で行います。")
-              : t("無効です。コマンドはホストで実行されます。切り替えは全体設定で行います。")}
+              ? t("有効です。このエージェントへの指示は、専用のDockerコンテナの中の Claude Code が受け持ちます。切り替えは全体設定で行います。")
+              : t("無効です。指示はこのアプリが直接処理し、コマンドはホストで実行されます。切り替えは全体設定で行います。")}
           </p>
         </div>
         <StatusPill on={!!enabled}>{enabled ? t("オン") : t("オフ")}</StatusPill>
@@ -132,6 +134,10 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
             >
               {t("コンテナを作り直す")}
             </Button>
+          </div>
+
+          <div className="border-t pt-4">
+            <SandboxAgentSettings key={workspaceId} />
           </div>
 
           <SandboxDockerfile key={workspaceId} agent={{ id: workspaceId }} embedded />
