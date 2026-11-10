@@ -854,6 +854,7 @@ export const EN: Record<string, string> = {
   "スキル": "Skill",
   "東京": "Tokyo",
   "香港": "Hong Kong",
+  "韓国": "South Korea",
   "サンフランシスコ": "San Francisco",
   "ドイツ": "Germany",
   "世界時計": "World clock",
