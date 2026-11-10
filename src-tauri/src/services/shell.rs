@@ -73,16 +73,12 @@ pub async fn run(
     cwd: &Path,
     timeout: Duration,
     cancel: &CancelToken,
-    mut on_chunk: impl FnMut(Stream, &str),
+    on_chunk: impl FnMut(Stream, &str),
 ) -> Result<Output, String> {
     let mut cmd = Command::new("/bin/sh");
     cmd.arg("-c")
         .arg(command)
         .current_dir(cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
         // 対話やページャで止まらないようにする
         .env("TERM", "dumb")
         .env("NO_COLOR", "1")
@@ -92,6 +88,19 @@ pub async fn run(
     // GUIアプリから起動されたときのPATHにはHomebrewが含まれないので補う
     let path = std::env::var("PATH").unwrap_or_default();
     cmd.env("PATH", format!("/opt/homebrew/bin:/usr/local/bin:{path}"));
+
+    run_prepared(cmd, timeout, cancel, on_chunk).await
+}
+
+/// 準備済みのコマンドを起動し、出力の逐次通知・タイムアウト・中断を監視して終了を待つ。
+/// 標準入力は閉じ、標準出力・標準エラーはパイプにする。起動前に`process_group(0)`を指定しておくこと(終了時にグループごと止める)。
+pub async fn run_prepared(
+    mut cmd: Command,
+    timeout: Duration,
+    cancel: &CancelToken,
+    mut on_chunk: impl FnMut(Stream, &str),
+) -> Result<Output, String> {
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     #[cfg(unix)]
     cmd.process_group(0);
 

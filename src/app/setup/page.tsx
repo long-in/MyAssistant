@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import AwsPanel from "@/components/AwsPanel";
 import LocalLlmPanel from "@/components/LocalLlmPanel";
+import SandboxPanel from "@/components/SandboxPanel";
 import DeleteAgentModal from "@/components/DeleteAgentModal";
 import NotePanel from "@/components/NotePanel";
 import CopySettingsCard from "@/components/CopySettingsCard";
@@ -1484,6 +1485,7 @@ export default function Setup() {
             <TabsContent value="access" className="flex flex-col gap-6">
               <WebAccess />
               <ShellAccess />
+              {active.id !== PERSONAL_ID && <SandboxPanel key={active.id} workspaceId={active.id} />}
               <CommandPolicyEditor />
             </TabsContent>
           )}
