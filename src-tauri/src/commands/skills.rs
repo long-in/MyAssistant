@@ -16,10 +16,10 @@ use crate::{
     services::workspace::Ctx,
 };
 
-/// そのエージェントのナレッジのルート。旧形式のスキル・ハーネスが残っていれば、先に移す。
+/// そのエージェントのナレッジのルート。旧形式のスキル・ハーネスが残っていれば、先に標準形式へ移す。
 fn skills_root(ctx: &Ctx) -> Result<std::path::PathBuf, AppError> {
     let root = batch::knowledge_root(ctx)?;
-    skills_migration::migrate(&root);
+    skills_migration::migrate(&root, &skills_migration::NameMap::new());
     Ok(root)
 }
 
@@ -30,9 +30,12 @@ pub struct SkillsOverview {
     pub index_tokens: usize,
 }
 
+/// 日本語名などのスキルは、画面を開いたときに英訳した名前へ移す(できなければ元のまま)。
 #[tauri::command]
-pub fn list_skills(ctx: Ctx) -> Result<SkillsOverview, AppError> {
-    let skills = skills::list(&skills_root(&ctx)?);
+pub async fn list_skills(ctx: Ctx) -> Result<SkillsOverview, AppError> {
+    let root = batch::knowledge_root(&ctx)?;
+    skills_migration::migrate_with_names(&ctx, &root).await;
+    let skills = skills::list(&root);
     let index_tokens = skills::index_tokens(&prompts::load(&ctx.db, PromptId::Skills)?, &skills);
     Ok(SkillsOverview { skills, index_tokens })
 }

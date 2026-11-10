@@ -504,8 +504,8 @@ async fn send_chat_inner(
         .and_then(|root| related_context(&root, &graphs, &format!("{text}\n{previous}")));
     // スキルは全件を載せず、軽量モデルが選んだ候補(名前と説明だけ)を添える。スキルが無ければ何も呼ばず、トークンも使わない。リーダーは会話からの管理をしない
     let root = batch::knowledge_root(&ctx)?;
-    // 旧形式のスキル・ハーネスが残っていれば、読む前に移す
-    skills_migration::migrate(&root);
+    // 旧形式のスキル・ハーネスと日本語名のスキルが残っていれば、読む前に標準形式へ移す
+    skills_migration::migrate_with_names(&ctx, &root).await;
     // 「はい」などの返事でも管理ツールを渡し続けるため、直近の会話(今回の発話を除く4件)でスキルに触れていたかも見る
     let recent_mention = window.recent.iter().rev().skip(1).take(4).any(|r| skills::mentions_skills(&r.content));
     let may_manage = ctx.id != workspace::LEADER_ID;

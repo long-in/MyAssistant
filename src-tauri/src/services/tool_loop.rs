@@ -132,9 +132,8 @@ pub fn skill_tool_definitions(access: SkillAccess) -> Vec<Value> {
     }
     if access.manage {
         let fields = json!({
-            "name": { "type": "string", "description": format!("スキル名。英数字・日本語・「_」「-」のみ、{}文字以内", skills::NAME_MAX) },
+            "name": { "type": "string", "description": format!("スキル名。小文字の英数字とハイフンのみ(例: morning-report)、{}文字以内", skills::NAME_MAX) },
             "description": { "type": "string", "description": format!("どんな依頼に使うスキルかの説明。{}文字以内、改行と「<」「>」は不可", skills::DESCRIPTION_MAX) },
-            "triggers": { "type": "array", "items": { "type": "string" }, "description": format!("依頼でよく使う言い回し(任意)。{}個まで、1つ{}文字以内", skills::TRIGGERS_MAX, skills::TRIGGER_MAX_CHARS) },
             "body": { "type": "string", "description": format!("手順の本文。対応するときの指示文。{}文字以内", skills::BODY_MAX) }
         });
         tools.push(json!({
@@ -1339,7 +1338,7 @@ mod tests {
     // ---- スキル ----
 
     fn skill_input(name: &str, body: &str) -> Value {
-        json!({ "name": name, "description": "日報をまとめる", "triggers": ["日報"], "body": body })
+        json!({ "name": name, "description": "日報をまとめる", "body": body })
     }
 
     #[tokio::test]
