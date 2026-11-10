@@ -30,6 +30,7 @@
 - `role_arn` + `source_profile` のプロファイルは、`sts:AssumeRole`(MFA 付き)で一時クレデンシャルを得る。一時クレデンシャルは**メモリ上だけ**に置き、期限の 60 秒前に取り直す。ディスクにも保存しない。
 - MFA コードが必要なときは、Rust が `aws-mfa-required` イベントを送って入力を待つ(上限 180 秒、誤入力は 3 回まで再入力)。呼び出し側(対話・整理など)はコードが届くまで待ち、届けばそのまま続行する。同時に複数の呼び出しが来ても入力は 1 回にまとめる。
 - 対応するのは「アクセスキーを持つプロファイル」と「そのプロファイルを `source_profile` にした 1 段のロール」。SSO・`credential_process`・`credential_source`・ロールの連鎖は未対応。貼り付けフォームでは、選べないプロファイルをその理由(`source_profile` の参照先が無い、未対応の方式など)付きで表示する。
+- 設定画面の「保存先をFinderで開く」(`reveal_secrets_file`)は、現在のワークスペースの `secrets.json` を Finder で選択表示する(未作成ならフォルダを開く)。パスは `ctx.dir` から Rust 内で組み立て、中身は読まない。
 - Bedrock にはサーバーツール(検索・ページ取得)が無いため、Web 検索は使えない。ファイル操作とコマンド実行(承認付き)は Anthropic 直接と同じ。
 - 使う Bedrock のモデルは利用者が登録する(モデル ID・推論プロファイル ID・ARN。`secrets.json` の `aws_models`)。初回の保存時だけ、`global.anthropic.claude-haiku-5-5`、`global.anthropic.claude-sonnet-5-5`、`global.anthropic.claude-opus-5-5` を候補として登録する。実際の ID はアカウントで `aws bedrock list-inference-profiles` を見て確認する。設定画面の「Bedrockからglobalのモデルを取得」で、推論プロファイル一覧(`bedrock:ListInferenceProfiles`)から `global.anthropic.` で始まる ID を取得して選べる(`list-foundation-models` は接頭辞なしの基盤モデル ID しか返さないため、推論プロファイル側を使う)。登録したモデルがモデル選択に並び、選択値はその ID そのものになる。
 

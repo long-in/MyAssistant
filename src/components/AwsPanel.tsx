@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, Download, KeyRound, Loader2, Plug, Plus, Trash2, X } from "lucide-react";
+import { ChevronDown, Download, FolderOpen, KeyRound, Loader2, Plug, Plus, Trash2, X } from "lucide-react";
 import { StatusPill, UsedBy, linkCardClass } from "@/components/GlobalPanels";
 import { toast } from "sonner";
 import { useT } from "@/lib/i18n";
@@ -13,6 +13,7 @@ import {
   fetchAwsModels,
   getAwsStatus,
   previewAwsConfig,
+  revealSecretsFile,
   removeAwsModel,
   reportError,
   saveAwsConfig,
@@ -138,6 +139,16 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
             <Trash2 />
           </Button>
         )}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={t("保存先をFinderで開く")}
+          title={t("保存先をFinderで開く")}
+          onClick={() => revealSecretsFile().catch((e) => toast.error(reportError(e)))}
+        >
+          <FolderOpen />
+        </Button>
         <Button type="button" variant="outline" size="sm" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
           {registered ? t("更新") : t("接続")}
           <ChevronDown className={cn("transition-transform", open && "rotate-180")} />

@@ -31,6 +31,7 @@ pub fn run() {
       commands::backup::restore_apply,
       commands::backup::restore_discard,
       commands::aws::get_aws_status,
+      commands::aws::reveal_secrets_file,
       commands::aws::preview_aws_config,
       commands::aws::save_aws_config,
       commands::aws::select_aws_profile,

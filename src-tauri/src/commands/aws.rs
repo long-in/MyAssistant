@@ -8,6 +8,21 @@ use crate::{
     utils::error::AppError,
 };
 
+/// このワークスペースの`secrets.json`をFinderで選択した状態で開く。未作成ならワークスペースのフォルダを開く。
+/// パスは`ctx.dir`から組み立てるだけで、ファイルの中身は読まない。
+#[tauri::command]
+pub fn reveal_secrets_file(ctx: Ctx) -> Result<(), AppError> {
+    let file = ctx.dir.join("secrets.json");
+    let mut cmd = std::process::Command::new("/usr/bin/open");
+    if file.exists() {
+        cmd.arg("-R").arg(file);
+    } else {
+        cmd.arg(&ctx.dir);
+    }
+    let status = cmd.status().map_err(|e| AppError::Io(e.to_string()))?;
+    if status.success() { Ok(()) } else { Err(AppError::Io(format!("open failed: {status}"))) }
+}
+
 /// 登録有無・プロファイル一覧・選択中のプロファイル。キーの生値は返さない。
 #[tauri::command]
 pub fn get_aws_status(ctx: Ctx) -> Result<Status, AppError> {
