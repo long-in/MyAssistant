@@ -74,7 +74,7 @@ async fn summarize(
     rows: &[LogRow],
 ) -> Result<String, AppError> {
     let msg = [ChatMessage { role: "user".into(), content: prompt(previous, rows) }];
-    let system = prompts::load(&ctx.db, PromptId::Summary)?;
+    let system = prompts::load(&ctx.db, &*ctx.global, PromptId::Summary)?;
     let done = llm_client::complete(ctx, provider, model, Some(&system), &msg).await?;
     let text: String = done.text.trim().chars().take(SUMMARY_MAX_CHARS).collect();
     if text.is_empty() { Err(AppError::Db("empty summary".into())) } else { Ok(text) }

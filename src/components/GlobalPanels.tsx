@@ -16,7 +16,7 @@ import HelpDrawer from "@/components/HelpDrawer";
 import BackupPasswordModal from "@/components/BackupPasswordModal";
 import { ensureOsPermission, osNotificationsEnabled, setOsNotificationsEnabled, syncOsNotifications } from "@/lib/osNotify";
 import NotePanel from "@/components/NotePanel";
-import { getSharedData, saveSharedData, LEADER_COLOR, LEADER_ID, createLeader, errorMessage, leaderExists, setWorkEnabled, workEnabled, setGlobalLanguage, getProxies, saveProxy, deleteProxy, setDefaultProxy, getProxyChoice, setProxyChoice, type ProxyList, type ProxyEntry, backupCreate, restorePrepare, restoreApply, restoreDiscard, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, getBatchInterval, setBatchInterval, type WakeConfig, reportError, type AppError, saveBaseInstructions, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
+import { getSharedData, saveSharedData, LEADER_COLOR, LEADER_ID, createLeader, errorMessage, leaderExists, setWorkEnabled, workEnabled, setGlobalLanguage, getProxies, saveProxy, deleteProxy, setDefaultProxy, getProxyChoice, setProxyChoice, type ProxyList, type ProxyEntry, backupCreate, restorePrepare, restoreApply, restoreDiscard, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, getBatchInterval, setBatchInterval, type WakeConfig, reportError, type AppError, saveBaseInstructions, listGlobalPrompts, saveGlobalPrompt, resetGlobalPrompt, getSharedClaudeSettings, setSharedClaudeSettings, PROMPT_MAX_CHARS, type PromptId, type PromptInfo, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
 
 /** 見出しの左に出すアイコン(英字の見出しごと)。無いものは歯車。 */
 const HEADING_ICONS: Record<string, LucideIcon> = {
@@ -46,6 +46,8 @@ const HEADING_ICONS: Record<string, LucideIcon> = {
   "Voice Input": Mic,
   Sandbox: Container,
   "Sandbox Image": Container,
+  "Shared Prompts": ScrollText,
+  "Shared Claude Settings": Container,
 };
 
 /** オン/オフなどの状態の小さな表示。オンは発光し、オフは控えめに出す。 */
@@ -719,6 +721,7 @@ export function BaseInstructions() {
           <li>{t("応答はそのまま音声になるため、記号を使わない指定などを入れておくと便利です。")}</li>
           <li>{t("次の送信から反映されます。")}</li>
           <li>{t("空にすると既定の指示に戻ります。")}</li>
+          <li>{t("エージェントが個別に編集していなければ、この指示が使われます。ここを変えると、次の送信から自動で反映されます。個別に編集したエージェントは、変わりません。")}</li>
         </ul>
       </Heading>
       <p className="mb-3 text-xs text-muted-foreground">{t("AIへ毎回渡す指示です。")}</p>
@@ -740,6 +743,158 @@ export function BaseInstructions() {
           }}
         >
           {t("既定に戻す")}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+/** 全体設定で持つ、チャット以外のプロンプト(画面に並べる順)。 */
+const SHARED_PROMPTS: { id: PromptId; title: string }[] = [
+  { id: "summary", title: "会話の要約" },
+  { id: "proofread", title: "文字起こしの校正" },
+  { id: "organize", title: "ナレッジの整理" },
+  { id: "skills", title: "スキルの選定" },
+  { id: "suggest", title: "宛先の提案" },
+];
+
+/**
+ * 全体設定のプロンプト(チャット以外)。エージェントが個別に編集していなければ、これが使われる。
+ * 変更は次の呼び出しから、全体設定を利用しているエージェントへ自動で反映される。個別に編集したエージェントは変わらない。
+ */
+export function SharedPrompts() {
+  const t = useT();
+  const [infos, setInfos] = useState<Partial<Record<PromptId, PromptInfo>>>({});
+  const [drafts, setDrafts] = useState<Partial<Record<PromptId, string>>>({});
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    listGlobalPrompts()
+      .then((l) => setInfos(Object.fromEntries(l.map((x) => [x.id, x]))))
+      .catch((e) => toast.error(reportError(e)));
+  }, []);
+
+  const run = async (id: PromptId, op: () => Promise<PromptInfo>, ok: string) => {
+    setBusy(true);
+    try {
+      const info = await op();
+      setInfos((m) => ({ ...m, [id]: info }));
+      setDrafts((d) => ({ ...d, [id]: undefined }));
+      toast.success(ok);
+    } catch (e) {
+      toast.error(reportError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="hud-panel hud-accent px-5 py-4">
+      <Heading title="Shared Prompts" help={t("全体のプロンプト")}>
+        <p>{t("AIを使う機能ごとの指示を、全エージェントで共通にします。")}</p>
+        <ul>
+          <li>{t("エージェントが個別に編集していなければ、ここの指示が使われ、変更は次の呼び出しから自動で反映されます。")}</li>
+          <li>{t("エージェントの AI 設定で編集したものは個別設定になり、ここを変えても更新されません。")}</li>
+          <li>{t("空にすると既定の指示に戻ります。")}</li>
+        </ul>
+      </Heading>
+      <div className="flex flex-col gap-3">
+        {SHARED_PROMPTS.map(({ id, title }) => {
+          const info = infos[id];
+          const saved = info?.text ?? "";
+          const value = drafts[id] ?? saved;
+          return (
+            <div key={id} className="rounded-md border bg-background/40 px-4 py-3">
+              <h3 className="mb-2 text-sm font-medium">{t(title)}</h3>
+              <Textarea
+                rows={8}
+                maxLength={PROMPT_MAX_CHARS}
+                value={value}
+                disabled={!info}
+                onChange={(e) => setDrafts((d) => ({ ...d, [id]: e.target.value }))}
+                aria-label={t("{name}のプロンプト", { name: t(title) })}
+                className="font-mono text-xs"
+              />
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">{value.length} / {PROMPT_MAX_CHARS}</span>
+                <div className="flex gap-2">
+                  <Button type="button" variant="ghost" size="sm" disabled={busy || !info || (!info.custom && value === info.default)} onClick={() => void run(id, () => resetGlobalPrompt(id), t("既定の指示に戻しました。"))}>
+                    {t("既定に戻す")}
+                  </Button>
+                  <Button type="button" size="sm" disabled={busy || !info || value === saved} onClick={() => void run(id, () => saveGlobalPrompt(id, value), t("保存しました。"))}>
+                    {t("保存")}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * 全体設定の Claude Code settings.json。エージェントが自分の settings.json を持たなければ、これが使われる。
+ * 変更は次の指示から、全体設定を利用しているエージェントへ自動で反映される。個別設定のエージェントは変わらない。
+ */
+export function SharedClaudeSettings() {
+  const t = useT();
+  const [saved, setSaved] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const dirty = saved !== null && draft.trim() !== saved.trim();
+  useEffect(() => {
+    getSharedClaudeSettings()
+      .then((v) => {
+        setSaved(v);
+        setDraft(v);
+      })
+      .catch((e) => toast.error(reportError(e)));
+  }, []);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await setSharedClaudeSettings(draft);
+      setSaved(draft.trim());
+      setDraft(draft.trim());
+      setError(null);
+      toast.success(t("保存しました。次の指示から反映されます。"));
+    } catch (e) {
+      setError(reportError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="hud-panel hud-accent px-5 py-4">
+      <Heading title="Shared Claude Settings" help={t("全体の Claude Code settings.json")}>
+        <p>{t("コンテナ内の Claude Code へ渡す settings.json を、全エージェントで共通にします。")}</p>
+        <ul>
+          <li>{t("エージェントが自分の settings.json を持たなければ、ここの内容が使われ、変更は次の指示から自動で反映されます。")}</li>
+          <li>{t("エージェントの Sandbox 設定で編集したものは個別設定になり、ここを変えても更新されません。")}</li>
+          <li>{t("env に値を書くと、全エージェントのコンテナへ渡ります。エージェントごとに分けたい認証情報は sandbox.env に書いてください。")}</li>
+        </ul>
+      </Heading>
+      <Textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        disabled={saved === null}
+        spellCheck={false}
+        autoComplete="off"
+        placeholder={'{\n  "permissions": { "allow": ["Bash", "Read"] }\n}'}
+        className="min-h-40 font-mono text-xs"
+        aria-label="Claude Code settings.json"
+      />
+      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+      <div className="mt-3 flex justify-end gap-2">
+        <Button type="button" variant="ghost" size="sm" disabled={!dirty || busy} onClick={() => setDraft(saved ?? "")}>
+          {t("変更を破棄")}
+        </Button>
+        <Button type="button" size="sm" disabled={!dirty || busy} onClick={() => void save()}>
+          {t("保存")}
         </Button>
       </div>
     </section>

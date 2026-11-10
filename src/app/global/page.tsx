@@ -5,6 +5,8 @@ import { AudioLines, Container, MessageSquareText, SlidersHorizontal } from "luc
 import { toast } from "sonner";
 import {
   BaseInstructions,
+  SharedPrompts,
+  SharedClaudeSettings,
   BatchInterval,
   PageHeader,
   StatusPill,
@@ -109,6 +111,7 @@ export default function GlobalSettings() {
 
           <TabsContent value="prompt" className="flex flex-col gap-6">
             <BaseInstructions />
+            <SharedPrompts />
             <SharedData />
             <PersonalData />
             <BatchInterval />
@@ -137,6 +140,7 @@ export default function GlobalSettings() {
 
           <TabsContent value="sandbox" className="flex flex-col gap-6">
             <SandboxDockerfile />
+            <SharedClaudeSettings />
           </TabsContent>
 
           <TabsContent value="general" className="flex flex-col gap-6">
