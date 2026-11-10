@@ -16,7 +16,7 @@ use crate::utils::error::AppError;
 pub const ROUTE_KEY: &str = "proofread_route";
 /// ワークのエージェントで、校正をコンテナ内の Claude Code で行うことを示す`Route.provider`の値(`Route.model`は空)。
 /// ワークの校正は、これか端末内のQwen(`local`)かのどちらか。
-pub const SANDBOX_PROVIDER: &str = "sandbox";
+pub use super::llm_router::SANDBOX_PROVIDER;
 /// コンテナでの校正の上限時間。長引くなら諦めて元の文章を使う。
 const SANDBOX_TIMEOUT: Duration = Duration::from_secs(60);
 /// 文脈として渡す直近の発話数。
@@ -40,6 +40,9 @@ pub fn effective_route(ctx: &WorkspaceCtx, available: &[Provider]) -> Result<Opt
         if sandbox::runs_in_sandbox(&ctx.id) {
             // ワークは、コンテナ(Claude Code)か端末内のQwenだけ
             r.provider == SANDBOX_PROVIDER || (r.provider == Provider::Local.as_str() && llm_router::resolve(ctx, r, available).is_ok())
+        } else if llm_router::is_sandbox(r) {
+            // 個人・リーダーは、Anthropic・端末内のQwenに並べて、コンテナ(Claude Code)も選べる
+            llm_router::offers_sandbox(ctx)
         } else {
             llm_router::resolve(ctx, r, available).is_ok()
         }
@@ -72,7 +75,7 @@ pub async fn proofread(ctx: &WorkspaceCtx, route: &Route, session_id: Option<&st
         .into_iter()
         .map(|r| ChatMessage { role: r.role, content: r.content })
         .collect();
-    let system = match prompts::load(&ctx.db, PromptId::Proofread) {
+    let system = match prompts::load(&ctx.db, &*ctx.global, PromptId::Proofread) {
         Ok(s) => s,
         Err(e) => {
             log::warn!("proofread skipped: {e}");
@@ -129,5 +132,18 @@ mod tests {
         let h = [ChatMessage { role: "assistant".into(), content: "答え".into() }];
         let p = prompt("本文", &h, Some("誤→正"));
         assert!(p.contains("AI: 答え") && p.contains("誤→正") && p.contains("<transcript>\n本文"));
+    }
+
+    #[test]
+    fn sandbox_route_is_kept_for_personal_but_not_for_other_ids() {
+        use crate::services::workspace::{PERSONAL_ID, WorkspaceCtx};
+        let dir = tempfile::tempdir().unwrap();
+        let personal = WorkspaceCtx::open(PERSONAL_ID, dir.path()).unwrap();
+        let sandbox = Route { provider: SANDBOX_PROVIDER.into(), model: String::new() };
+        personal.db.set_setting(ROUTE_KEY, &serde_json::to_string(&sandbox).unwrap()).unwrap();
+        assert_eq!(effective_route(&personal, &[]).unwrap(), Some(sandbox.clone()));
+        // 旧Bedrockの保存値は、使えないので校正しない(勝手にコンテナへ回さない)
+        personal.db.set_setting(ROUTE_KEY, r#"{"provider":"bedrock","model":"x"}"#).unwrap();
+        assert_eq!(effective_route(&personal, &[]).unwrap(), None);
     }
 }

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useT } from "@/lib/i18n";
 import {
+  LEADER_ID,
+  PERSONAL_ID,
   type SandboxStatus,
   getSandboxStatus,
   reportError,
@@ -88,7 +90,9 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
             </ul>
           </Heading>
           <p className="text-xs text-muted-foreground">
-            {t("ワークのエージェントは、常にこのコンテナで動きます(切り替えはありません)。Claude Code のモデルや許可するツールは、下の settings.json で設定します。")}
+            {workspaceId === PERSONAL_ID || workspaceId === LEADER_ID
+              ? t("このエージェントは、モデルに「コンテナ内の Claude Code」を選んだときだけ、このコンテナで動きます(Bedrock を使うときはこれを選びます)。Claude Code のモデルや許可するツールは、下の settings.json で設定します。")
+              : t("ワークのエージェントは、常にこのコンテナで動きます(切り替えはありません)。Claude Code のモデルや許可するツールは、下の settings.json で設定します。")}
           </p>
         </div>
       </div>

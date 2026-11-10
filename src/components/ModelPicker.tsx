@@ -4,13 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Sparkles } from "lucide-react";
 import { useT } from "@/lib/i18n";
-import { PROVIDER_LABELS, type KeyStatus, type ModelInfo, type Provider, type Route } from "@/lib/api";
+import { MODEL_PROVIDER_LABELS, type ModelInfo, type ModelKeyStatus, type ModelProvider, type Route } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 type Props = {
   route: Route | null;
   models: ModelInfo[];
-  keyStatus: Partial<KeyStatus>;
+  keyStatus: ModelKeyStatus;
   onChange: (route: Route) => void;
   /** 入力欄の中に置く小さな見た目(枠なし)。 */
   compact?: boolean;
@@ -30,7 +30,7 @@ export default function ModelPicker({ route, models, keyStatus, onChange, compac
   const [rect, setRect] = useState<DOMRect | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const usable = models.filter((m) => keyStatus[m.provider]);
-  const providers = [...new Set(usable.map((m) => m.provider))] as Provider[];
+  const providers = [...new Set(usable.map((m) => m.provider))] as ModelProvider[];
   const current = usable.find((m) => m.provider === route?.provider && m.id === route?.model);
 
   useEffect(() => {
@@ -82,7 +82,7 @@ export default function ModelPicker({ route, models, keyStatus, onChange, compac
             <div role="listbox" style={style} className="fixed z-50 max-h-80 overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-lg">
               {providers.map((p) => (
                 <div key={p} className="py-1">
-                  {!flat && <div className="px-2 py-1 text-[0.65rem] font-medium tracking-wide text-muted-foreground">{PROVIDER_LABELS[p]}</div>}
+                  {!flat && <div className="px-2 py-1 text-[0.65rem] font-medium tracking-wide text-muted-foreground">{t(MODEL_PROVIDER_LABELS[p])}</div>}
                   {usable
                     .filter((m) => m.provider === p)
                     .map((m) => {

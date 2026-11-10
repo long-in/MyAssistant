@@ -34,7 +34,7 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
 ### 対話
 
 - **LLM 対話** ([chat-flow.md](docs/chat-flow.md))
-  - Anthropic / Amazon Bedrock(Claude)に対応し、チャットのモデルは左下のピッカーで切り替えます。
+  - Anthropic(API キー)に対応し、チャットのモデルは左下のピッカーで切り替えます。Amazon Bedrock(Claude)は、コンテナ内の Claude Code 経由で使います(パーソナル・リーダーは、ピッカーで「コンテナ内の Claude Code」を選びます。モデルは Claude Code の settings.json で決めます)。
   - 端末内で動くローカル LLM(Qwen 2.5 7B)も選べます。キー不要・無料で、会話の内容は端末の外へ出ません。設定画面からダウンロードします(約4.7GB。[local-llm.md](docs/local-llm.md))。
   - 校正・ナレッジ整理・スキル選定のモデルと、LLM に渡すプロンプト(全文を編集でき、初期値へ戻せる)は、エージェントの設定の「AI Settings」にまとまっています。
   - 応答は読み上げ向けの短い話し言葉です。
@@ -98,7 +98,7 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
 - **サンドボックス** ([sandbox.md](docs/sandbox.md))
   - 全体設定で有効にすると、パーソナルを含む全エージェントへの指示を、エージェントごとの専用 Docker コンテナの中の Claude Code が受け持ちます(既定は無効)。続きの指示は同じセッションで引き継ぎます。
   - コンテナから見えるのは、そのエージェントの担当フォルダ(`/workspace`。エージェントごとに決まった場所で、ソースコードなどを置く)とナレッジ(`/knowledge`)だけで、ほかのエージェントや `~/.aws` には届きません。
-  - Claude Code の接続先は Anthropic API(`sandbox.env` の API キー)か Amazon Bedrock(AWS の一時キー)を、エージェントごとに選べます。
+  - Claude Code の接続先は Amazon Bedrock(AWS の一時キー)です。モデルと許可するツールは、Claude Code の settings.json で決めます。パーソナル・リーダーは、モデルに「コンテナ内の Claude Code」を選んだときだけコンテナで動きます(それ以外の Anthropic・端末内のモデルは従来どおり)。
   - エージェントごとの環境変数(`sandbox.env`)と AWS の一時キーを、実行時にだけコンテナへ渡します。イメージは全エージェント共通で、Dockerfile は全体設定で編集します。エージェントごとに専用の Dockerfile を登録すると、そちらを優先します。
   - Docker が使えないときは、ホストでは実行せずエラーにします。
 
@@ -136,9 +136,9 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
 | プロバイダー | 軽量 | 高性能 |
 | --- | --- | --- |
 | Anthropic | Claude Haiku 5.5 | Claude Sonnet 5.5 / Claude Opus 5.5 |
-| Amazon Bedrock | (設定画面で登録したモデル ID) | (同左) |
+| Amazon Bedrock | (コンテナ内の Claude Code の settings.json で決める) | (同左) |
 
-ファイル操作・コマンド実行は両プロバイダーで使えます。インターネット検索・ページ取得は Anthropic 直接のときだけ使えます(Bedrock には Anthropic のサーバーツールが無いため)。
+ファイル操作・コマンド実行は Anthropic 直接で使えます(Bedrock は、コンテナ内の Claude Code が持つツールを settings.json の許可で使います)。インターネット検索・ページ取得のアプリのツールは、Anthropic 直接のときだけ使えます。
 
 ### キーボードショートカット
 
@@ -262,7 +262,7 @@ npm run tauri build
 | 用途 | キー |
 | --- | --- |
 | Claude | Anthropic API キー |
-| Claude(Bedrock 経由) | `~/.aws/config` と `~/.aws/credentials` の中身(設定画面へそのまま貼り付け)。MFA 付きのスイッチロール(`role_arn` + `source_profile` + `mfa_serial`)に対応。Web 検索・ページ取得は使えない |
+| Claude(Bedrock 経由) | `~/.aws/config` と `~/.aws/credentials` の中身(設定画面へそのまま貼り付け)。MFA 付きのスイッチロール(`role_arn` + `source_profile` + `mfa_serial`)に対応。コンテナ内の Claude Code へ一時キーを渡して使う(モデルは settings.json で決める) |
 | 音声出力 / Google STT | Google Cloud API キー |
 | ローカル LLM(Qwen 2.5 7B) | キー不要。設定画面の「AI Link」からダウンロードする。Web 検索・ページ取得は使えない。メモリ 16GB 以上を推奨 |
 

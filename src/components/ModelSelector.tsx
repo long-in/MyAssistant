@@ -2,10 +2,11 @@
 
 import { useT } from "@/lib/i18n";
 import {
-  PROVIDER_LABELS,
-  type KeyStatus,
+  MODEL_PROVIDER_LABELS,
+  SANDBOX_PROVIDER,
   type ModelInfo,
-  type Provider,
+  type ModelKeyStatus,
+  type ModelProvider,
   type Route,
 } from "@/lib/api";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -13,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 type Props = {
   route: Route | null;
   models: ModelInfo[];
-  keyStatus: Partial<KeyStatus>;
+  keyStatus: ModelKeyStatus;
   onChange: (route: Route) => void;
 };
 
@@ -23,7 +24,7 @@ export default function ModelSelector({ route, models, keyStatus, onChange }: Pr
   const usable = models.filter((m) => keyStatus[m.provider]);
   const providers = [...new Set(usable.map((m) => m.provider))];
   const current = route;
-  const providerItems = providers.map((p) => ({ value: p, label: PROVIDER_LABELS[p] }));
+  const providerItems = providers.map((p) => ({ value: p, label: t(MODEL_PROVIDER_LABELS[p]) }));
   const modelItems = usable
     .filter((m) => m.provider === current?.provider)
     .map((m) => ({ value: m.id, label: m.label }));
@@ -36,7 +37,7 @@ export default function ModelSelector({ route, models, keyStatus, onChange }: Pr
             items={providerItems}
             value={current.provider}
             onValueChange={(v) => {
-              const provider = v as Provider;
+              const provider = v as ModelProvider;
               const m = usable.find((x) => x.provider === provider);
               if (m) onChange({ provider, model: m.id });
             }}
@@ -50,6 +51,8 @@ export default function ModelSelector({ route, models, keyStatus, onChange }: Pr
               ))}
             </SelectContent>
           </Select>
+          {/* コンテナ内の Claude Code のモデルは settings.json で決まるので、ここでは選ばない */}
+          {current.provider !== SANDBOX_PROVIDER && (
           <Select
             items={modelItems}
             value={current.model}
@@ -66,6 +69,7 @@ export default function ModelSelector({ route, models, keyStatus, onChange }: Pr
               ))}
             </SelectContent>
           </Select>
+          )}
         </>
       )}
     </div>

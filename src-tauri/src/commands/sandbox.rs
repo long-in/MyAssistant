@@ -15,11 +15,11 @@ fn supported(ctx: &WorkspaceCtx) -> Result<(), AppError> {
     if sandbox::is_supported(&ctx.id) {
         Ok(())
     } else {
-        Err(AppError::Sandbox("リーダーではサンドボックスを使えません。".into()))
+        Err(AppError::Sandbox("このエージェントではサンドボックスを使えません。".into()))
     }
 }
 
-/// このエージェントがサンドボックスで動くか(ワークのエージェントは常に動く。パーソナルとリーダーは動かない)。
+/// このエージェントが常にサンドボックスで動くか(ワークのエージェントは常に動く)。パーソナルとリーダーは、モデルにコンテナ内の Claude Code を選んだときだけ使う。
 #[tauri::command]
 pub fn get_sandbox_enabled(ctx: Ctx) -> bool {
     crate::commands::chat::sandbox_enabled(&ctx)
@@ -224,13 +224,32 @@ pub fn set_sandbox_llm(ctx: Ctx, config: sandbox_agent::LlmConfig) -> Result<san
     sandbox_agent::save(&ctx.db, config)
 }
 
-/// 貼り付けた Claude Code の settings.json(未設定は空文字)。コンテナ内の Claude Code へ、実行ごとに`--settings`で渡す。
+/// このエージェントの settings.json。`own`は自分の保存(空なら全体設定を利用)、`shared`は全体設定の内容。
+#[derive(Serialize)]
+pub struct ClaudeSettings {
+    pub own: String,
+    pub shared: String,
+}
+
+/// 貼り付けた Claude Code の settings.json。コンテナ内の Claude Code へ、実行ごとに`--settings`で渡す(自分の保存がなければ全体設定)。
 #[tauri::command]
-pub fn get_sandbox_claude_settings(ctx: Ctx) -> Result<String, AppError> {
+pub fn get_sandbox_claude_settings(ctx: Ctx) -> Result<ClaudeSettings, AppError> {
     supported(&ctx)?;
     // 旧設定のモデル・許可するツールは、初めて開いたときに settings.json へ移す
     sandbox_agent::migrate_legacy_llm(&ctx.db)?;
-    sandbox_agent::load_settings(&ctx.db)
+    Ok(ClaudeSettings { own: sandbox_agent::load_settings(&ctx.db)?, shared: sandbox_agent::load_shared_settings(&*ctx.global)? })
+}
+
+/// 全体設定の settings.json(未設定は空文字)。自分の settings.json を持たないエージェントが使う。
+#[tauri::command]
+pub fn get_shared_claude_settings(ctx: Ctx) -> Result<String, AppError> {
+    sandbox_agent::load_shared_settings(&*ctx.global)
+}
+
+/// 全体設定の settings.json を検証して保存する。空にすると未設定に戻る。次の指示から、全体設定を利用するエージェントへ反映される。
+#[tauri::command]
+pub fn set_shared_claude_settings(ctx: Ctx, content: String) -> Result<(), AppError> {
+    sandbox_agent::save_shared_settings(&*ctx.global, &content)
 }
 
 /// チャットで選べるモデル(settings.json の`model`・`availableModels`)と、選ばれているモデル。
@@ -244,21 +263,23 @@ pub struct SandboxModels {
 pub fn get_sandbox_models(ctx: Ctx) -> Result<SandboxModels, AppError> {
     supported(&ctx)?;
     sandbox_agent::migrate_legacy_llm(&ctx.db)?;
-    Ok(SandboxModels { models: sandbox_agent::available_models(&ctx.db), selected: sandbox_agent::selected_model(&ctx.db) })
+    Ok(SandboxModels { models: sandbox_agent::available_models(&ctx.db, &*ctx.global), selected: sandbox_agent::selected_model(&ctx.db, &*ctx.global) })
 }
 
 /// チャットで使うモデルを選ぶ。settings.json で許可していないモデルは保存しない。`None`で選択を解除する。
 #[tauri::command]
 pub fn set_sandbox_model(ctx: Ctx, model: Option<String>) -> Result<(), AppError> {
     supported(&ctx)?;
-    sandbox_agent::save_selected_model(&ctx.db, model.as_deref())
+    sandbox_agent::save_selected_model(&ctx.db, &*ctx.global, model.as_deref())
 }
 
-/// 検証して保存する。JSON のオブジェクトでなければ保存しない。空にすると未設定に戻る。
+/// 検証して保存する。JSON のオブジェクトでなければ保存しない。空、または全体設定と同じ内容は「全体設定を利用」(自分の保存なし)になる。
 #[tauri::command]
 pub fn set_sandbox_claude_settings(ctx: Ctx, content: String) -> Result<(), AppError> {
     supported(&ctx)?;
-    sandbox_agent::save_settings(&ctx.db, &content)
+    let shared = sandbox_agent::load_shared_settings(&*ctx.global)?;
+    let follow = content.trim() == shared.trim();
+    sandbox_agent::save_settings(&ctx.db, if follow { "" } else { &content })
 }
 
 /// このエージェントのコンテナを作り直す(ボリュームは残す)。次のコマンドで新しく作られる。

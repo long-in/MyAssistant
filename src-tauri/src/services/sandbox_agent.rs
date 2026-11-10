@@ -24,6 +24,8 @@ use crate::utils::error::AppError;
 pub const LLM_KEY: &str = "sandbox_llm";
 /// Claude Code の settings.json(貼り付けたもの)のキー。値は JSON の文字列で、空は未設定。
 pub const CLAUDE_SETTINGS_KEY: &str = "sandbox_claude_settings";
+/// 全体設定の側の settings.json のキー。エージェントが自分の settings.json を持たない(空)ときは、これを使う。
+pub const SHARED_CLAUDE_SETTINGS_KEY: &str = "sandbox_claude_settings_shared";
 /// チャットで選んだモデル(settings.json の許可するモデルのうち、`--model`で指定するもの)のキー。
 const MODEL_KEY: &str = "sandbox_model";
 /// モデル名の上限(文字数)。
@@ -150,20 +152,38 @@ pub fn validate_settings(text: &str) -> Result<(), String> {
     }
 }
 
-/// 保存された settings.json(未設定は空文字)。
+/// このエージェントが自分で保存した settings.json(未設定は空文字)。空のときは全体設定を利用している。
 pub fn load_settings(db: &impl SettingsStore) -> Result<String, AppError> {
     Ok(db.get_setting(CLAUDE_SETTINGS_KEY)?.unwrap_or_default())
 }
 
+/// 全体設定の settings.json(未設定は空文字)。
+pub fn load_shared_settings(global: &impl SettingsStore) -> Result<String, AppError> {
+    Ok(global.get_setting(SHARED_CLAUDE_SETTINGS_KEY)?.unwrap_or_default())
+}
+
+/// 実際に使う settings.json。エージェントの保存があればそれ(個別設定)、空なら全体設定を利用する。
+/// 全体設定を変えると、個別設定でないエージェントへは次の指示から自動で反映される。
+pub fn effective_settings(db: &impl SettingsStore, global: &impl SettingsStore) -> Result<String, AppError> {
+    let own = load_settings(db)?;
+    if own.trim().is_empty() { load_shared_settings(global) } else { Ok(own) }
+}
+
+/// 全体設定の settings.json を検証して保存する。空にすると未設定に戻る。
+pub fn save_shared_settings(global: &impl SettingsStore, text: &str) -> Result<(), AppError> {
+    validate_settings(text).map_err(AppError::Sandbox)?;
+    global.set_setting(SHARED_CLAUDE_SETTINGS_KEY, text.trim())
+}
+
 /// settings.json の`model`(ログの表示用)。未設定・読めないときは`None`。
-pub fn configured_model(db: &impl SettingsStore) -> Option<String> {
-    let Ok(Value::Object(root)) = serde_json::from_str::<Value>(&load_settings(db).ok()?) else { return None };
+pub fn configured_model(db: &impl SettingsStore, global: &impl SettingsStore) -> Option<String> {
+    let Ok(Value::Object(root)) = serde_json::from_str::<Value>(&effective_settings(db, global).ok()?) else { return None };
     root.get("model").and_then(Value::as_str).map(str::trim).filter(|m| !m.is_empty()).map(str::to_owned)
 }
 
 /// チャットで選べるモデル。settings.json の`model`(既定)と、`availableModels`(許可するモデル)を、重複なく並べる。
-pub fn available_models(db: &impl SettingsStore) -> Vec<String> {
-    let Some(Ok(Value::Object(root))) = load_settings(db).ok().map(|s| serde_json::from_str::<Value>(&s)) else { return Vec::new() };
+pub fn available_models(db: &impl SettingsStore, global: &impl SettingsStore) -> Vec<String> {
+    let Some(Ok(Value::Object(root))) = effective_settings(db, global).ok().map(|s| serde_json::from_str::<Value>(&s)) else { return Vec::new() };
     let listed = root.get("availableModels").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str);
     let mut models: Vec<String> = Vec::new();
     for m in root.get("model").and_then(Value::as_str).into_iter().chain(listed) {
@@ -176,16 +196,16 @@ pub fn available_models(db: &impl SettingsStore) -> Vec<String> {
 }
 
 /// チャットで選ばれているモデル。選べるモデルの一覧に無くなっていれば`None`(settings.json の`model`に任せる)。
-pub fn selected_model(db: &impl SettingsStore) -> Option<String> {
+pub fn selected_model(db: &impl SettingsStore, global: &impl SettingsStore) -> Option<String> {
     let saved = db.get_setting(MODEL_KEY).ok().flatten()?;
-    available_models(db).into_iter().find(|m| *m == saved)
+    available_models(db, global).into_iter().find(|m| *m == saved)
 }
 
 /// 選んだモデルを保存する。`None`は選択の解除。選べるモデルの一覧に無いものは受け付けない。
-pub fn save_selected_model(db: &impl SettingsStore, model: Option<&str>) -> Result<(), AppError> {
+pub fn save_selected_model(db: &impl SettingsStore, global: &impl SettingsStore, model: Option<&str>) -> Result<(), AppError> {
     match model.map(str::trim).filter(|m| !m.is_empty()) {
         None => db.set_setting(MODEL_KEY, ""),
-        Some(m) if available_models(db).iter().any(|x| x == m) => db.set_setting(MODEL_KEY, m),
+        Some(m) if available_models(db, global).iter().any(|x| x == m) => db.set_setting(MODEL_KEY, m),
         Some(_) => Err(AppError::Sandbox("settings.json で許可していないモデルです。".into())),
     }
 }
@@ -443,7 +463,7 @@ fn tail(s: &str, n: usize) -> String {
 /// 認証情報が足りない・Dockerが使えないなどは、実行せずに`Err`。中断・時間切れは`Ok`で、フラグを立てて返す。
 pub async fn run_turn(turn: Turn<'_>, cancel: &CancelToken, mut on_event: impl FnMut(AgentEvent)) -> Result<TurnResult, String> {
     if !sandbox::is_supported(&turn.ctx.id) {
-        return Err("リーダーではサンドボックスを使えません。".into());
+        return Err("このエージェントではサンドボックスを使えません。".into());
     }
     if turn.prompt.trim().is_empty() {
         return Err("指示が空です。".into());
@@ -461,7 +481,7 @@ pub async fn run_turn(turn: Turn<'_>, cancel: &CancelToken, mut on_event: impl F
         turn.deny.clone()
     };
     vars.extend(internal_vars(&command_policy::load(turn.knowledge_root), &deny, turn.system, turn.resume)?);
-    let settings = load_settings(&turn.ctx.db).map_err(|e| e.to_string())?;
+    let settings = effective_settings(&turn.ctx.db, &*turn.ctx.global).map_err(|e| e.to_string())?;
     vars.extend(settings_env(&settings)?);
     if let Some(model) = turn.model.map(str::trim).filter(|m| !m.is_empty()) {
         if model.chars().count() > MODEL_MAX_CHARS || model.chars().any(char::is_control) {
@@ -631,17 +651,17 @@ mod tests {
     fn available_models_come_from_settings_and_selection_is_checked() {
         let dir = tempfile::tempdir().unwrap();
         let db = crate::db::Db::open(&dir.path().join("t.db")).unwrap();
-        assert!(available_models(&db).is_empty());
+        assert!(available_models(&db, &db).is_empty());
         save_settings(&db, r#"{"model":" a ","availableModels":["b","a","","c"]}"#).unwrap();
-        assert_eq!(available_models(&db), vec!["a", "b", "c"]);
-        assert_eq!(selected_model(&db), None);
-        save_selected_model(&db, Some("b")).unwrap();
-        assert_eq!(selected_model(&db).as_deref(), Some("b"));
-        assert!(save_selected_model(&db, Some("x")).is_err());
+        assert_eq!(available_models(&db, &db), vec!["a", "b", "c"]);
+        assert_eq!(selected_model(&db, &db), None);
+        save_selected_model(&db, &db, Some("b")).unwrap();
+        assert_eq!(selected_model(&db, &db).as_deref(), Some("b"));
+        assert!(save_selected_model(&db, &db, Some("x")).is_err());
         // 許可から外れた選択は無効になる
         save_settings(&db, r#"{"availableModels":["c"]}"#).unwrap();
-        assert_eq!(selected_model(&db), None);
-        save_selected_model(&db, None).unwrap();
+        assert_eq!(selected_model(&db, &db), None);
+        save_selected_model(&db, &db, None).unwrap();
         assert!(CLAUDE_COMMAND.contains(r#"${MYASSISTANT_MODEL:+--model "$MYASSISTANT_MODEL"}"#));
     }
 
@@ -649,11 +669,11 @@ mod tests {
     fn configured_model_is_read_from_claude_settings() {
         let dir = tempfile::tempdir().unwrap();
         let db = crate::db::Db::open(&dir.path().join("t.db")).unwrap();
-        assert_eq!(configured_model(&db), None);
+        assert_eq!(configured_model(&db, &db), None);
         save_settings(&db, r#"{"model":" us.anthropic.claude-x "}"#).unwrap();
-        assert_eq!(configured_model(&db).as_deref(), Some("us.anthropic.claude-x"));
+        assert_eq!(configured_model(&db, &db).as_deref(), Some("us.anthropic.claude-x"));
         save_settings(&db, r#"{"permissions":{}}"#).unwrap();
-        assert_eq!(configured_model(&db), None);
+        assert_eq!(configured_model(&db, &db), None);
     }
 
     #[test]
@@ -665,6 +685,28 @@ mod tests {
         migrate_legacy_llm(&db).unwrap();
         assert_eq!(load_settings(&db).unwrap(), r#"{"model":"mine"}"#);
         assert_eq!(load(&db).unwrap().timeout_mins, 10);
+    }
+
+    #[test]
+    fn settings_follow_shared_until_the_agent_has_its_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::Db::open(&dir.path().join("t.db")).unwrap();
+        let global = crate::services::global_settings::GlobalStore::open(dir.path());
+        assert_eq!(effective_settings(&db, &global).unwrap(), "");
+        // 全体設定を変えると、自分の settings.json を持たないエージェントへ反映される
+        save_shared_settings(&global, r#"{"model":"shared-1"}"#).unwrap();
+        assert_eq!(configured_model(&db, &global).as_deref(), Some("shared-1"));
+        save_shared_settings(&global, r#"{"model":"shared-2","availableModels":["x"]}"#).unwrap();
+        assert_eq!(configured_model(&db, &global).as_deref(), Some("shared-2"));
+        assert_eq!(available_models(&db, &global), vec!["shared-2", "x"]);
+        // 個別設定(自分の保存がある)は、全体設定の変更の影響を受けない
+        save_settings(&db, r#"{"model":"mine"}"#).unwrap();
+        save_shared_settings(&global, r#"{"model":"shared-3"}"#).unwrap();
+        assert_eq!(configured_model(&db, &global).as_deref(), Some("mine"));
+        // 空にして全体設定の利用へ戻すと、また追従する
+        save_settings(&db, "").unwrap();
+        assert_eq!(configured_model(&db, &global).as_deref(), Some("shared-3"));
+        assert!(save_shared_settings(&global, "[1]").is_err());
     }
 
     #[test]

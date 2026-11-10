@@ -627,16 +627,14 @@ function LeaderLimit() {
   );
 }
 
-/** リーダーのAPIキーを、パーソナルまたはエージェントのキーからコピーする(コピー元は変わらない)。 */
+/** リーダーのAPIキーを、パーソナルのキーからコピーする(コピー元は変わらない)。ワークのエージェントはAnthropicのキーを持たない。 */
 function LeaderKeyCopy({ onCopied }: { onCopied: () => void }) {
   const t = useT();
-  const { agents } = useWorkspace();
-  const [from, setFrom] = useState(PERSONAL_ID);
   const [busy, setBusy] = useState(false);
   const copy = async () => {
     setBusy(true);
     try {
-      if (await leaderCopyApiKey(from)) {
+      if (await leaderCopyApiKey(PERSONAL_ID)) {
         toast.success(t("APIキーをコピーしました。"));
         onCopied();
       } else toast.error(t("コピー元にAPIキーが登録されていません。"));
@@ -649,21 +647,11 @@ function LeaderKeyCopy({ onCopied }: { onCopied: () => void }) {
   return (
     <section className="hud-panel hud-accent px-5 py-4">
       <Heading title="Copy API key" help={t("APIキーのコピー")}>
-        <p>{t("リーダーのAPIキー(Anthropic)を、パーソナルまたはエージェントのキーからコピーします。コピー元は変わりません。")}</p>
+        <p>{t("リーダーのAPIキー(Anthropic)を、パーソナルのキーからコピーします。コピー元は変わりません。")}</p>
       </Heading>
-      <div className="flex items-center gap-2">
-        <select className="h-9 flex-1 rounded-md border bg-background px-2 text-sm" value={from} onChange={(e) => setFrom(e.target.value)} aria-label={t("コピー元")}>
-          <option value={PERSONAL_ID}>{t("パーソナル")}</option>
-          {agents.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-        <Button variant="outline" disabled={busy} onClick={() => void copy()}>
-          {t("キーをコピー")}
-        </Button>
-      </div>
+      <Button variant="outline" disabled={busy} onClick={() => void copy()}>
+        {t("キーをコピー")}
+      </Button>
     </section>
   );
 }
@@ -1267,7 +1255,11 @@ export default function Setup() {
     Promise.all(sources.map(async ([name, load]) => [name, await load()] as const))
       .then((rs) => {
         const next: Partial<Record<Provider, string[]>> = {};
-        for (const [name, r] of rs) if (r && (PROVIDERS as readonly string[]).includes(r.provider)) (next[r.provider] ??= []).push(name);
+        // コンテナ内の Claude Code を選んでいる機能は、Bedrock(AWS)のカードに並べる(Bedrockはコンテナ経由で使う)
+        for (const [name, r] of rs) {
+          const key = r?.provider === "sandbox" ? "bedrock" : r?.provider;
+          if (key && (PROVIDERS as readonly string[]).includes(key)) (next[key as Provider] ??= []).push(name);
+        }
         setUsage(next);
       })
       .catch((e) => toast.error(reportError(e)));
@@ -1287,7 +1279,10 @@ export default function Setup() {
   };
 
   const hasAny = Object.values(status).some(Boolean);
-  const linked = PROVIDERS.filter((p) => status[p]).length;
+  // ワークのエージェントは、コンテナ内の Claude Code が Bedrock 固定で動くので、Anthropic は使わない
+  const workAgent = active.id !== LEADER_ID && active.id !== PERSONAL_ID;
+  const providers = PROVIDERS.filter((p) => !(workAgent && p === "anthropic"));
+  const linked = providers.filter((p) => status[p]).length;
 
   return (
     <div className="h-full overflow-y-auto">
@@ -1299,7 +1294,7 @@ export default function Setup() {
           chips={
             <>
               <StatusPill on>{active.id === PERSONAL_ID ? "Personal" : active.id === LEADER_ID ? "Work / Leader" : `Work / ${active.agent?.name ?? ""}`}</StatusPill>
-              <StatusPill on={linked > 0}>{t("AI接続")}: {linked} / {PROVIDERS.length}</StatusPill>
+              <StatusPill on={linked > 0}>{t("AI接続")}: {linked} / {providers.length}</StatusPill>
               <Link href="/global" className="inline-flex items-center rounded-full border border-dashed px-2 py-0.5 text-[0.65rem] text-muted-foreground transition-colors hover:border-primary hover:text-primary">
                 {t("全体設定")} →
               </Link>
@@ -1312,26 +1307,26 @@ export default function Setup() {
             <TabsTrigger value="llm" className="flex-none gap-1.5 px-3"><Brain className="size-3.5" />LLM</TabsTrigger>
             <TabsTrigger value="voice" className="flex-none gap-1.5 px-3"><AudioLines className="size-3.5" />{t("音声")}</TabsTrigger>
             {active.id !== LEADER_ID && <TabsTrigger value="access" className="flex-none gap-1.5 px-3"><ShieldCheck className="size-3.5" />{t("権限")}</TabsTrigger>}
-            {active.id !== LEADER_ID && active.id !== PERSONAL_ID && <TabsTrigger value="sandbox" className="flex-none gap-1.5 px-3"><Container className="size-3.5" />Sandbox</TabsTrigger>}
+            <TabsTrigger value="sandbox" className="flex-none gap-1.5 px-3"><Container className="size-3.5" />Sandbox</TabsTrigger>
             <TabsTrigger value="agent" className="flex-none gap-1.5 px-3"><Bot className="size-3.5" />{t("その他")}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="llm" className="flex flex-col gap-6">
           <section className="hud-panel hud-accent px-5 py-4">
-              <Heading title="AI Link" help={t("AIの接続")} status={<StatusPill on={linked > 0}>{linked} / {PROVIDERS.length}</StatusPill>}>
-                <p>{t("使いたいAIのAPIキーを登録します。全部は不要で、1つ以上あれば使えます。")}</p>
+              <Heading title="AI Link" help={t("AIの接続")} status={<StatusPill on={linked > 0}>{linked} / {providers.length}</StatusPill>}>
+                <p>{workAgent ? t("ワークのエージェントは、Amazon Bedrock の設定を登録します。校正に端末内のモデルを使うときは、ローカル(Qwen)も取得します。") : t("使いたいAIのAPIキーを登録します。全部は不要で、1つ以上あれば使えます。")}</p>
                 <ul>
                   <li>{t("各カードの「使用中の機能」は、AI Settingsでそのプロバイダーのモデルを選んでいる機能です。チャットと会話の要約は、チャット画面で選んだモデルを使うため含みません。")}</li>
                   <li>{t("ローカル(Qwen)は、キーの代わりにモデルをこの端末へダウンロードして使います。取得したモデルは全エージェントで共通です。")}</li>
                   <li>{t("Amazon Bedrockは、APIキーではなく~/.aws/configと~/.aws/credentialsの中身を貼り付けて登録します。MFA付きのスイッチロール(role_arn + source_profile)に対応し、コードが必要なときは入力欄が開きます。")}</li>
-                  <li>{t("Bedrockでは、インターネット検索・ページ取得は使えません(ナレッジのファイル操作とコマンド実行は使えます)。")}</li>
+                  <li>{workAgent ? t("Bedrockのモデルは、Sandbox タブの Claude Code の settings.json で決めます。") : t("Bedrockは、コンテナ内の Claude Code で使います。チャットなどのモデルで「コンテナ内の Claude Code」を選び、Sandbox タブでコンテナを準備して、settings.json にモデルを書いてください。")}</li>
                   <li>{t("キーは疎通確認に成功した場合のみ、この端末のアプリデータ内に保存されます。")}</li>
                   {active.id !== LEADER_ID && active.id !== PERSONAL_ID && <li>{t("ワークのエージェントでは、登録した AWS の設定から発行した一時キーが、コンテナ内の Claude Code へ指示ごとの環境変数で渡されます(接続先は Bedrock 固定です)。")}</li>}
                   <li>{t("保存先は平文のJSONファイルです(OSのキーチェーンは使っていません)。")}</li>
                 </ul>
               </Heading>
             <div className="flex flex-col gap-2">
-              {PROVIDERS.filter((p) => p !== "bedrock" && p !== "local").map((p: Provider) => (
+              {providers.filter((p) => p !== "bedrock" && p !== "local").map((p: Provider) => (
                 <KeyRow
                   card
                   key={p}
@@ -1513,11 +1508,9 @@ export default function Setup() {
               <CommandPolicyEditor />
             </TabsContent>
           )}
-          {active.id !== LEADER_ID && active.id !== PERSONAL_ID && (
-            <TabsContent value="sandbox" className="flex flex-col gap-6">
-              <SandboxPanel key={active.id} workspaceId={active.id} />
-            </TabsContent>
-          )}
+          <TabsContent value="sandbox" className="flex flex-col gap-6">
+            <SandboxPanel key={active.id} workspaceId={active.id} />
+          </TabsContent>
 
           <TabsContent value="agent" className="flex flex-col gap-6">
           <EditAgent />

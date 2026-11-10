@@ -223,6 +223,14 @@ pub fn save_proofread_route(ctx: Ctx, route: Option<Route>) -> Result<(), AppErr
             return Err(AppError::Sandbox("ワークの校正は、コンテナ内の Claude Code か端末内のモデルだけ選べます。".into()));
         }
     }
+    if llm_router::is_sandbox(&route) {
+        // 個人・リーダーは、コンテナ(Claude Code)も選べる。モデルは settings.json で決まる
+        if !llm_router::offers_sandbox(&ctx) {
+            return Err(AppError::InvalidProvider(route.provider));
+        }
+        let route = llm_router::sandbox_route("");
+        return ctx.db.set_setting(proofread::ROUTE_KEY, &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?);
+    }
     llm_router::resolve(&ctx, &route, &batch::available_providers(&ctx.secrets))?;
     ctx.db.set_setting(
         proofread::ROUTE_KEY,

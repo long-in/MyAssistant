@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{
-    aws, debug_log, local_llm,
+    debug_log, local_llm,
     secrets::Provider,
     workspace::WorkspaceCtx,
 };
@@ -158,7 +158,8 @@ pub async fn complete_with_tools(
             "tools": tools,
         });
         let body = match provider {
-            Provider::Bedrock => invoke_bedrock(ctx, model, &request, TASK_TIMEOUT).await?,
+            // Bedrockは、このアプリから直接は呼ばない(コンテナ内の Claude Code が settings.json のモデルで呼ぶ)
+            Provider::Bedrock => return Err(AppError::InvalidProvider(provider.as_str().to_owned())),
             _ => {
                 let key = ctx.secrets.get_key(provider)?
                     .ok_or_else(|| AppError::KeyMissing(provider.as_str().to_owned()))?;
@@ -189,25 +190,6 @@ pub async fn complete_with_tools(
     }
     .await
     .map_err(|e| e.with_source(provider.as_str()))
-}
-
-/// Bedrockへ送る。モデルIDはURLに入るため本文から外し、往復はデバッグモードなら記録する。
-async fn invoke_bedrock(ctx: &WorkspaceCtx, model: &str, request: &Value, timeout: Duration) -> Result<Value, AppError> {
-    let mut body = request.clone();
-    if let Some(o) = body.as_object_mut() {
-        o.remove("model");
-    }
-    let label = format!("bedrock-runtime InvokeModel {model}");
-    match aws::invoke_model(ctx, model, &body, timeout).await {
-        Ok(response) => {
-            debug_log::record_api(ctx, "bedrock", &label, &body, 200, &response);
-            Ok(response)
-        }
-        Err(e) => {
-            debug_log::record_api(ctx, "bedrock", &label, &body, 0, &Value::String(e.to_string()));
-            Err(e)
-        }
-    }
 }
 
 /// Messages API形式の応答からtextブロックを連結する。
@@ -269,7 +251,7 @@ async fn complete_inner(
     let response = match provider {
         // ローカルはキャッシュの指定が無く、応答の形式も違うため、テキストをそのまま返す
         Provider::Local => return local_llm::complete(ctx, system, messages).await.map(|text| Completion { text }),
-        Provider::Bedrock => invoke_bedrock(ctx, model, &request, Duration::from_secs(60)).await?,
+        Provider::Bedrock => return Err(AppError::InvalidProvider(provider.as_str().to_owned())),
         Provider::Anthropic => {
             let key = ctx.secrets.get_key(provider)?
                 .ok_or_else(|| AppError::KeyMissing(provider.as_str().to_owned()))?;

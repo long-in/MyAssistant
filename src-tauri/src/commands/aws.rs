@@ -69,25 +69,6 @@ pub async fn test_aws_connection(ctx: Ctx) -> Result<Status, AppError> {
     aws::status(&ctx)
 }
 
-/// Bedrockから取得した`global.anthropic.`の推論プロファイルID。MFAが必要なら入力要求のイベントが飛ぶ。
-#[tauri::command]
-pub async fn fetch_aws_models(ctx: Ctx) -> Result<Vec<String>, AppError> {
-    aws::fetch_global_models(&ctx).await.map_err(|e| e.with_source("bedrock"))
-}
-
-/// 使うBedrockのモデルID(推論プロファイルIDやARNも可)を追加する。
-#[tauri::command]
-pub fn add_aws_model(ctx: Ctx, model: String) -> Result<Status, AppError> {
-    aws::add_model(&ctx, &model)?;
-    aws::status(&ctx)
-}
-
-#[tauri::command]
-pub fn remove_aws_model(ctx: Ctx, model: String) -> Result<Status, AppError> {
-    aws::remove_model(&ctx, &model)?;
-    aws::status(&ctx)
-}
-
 /// 入力されたMFAコードを、待っているBedrock呼び出しへ渡す。
 /// コードは、求めたワークスペース(`workspace_id`)へ返す。選択中とは限らない(裏のエージェントが求めることがある)。
 #[tauri::command]

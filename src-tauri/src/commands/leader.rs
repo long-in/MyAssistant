@@ -13,6 +13,7 @@ use crate::{
         graph::GraphCache,
         leader::{self, MAX_TARGETS, STATUS_RUNNING, TaskView},
         llm_router::{self, Route},
+        sandbox,
         secrets::{self, Provider},
         agent_data::Note,
         workspace::{Ctx, PERSONAL_ID, Agent, Workspaces},
@@ -87,12 +88,15 @@ pub fn leader_delete_api_key(ws: State<'_, Workspaces>, provider: String) -> Res
     }
 }
 
-/// 別のワークスペース(パーソナルまたはエージェント)のAPIキーを、リーダーへコピーする(Anthropicのみ。上書き)。
+/// パーソナルのAPIキーを、リーダーへコピーする(Anthropicのみ。上書き)。ワークのエージェントはAnthropicのキーを持たないので、コピー元にできない。
 /// 生値は画面へ返さず、コピーできたかだけを返す。コピー元は変更しない。
 #[tauri::command]
 pub fn leader_copy_api_key(ws: State<'_, Workspaces>, from: String) -> Result<bool, AppError> {
     let leader = ws.ensure_leader()?;
     let src = ws.resolve(&from)?;
+    if sandbox::runs_in_sandbox(&src.id) {
+        return Err(AppError::InvalidProvider(Provider::Anthropic.as_str().to_owned()));
+    }
     leader.secrets.copy_api_key_from(&src.secrets, Provider::Anthropic)
 }
 
@@ -178,6 +182,17 @@ pub fn leader_dispatch(app: AppHandle, ws: State<'_, Workspaces>, text: String, 
     Ok(results)
 }
 
+/// 配布先のエージェントが使う経路。ワークのエージェントは、会話が常にコンテナ内の Claude Code なので、モデルの選択に関わらずコンテナの経路。
+/// それ以外(使えるモデルが無ければ`None`)は、保存済みの選択か既定。
+fn dispatch_route(ctx: &crate::services::workspace::WorkspaceCtx) -> Result<Option<Route>, AppError> {
+    if sandbox::runs_in_sandbox(&ctx.id) {
+        return Ok(Some(llm_router::sandbox_route("")));
+    }
+    let available = batch::available_providers(&ctx.secrets);
+    let saved: Option<Route> = ctx.db.get_setting(ROUTE_KEY)?.and_then(|v| serde_json::from_str(&v).ok());
+    Ok(llm_router::effective(ctx, saved, &available))
+}
+
 /// 1つの宛先で依頼を始める。始められなかった理由があれば`Some`で返す。
 fn start_dispatch(
     app: &AppHandle,
@@ -189,9 +204,7 @@ fn start_dispatch(
     now: &str,
 ) -> Result<Option<&'static str>, AppError> {
     let ctx = ws.resolve(&agent.id)?;
-    let available = batch::available_providers(&ctx.secrets);
-    let saved: Option<Route> = ctx.db.get_setting(ROUTE_KEY)?.and_then(|v| serde_json::from_str(&v).ok());
-    let Some(route) = llm_router::effective(&ctx, saved, &available) else { return Ok(Some("no_provider")) };
+    let Some(route) = dispatch_route(&ctx)? else { return Ok(Some("no_provider")) };
     let session_id = uuid::Uuid::new_v4().to_string();
     // 台帳へ先に書く(依頼が早く終わっても、終了の記録が行に当たるように)。始められなければ消す
     let row = LedgerRow {
@@ -257,4 +270,20 @@ pub fn leader_overview(ws: State<'_, Workspaces>) -> Result<Overview, AppError> 
 #[tauri::command]
 pub fn leader_set_confirmed(ws: State<'_, Workspaces>, id: String, confirmed: bool) -> Result<(), AppError> {
     ws.ensure_leader()?.db.ledger_set_confirmed(&id, confirmed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn work_agents_dispatch_through_the_sandbox_even_without_any_api_key() {
+        use crate::services::workspace::WorkspaceCtx;
+        let (dw, dp) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let work = WorkspaceCtx::open("0b9c3f5e-1d2a-4c6b-8e7f-123456789abc", dw.path()).unwrap();
+        assert_eq!(dispatch_route(&work).unwrap(), Some(llm_router::sandbox_route("")));
+        // 個人はキーが無ければ始められない
+        let personal = WorkspaceCtx::open(crate::services::workspace::PERSONAL_ID, dp.path()).unwrap();
+        assert_eq!(dispatch_route(&personal).unwrap(), None);
+    }
 }

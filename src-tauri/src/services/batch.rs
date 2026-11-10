@@ -130,13 +130,13 @@ fn now() -> String {
 }
 
 /// `classify`はプロンプトを受け取りLLMの生テキストを返す。
-pub async fn run<F, Fut>(db: &Db, root: &Path, classify: F) -> Result<BatchReport, AppError>
+pub async fn run<F, Fut>(db: &Db, global: &impl SettingsStore, root: &Path, classify: F) -> Result<BatchReport, AppError>
 where
     F: Fn(String) -> Fut,
     Fut: Future<Output = Result<String, AppError>>,
 {
     let mut report = BatchReport::default();
-    let instructions = prompts::load(db, PromptId::Organize)?;
+    let instructions = prompts::load(db, global, PromptId::Organize)?;
     for seg in segments(db.unprocessed(MAX_LOGS)?) {
         // キャプチャは整理元、記憶は専用の更新があるので、追記先の候補には出さない
         let existing: Vec<_> = knowledge::list(root)?
@@ -235,7 +235,8 @@ pub fn effective_route(ctx: &WorkspaceCtx, available: &[Provider]) -> Result<Opt
 }
 
 pub fn available_providers(secrets: &Secrets) -> Vec<Provider> {
-    Provider::ALL.into_iter().filter(|p| secrets.has_key(*p).unwrap_or(false)).collect()
+    // Bedrockはこのアプリから直接は呼ばない(コンテナ内の Claude Code で使う)ので含めない
+    Provider::ALL.into_iter().filter(|p| *p != Provider::Bedrock && secrets.has_key(*p).unwrap_or(false)).collect()
 }
 
 /// ワークスペース既定のナレッジ保存先(`<ワークスペースのdir>/knowledge`)。
@@ -263,18 +264,21 @@ pub async fn run_guarded(ctx: &WorkspaceCtx) -> Result<Option<BatchReport>, AppE
         let db = &ctx.db;
         let root = knowledge_root(ctx)?;
         let available = available_providers(&ctx.secrets);
-        // ワークのエージェントは、整理もコンテナ内の Claude Code で行う(アプリのモデル選択は使わない)
+        // ワークのエージェントは、整理もコンテナ内の Claude Code で行う(アプリのモデル選択は使わない)。
+        // 個人・リーダーは、整理のモデルにコンテナ内の Claude Code を選んだときだけコンテナで行う
         let in_sandbox = sandbox::runs_in_sandbox(&ctx.id);
+        let route = if in_sandbox { None } else { effective_route(ctx, &available)? };
+        let in_sandbox = in_sandbox || route.as_ref().is_some_and(llm_router::is_sandbox);
         let mut ran = false;
         let mut report = BatchReport::default();
         if !db.unprocessed(1)?.is_empty() && (in_sandbox || !available.is_empty()) {
             let target = if in_sandbox {
                 None
             } else {
-                Some(llm_router::resolve(ctx, &effective_route(ctx, &available)?.ok_or(AppError::NoProvider)?, &available)?)
+                Some(llm_router::resolve(ctx, &route.ok_or(AppError::NoProvider)?, &available)?)
             };
             let cancel = CancelToken::default();
-            report = run(db, &root, |prompt| {
+            report = run(db, &*ctx.global, &root, |prompt| {
                 let target = target.as_ref();
                 let (root, cancel) = (&root, &cancel);
                 async move {
@@ -329,7 +333,7 @@ mod tests {
         let reply = format!(
             "```json\n{{\"entries\":[{{\"category\":\"Development\",\"filename\":\"tauri_setup\",\"title\":\"Tauri setup\",\"tags\":[\"Tauri\"],\"content\":\"- npm create tauri-app\",\"log_ids\":[\"{u}\",\"{a}\",\"forged\"]}}]}}\n```"
         );
-        let report = run(&db, &root.path().join("knowledge"), |p| {
+        let report = run(&db, &db, &root.path().join("knowledge"), |p| {
             prompts.lock().unwrap().push(p);
             let r = reply.clone();
             async move { Ok(r) }
@@ -349,11 +353,11 @@ mod tests {
         let db = db();
         db.insert_log("s1", "user", "hello", None, None).unwrap();
         let root = tempfile::tempdir().unwrap();
-        let report = run(&db, &root.path().join("k"), |_| async { Ok("sorry, no json".to_owned()) }).await.unwrap();
+        let report = run(&db, &db, &root.path().join("k"), |_| async { Ok("sorry, no json".to_owned()) }).await.unwrap();
         assert_eq!(report.failed_segments, 1);
         assert_eq!(db.unprocessed(10).unwrap().len(), 1);
 
-        let report = run(&db, &root.path().join("k"), |_| async { Err(AppError::Timeout) }).await.unwrap();
+        let report = run(&db, &db, &root.path().join("k"), |_| async { Err(AppError::Timeout) }).await.unwrap();
         assert_eq!(report.failed_segments, 1);
         assert_eq!(db.unprocessed(10).unwrap().len(), 1);
     }
@@ -364,7 +368,7 @@ mod tests {
         let hi = db.insert_log("s", "user", "おはよう", None, None).unwrap();
         let root = tempfile::tempdir().unwrap();
         let reply = format!("{{\"entries\":[],\"skip_log_ids\":[\"{hi}\"]}}");
-        let report = run(&db, &root.path().join("k"), |_| {
+        let report = run(&db, &db, &root.path().join("k"), |_| {
             let r = reply.clone();
             async move { Ok(r) }
         })
@@ -375,7 +379,7 @@ mod tests {
         // 捏造したIDだけでは処理済みにしない。記憶のフォルダへは書かせない
         db.insert_log("s", "user", "x", None, None).unwrap();
         let bad = r#"{"entries":[{"category":"Memory","filename":"pinned","title":"t","content":"c"}],"skip_log_ids":["forged"]}"#;
-        let report = run(&db, &root.path().join("k"), |_| async move { Ok(bad.to_owned()) }).await.unwrap();
+        let report = run(&db, &db, &root.path().join("k"), |_| async move { Ok(bad.to_owned()) }).await.unwrap();
         assert_eq!(report.failed_segments, 1);
         assert!(!root.path().join("k/Memory").exists());
     }
@@ -387,7 +391,7 @@ mod tests {
         let ok = db.insert_log("b", "user", "second", None, None).unwrap();
         let root = tempfile::tempdir().unwrap();
         let reply = format!("{{\"entries\":[{{\"category\":\"Ideas\",\"filename\":\"x\",\"title\":\"X\",\"content\":\"c\",\"log_ids\":[\"{ok}\"]}}]}}");
-        let report = run(&db, &root.path().join("k"), |p| {
+        let report = run(&db, &db, &root.path().join("k"), |p| {
             let r = reply.clone();
             async move { if p.contains("first") { Err(AppError::RateLimited) } else { Ok(r) } }
         })
@@ -407,7 +411,7 @@ mod tests {
         assert_eq!(effective_route(ctx, &[Provider::Anthropic]).unwrap(), Some(sonnet));
         db.set_setting(BATCH_ROUTE_KEY, r#"{"provider":"anthropic","model":"claude-haiku-5-5"}"#).unwrap();
         let saved = Route { provider: "anthropic".into(), model: "claude-haiku-5-5".into() };
-        assert_eq!(effective_route(ctx, &[Provider::Anthropic, Provider::Bedrock]).unwrap(), Some(saved));
+        assert_eq!(effective_route(ctx, &[Provider::Anthropic, Provider::Local]).unwrap(), Some(saved));
         // 廃止したプロバイダーの保存値は既定に戻る
         db.set_setting(BATCH_ROUTE_KEY, r#"{"provider":"openai","model":"gpt-4o"}"#).unwrap();
         let sonnet = Route { provider: "anthropic".into(), model: "claude-sonnet-5-5".into() };
