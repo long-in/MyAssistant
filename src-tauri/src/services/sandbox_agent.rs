@@ -1,8 +1,7 @@
 //! サンドボックスのエージェント(コンテナ内の Claude Code)の接続の設定と、渡す環境変数。
 //!
-//! - 接続先(Anthropic API / Amazon Bedrock)・モデル・1回の指示の上限時間を、エージェントごとに持つ(`LLM_KEY`)。
-//! - API キーは、アプリに登録したものを実行ごとの環境変数で渡す(`sandbox.env`の同名が優先)。Bedrock は、アプリの AWS 設定から
-//!   ホストで発行した一時キーを使う(`sandbox::env_for`)。
+//! - 接続先は Amazon Bedrock に固定。モデル・1回の指示の上限時間を、エージェントごとに持つ(`LLM_KEY`)。
+//! - 認証は、アプリの AWS 設定からホストで発行した一時キーを、実行ごとの環境変数で渡す(`sandbox::env_for`。`sandbox.env`の同名が優先)。
 //! - アプリが決める環境変数は秘密でない値だけ。`sandbox.env`に同じ名前があれば、そちらが優先される。
 //! - 1回の指示は`run_turn`で、コンテナ内の`claude -p`(ヘッドレスモード)を起動し、`stream-json`の出力を逐次解析する。
 //!   システムプロンプト・セッションID・ツールのリストなどの可変の値は、シェルへ埋め込まず`MYASSISTANT_`の環境変数で渡す。
@@ -43,10 +42,10 @@ pub const NON_SECRET_NAMES: [&str; 2] = ["CLAUDE_CODE_USE_BEDROCK", "ANTHROPIC_M
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Provider {
-    /// Anthropic API(`sandbox.env`の`ANTHROPIC_API_KEY`)。
-    #[default]
+    /// 旧設定の読み込み用。`normalized`で Bedrock に直すので、実行では使われない。
     Anthropic,
     /// Amazon Bedrock(アプリの AWS 設定の一時キー)。
+    #[default]
     Bedrock,
 }
 
@@ -54,6 +53,7 @@ pub enum Provider {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LlmConfig {
+    /// 常に Bedrock(保存済みの旧設定が Anthropic でも、読み込み時に Bedrock へ直す)。
     pub provider: Provider,
     /// モデル。空なら Claude Code の既定。Bedrock ではモデル ID か推論プロファイルを指定する。
     pub model: String,
@@ -66,7 +66,7 @@ pub struct LlmConfig {
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
-            provider: Provider::Anthropic,
+            provider: Provider::Bedrock,
             model: String::new(),
             timeout_mins: 30,
             allowed_tools: DEFAULT_ALLOWED_TOOLS.iter().map(|s| (*s).to_owned()).collect(),
@@ -77,6 +77,7 @@ impl Default for LlmConfig {
 impl LlmConfig {
     /// 保存できる形に整える。範囲外の上限時間は丸め、不正なモデル名は拒否する。
     fn normalized(mut self) -> Result<Self, AppError> {
+        self.provider = Provider::Bedrock;
         self.model = self.model.trim().to_owned();
         if self.model.chars().count() > MODEL_MAX_CHARS || self.model.chars().any(|c| c.is_control() || c.is_whitespace()) {
             return Err(AppError::Sandbox("モデルの指定が正しくありません(空白や制御文字は使えません)。".into()));
@@ -117,9 +118,7 @@ pub fn save(db: &impl SettingsStore, cfg: LlmConfig) -> Result<LlmConfig, AppErr
 /// アプリが決める環境変数(秘密でない値だけ)。
 pub fn app_env(cfg: &LlmConfig) -> BTreeMap<String, String> {
     let mut vars = BTreeMap::new();
-    if cfg.provider == Provider::Bedrock {
-        vars.insert("CLAUDE_CODE_USE_BEDROCK".to_owned(), "1".to_owned());
-    }
+    vars.insert("CLAUDE_CODE_USE_BEDROCK".to_owned(), "1".to_owned());
     if !cfg.model.is_empty() {
         vars.insert("ANTHROPIC_MODEL".to_owned(), cfg.model.clone());
     }
@@ -137,20 +136,15 @@ fn has(vars: &BTreeMap<String, String>, name: &str) -> bool {
     vars.get(name).is_some_and(|v| !v.trim().is_empty())
 }
 
-/// 接続先に必要な認証情報がそろっているか。そろっていなければ、実行せずに利用者向けの文面で失敗する。
-pub fn check_credentials(cfg: &LlmConfig, vars: &BTreeMap<String, String>) -> Result<(), String> {
-    match cfg.provider {
-        Provider::Anthropic if !has(vars, "ANTHROPIC_API_KEY") && !has(vars, "ANTHROPIC_AUTH_TOKEN") => {
-            Err("Anthropic API のキーがありません。このエージェントの設定で API キーを登録するか、sandbox.env に ANTHROPIC_API_KEY を書いてください。".into())
-        }
-        Provider::Bedrock if !has(vars, "AWS_ACCESS_KEY_ID") || !has(vars, "AWS_SECRET_ACCESS_KEY") => {
-            Err("Bedrock の認証情報がありません。このエージェントに AWS の設定を登録してください。".into())
-        }
-        Provider::Bedrock if !has(vars, "AWS_REGION") => {
-            Err("Bedrock のリージョンがありません。AWS の設定のプロファイルに region を指定するか、sandbox.env に AWS_REGION を書いてください。".into())
-        }
-        _ => Ok(()),
+/// Bedrock に必要な認証情報がそろっているか。そろっていなければ、実行せずに利用者向けの文面で失敗する。
+pub fn check_credentials(vars: &BTreeMap<String, String>) -> Result<(), String> {
+    if !has(vars, "AWS_ACCESS_KEY_ID") || !has(vars, "AWS_SECRET_ACCESS_KEY") {
+        return Err("Bedrock の認証情報がありません。このエージェントに AWS の設定を登録してください。".into());
     }
+    if !has(vars, "AWS_REGION") {
+        return Err("Bedrock のリージョンがありません。AWS の設定のプロファイルに region を指定するか、sandbox.env に AWS_REGION を書いてください。".into());
+    }
+    Ok(())
 }
 
 // ------------------------------------------------------------------ 1回の指示の実行
@@ -362,7 +356,7 @@ pub async fn run_turn(turn: Turn<'_>, cancel: &CancelToken, mut on_event: impl F
     let cfg = load(&turn.ctx.db).map_err(|e| e.to_string())?;
     let mounts = sandbox::mounts_for(turn.ctx, turn.knowledge_root)?;
     let mut vars = merge_env(&cfg, sandbox::env_for(turn.ctx).await?);
-    check_credentials(&cfg, &vars)?;
+    check_credentials(&vars)?;
     let (cfg_for_run, deny) = if turn.no_tools {
         let all = DEFAULT_ALLOWED_TOOLS.iter().map(|s| (*s).to_owned()).collect();
         (LlmConfig { allowed_tools: Vec::new(), ..cfg.clone() }, [turn.deny.clone(), all].concat())
@@ -510,6 +504,11 @@ mod tests {
     fn config_defaults_and_normalizes() {
         let cfg: LlmConfig = serde_json::from_str(r#"{"provider":"bedrock"}"#).unwrap();
         assert_eq!(cfg, LlmConfig { provider: Provider::Bedrock, ..Default::default() });
+        // 旧設定の Anthropic は、読み込み時に Bedrock へ直る(ほかの項目は残る)
+        let old: LlmConfig = serde_json::from_str(r#"{"provider":"anthropic","model":"m"}"#).unwrap();
+        let old = old.normalized().unwrap();
+        assert_eq!((old.provider, old.model.as_str()), (Provider::Bedrock, "m"));
+        assert_eq!(LlmConfig::default().provider, Provider::Bedrock);
         let n = LlmConfig { timeout_mins: 9999, model: "  claude-x  ".into(), ..Default::default() }.normalized().unwrap();
         assert_eq!((n.timeout_mins, n.model.as_str()), (180, "claude-x"));
         assert_eq!(LlmConfig { timeout_mins: 0, ..Default::default() }.normalized().unwrap().timeout_mins, 1);
@@ -523,7 +522,7 @@ mod tests {
         let env = app_env(&bedrock);
         assert_eq!(env, vars(&[("CLAUDE_CODE_USE_BEDROCK", "1"), ("ANTHROPIC_MODEL", "us.anthropic.claude-x")]));
         assert!(env.keys().all(|k| NON_SECRET_NAMES.contains(&k.as_str())));
-        assert!(app_env(&LlmConfig::default()).is_empty());
+        assert_eq!(app_env(&LlmConfig::default()), vars(&[("CLAUDE_CODE_USE_BEDROCK", "1")]));
     }
 
     #[test]
@@ -534,15 +533,12 @@ mod tests {
     }
 
     #[test]
-    fn credentials_are_required_per_provider() {
-        let anthropic = LlmConfig::default();
-        assert!(check_credentials(&anthropic, &vars(&[])).is_err());
-        assert!(check_credentials(&anthropic, &vars(&[("ANTHROPIC_API_KEY", " ")])).is_err());
-        assert!(check_credentials(&anthropic, &vars(&[("ANTHROPIC_API_KEY", "sk-x")])).is_ok());
-        let bedrock = LlmConfig { provider: Provider::Bedrock, ..Default::default() };
-        assert!(check_credentials(&bedrock, &vars(&[("ANTHROPIC_API_KEY", "sk-x")])).is_err());
-        assert!(check_credentials(&bedrock, &vars(&[("AWS_ACCESS_KEY_ID", "a"), ("AWS_SECRET_ACCESS_KEY", "b")])).is_err());
-        assert!(check_credentials(&bedrock, &vars(&[("AWS_ACCESS_KEY_ID", "a"), ("AWS_SECRET_ACCESS_KEY", "b"), ("AWS_REGION", "us-east-1")])).is_ok());
+    fn bedrock_credentials_are_required() {
+        // Anthropic のキーがあっても、Bedrock の認証情報の代わりにはならない
+        assert!(check_credentials(&vars(&[("ANTHROPIC_API_KEY", "sk-x")])).is_err());
+        assert!(check_credentials(&vars(&[("AWS_ACCESS_KEY_ID", "a"), ("AWS_SECRET_ACCESS_KEY", "b")])).is_err());
+        assert!(check_credentials(&vars(&[("AWS_ACCESS_KEY_ID", "a"), ("AWS_SECRET_ACCESS_KEY", " "), ("AWS_REGION", "us-east-1")])).is_err());
+        assert!(check_credentials(&vars(&[("AWS_ACCESS_KEY_ID", "a"), ("AWS_SECRET_ACCESS_KEY", "b"), ("AWS_REGION", "us-east-1")])).is_ok());
     }
 
     #[test]
@@ -644,7 +640,7 @@ mod tests {
     }
 
     /// 実Dockerでの通し確認。Dockerの起動とネットワークが必要で、初回はイメージのビルドに数分かかる。
-    /// ダミーの API キーで実行し、Claude Code が認証エラーの結果を返すことで、環境変数・標準入力・オプション・マウント・解析が通ることを確かめる。
+    /// ダミーの AWS キーで実行し、Claude Code が認証エラーの結果を返すことで、環境変数・標準入力・オプション・マウント・解析が通ることを確かめる。
     /// `cargo test -- --ignored claude_turn_end_to_end`で実行する。
     #[tokio::test]
     #[ignore]
@@ -656,7 +652,7 @@ mod tests {
         let ctx = WorkspaceCtx::open(id, &dir).unwrap();
         let knowledge = dir.join("knowledge");
         std::fs::create_dir_all(&knowledge).unwrap();
-        std::fs::write(super::super::sandbox_env::path(&ctx.dir), "ANTHROPIC_API_KEY=sk-ant-dummy-not-a-real-key-0000\n").unwrap();
+        std::fs::write(super::super::sandbox_env::path(&ctx.dir), "AWS_ACCESS_KEY_ID=AKIADUMMYNOTREAL0000\nAWS_SECRET_ACCESS_KEY=dummy-not-a-real-secret-0000\nAWS_REGION=us-east-1\n").unwrap();
         let cancel = CancelToken::default();
         let mut events = Vec::new();
         let turn = Turn { ctx: &ctx, knowledge_root: &knowledge, prompt: "こんにちは", system: "日本語で答える。'\"$(x)", resume: None, deny: vec!["WebFetch".into()], no_tools: false, timeout: None };
@@ -664,7 +660,7 @@ mod tests {
         assert!(r.is_error, "{r:?}");
         assert!(r.session_id.is_some(), "{r:?}");
         // キーの値は出力に出ない(出ても伏せ字)
-        assert!(!r.text.contains("sk-ant-dummy"), "{}", r.text);
+        assert!(!r.text.contains("dummy-not-a-real-secret"), "{}", r.text);
         // 続きの指示(--resume)も同じ流れで通る
         let resume = r.session_id.clone().unwrap();
         let turn = Turn { ctx: &ctx, knowledge_root: &knowledge, prompt: "続き", system: "x", resume: Some(&resume), deny: Vec::new(), no_tools: false, timeout: None };

@@ -948,9 +948,9 @@ pub struct Request<'a> {
     pub timeout: Duration,
 }
 
-/// 渡す環境変数(アプリに登録したAPIキー・AWSの一時キー・`sandbox.env`)。同じ名前は後のものが優先(`sandbox.env`が最優先)。
+/// 渡す環境変数(AWSの一時キー・`sandbox.env`)。同じ名前は後のものが優先(`sandbox.env`が最優先)。
 pub(crate) async fn env_for(ctx: &WorkspaceCtx) -> Result<BTreeMap<String, String>, String> {
-    let mut vars = ctx.secrets.sandbox_env().map_err(|e| e.to_string())?;
+    let mut vars = BTreeMap::new();
     if ctx.secrets.has_aws().unwrap_or(false) {
         let pairs = aws::env_pairs(ctx).await.map_err(|e| format!("AWSの認証情報を取得できませんでした: {e}"))?;
         vars.extend(pairs);
