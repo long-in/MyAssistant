@@ -123,6 +123,7 @@ export const EN: Record<string, string> = {
   "AWSプロファイル": "AWS profile",
   "Bedrockに接続できました。": "Connected to Bedrock.",
   "接続テスト": "Test connection",
+  "保存先をFinderで開く": "Reveal in Finder",
   "一時認証の期限: {time}": "Temporary credentials expire: {time}",
   "一時認証: 未取得(初回の利用時に取得)": "Temporary credentials: not yet obtained (fetched on first use)",
   "AWSの設定を保存しました。": "Saved the AWS settings.",

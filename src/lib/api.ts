@@ -160,6 +160,8 @@ export type AwsMfaPrompt = {
 };
 
 export const getAwsStatus = () => invoke<AwsStatus>("get_aws_status");
+/** このワークスペースの`secrets.json`をFinderで開く。 */
+export const revealSecretsFile = () => invoke<void>("reveal_secrets_file");
 /** 貼り付け中の内容から読み取れるプロファイル一覧(保存しない)。 */
 export const previewAwsConfig = (config: string, credentials: string) =>
   invoke<AwsProfile[]>("preview_aws_config", { config, credentials });
