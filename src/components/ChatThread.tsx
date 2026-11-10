@@ -14,6 +14,14 @@ import TurnLog from "./TurnLog";
  * 会話のスレッド。一般的なAIチャットと同じく、発話(右の吹き出し)、実行ログ、返答(左)の順に並べる。
  * 最新を追いかけ、上へスクロールすると過去を読み返せる。
  */
+/** 回答にかかった時間。1分未満は小数1桁の秒、それ以上は分と秒で表す。 */
+function elapsed(ms: number, t: (key: string, params?: Record<string, string | number>) => string): string {
+  const sec = Math.max(0, ms) / 1000;
+  if (sec < 60) return t("{s}秒", { s: sec.toFixed(1) });
+  const total = Math.round(sec);
+  return t("{m}分{s}秒", { m: Math.floor(total / 60), s: total % 60 });
+}
+
 export default function ChatThread({
   turns,
   busy,
@@ -133,6 +141,7 @@ export default function ChatThread({
                 <div className="text-sm leading-6 break-words whitespace-pre-wrap text-foreground">
                   {isLast && !turn.restored ? <Reply text={turn.reply} /> : turn.reply}
                 </div>
+                <div className="flex items-center gap-2">
                 {onSpeak && (
                   <Button
                     type="button"
@@ -147,6 +156,12 @@ export default function ChatThread({
                     {isLast && speaking ? t("停止") : t("読み上げ")}
                   </Button>
                 )}
+                {turn.replyAt && (
+                  <span className="text-xs tabular-nums text-muted-foreground" title={t("回答にかかった時間")}>
+                    {elapsed(turn.replyAt.getTime() - turn.userAt.getTime(), t)}
+                  </span>
+                )}
+                </div>
               </div>
             )}
             {running && (
