@@ -62,8 +62,8 @@ const AWS_CONFIG_ACCOUNT: &str = "aws_config";
 const AWS_CREDENTIALS_ACCOUNT: &str = "aws_credentials";
 /// 使うプロファイル名(秘密ではないが、保存先を分けないため同じストアに置く)。
 const AWS_PROFILE_ACCOUNT: &str = "aws_profile";
-/// 使うBedrockのモデルID一覧(JSON配列)。秘密ではないが、プロファイルと同じ理由で同じストアに置く。
-const AWS_MODELS_ACCOUNT: &str = "aws_models";
+/// 以前は、使うBedrockのモデルID一覧(JSON配列)を置いていた。今は使わず、AWSの登録を消すときに残りを消すだけ。
+const LEGACY_AWS_MODELS_ACCOUNT: &str = "aws_models";
 
 /// `Secrets::backup`で控えた内容。中身はこのモジュールの外へ出さない。
 pub struct SecretsBackup(HashMap<String, String>);
@@ -116,17 +116,6 @@ impl Secrets {
         match src.get_key(provider)? {
             Some(key) => self.set_key(provider, &key).map(|()| true),
             None => Ok(false),
-        }
-    }
-
-    /// Bedrockのモデル一覧(秘密ではない設定項目)だけを`src`から写す。キーは写さない。`src`に無ければ何もしない。
-    pub fn copy_aws_models_from(&self, src: &Secrets) -> Result<(), AppError> {
-        if std::ptr::eq(self, src) {
-            return Ok(());
-        }
-        match src.get_aws_models()? {
-            Some(models) => self.set_aws_models(&models),
-            None => Ok(()),
         }
     }
 
@@ -300,16 +289,8 @@ impl Secrets {
         self.set_secret(AWS_PROFILE_ACCOUNT, name)
     }
 
-    pub fn get_aws_models(&self) -> Result<Option<String>, AppError> {
-        self.get_secret(AWS_MODELS_ACCOUNT)
-    }
-
-    pub fn set_aws_models(&self, json: &str) -> Result<(), AppError> {
-        self.set_secret(AWS_MODELS_ACCOUNT, json)
-    }
-
     pub fn delete_aws(&self) -> Result<(), AppError> {
-        self.delete_secret(AWS_MODELS_ACCOUNT)?;
+        self.delete_secret(LEGACY_AWS_MODELS_ACCOUNT)?;
         self.delete_secret(AWS_CONFIG_ACCOUNT)?;
         self.delete_secret(AWS_CREDENTIALS_ACCOUNT)?;
         self.delete_secret(AWS_PROFILE_ACCOUNT)

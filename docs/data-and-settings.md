@@ -111,7 +111,7 @@ erDiagram
 | `routing` | `Route`(JSON) | Claude が使えれば Sonnet | 対話画面のモデル選択 |
 | `web_access` | `0` / `1` | 有効 | Web Search |
 | `shell_access` | `0` / `1` | 有効 | Command Tasks |
-| `sandbox_claude_settings` | 貼り付けた Claude Code の settings.json(JSON。空は未設定) | 未設定 | Sandbox タブ(ワークのエージェント) |
+| `sandbox_claude_settings` | 貼り付けた Claude Code の settings.json(JSON。空は未設定=全体設定を利用。全体設定と同じ内容も空として保存) | 未設定 | Sandbox タブ(ワークのエージェント) |
 | `sandbox_llm` | 接続先(Bedrock 固定)・上限時間(分)(JSON)。旧版のモデル・許可するツールは settings.json へ移る | Bedrock・30分 | Sandbox(ワークのエージェント) |
 | `sandbox_claude_sessions` | 会話 ID と Claude Code のセッション ID の対応(JSON、直近 50 件) | なし | なし(端末の会話と対なので対象外) |
 | `stt_engine` | `local` / `google` | `local` | Voice Link |
@@ -130,7 +130,7 @@ erDiagram
 | `debug_log_dir` | デバッグログの出力先(空なら既定) | 既定 | Debug Mode |
 | `leader_prompt` / `leader_max_active` | リーダーの指示(JSON)と同時に動かす依頼の上限(リーダーのみ) | 既定 | リーダーの設定 |
 
-**全体設定に移した項目**(ベースプロンプト `base_instructions`、OS通知、表示言語、音声入力の待ち時間 `voice_timing`、起動ワード `wake_enabled` / `wake_words`、パーソナルデータ `user_profile`、ナレッジ整理の間隔 `batch_interval_minutes`、通信のプロキシの一覧と既定 `proxy_list` / `proxy_default`)は、`app_settings` ではなく `workspaces/global_settings.json` に保存する。エージェントのDBに残った同名の古い値は、全体設定の取り込みが済んだあとにDBを開いたとき消す([global-settings.md](global-settings.md))。
+**全体設定に移した項目**(ベースプロンプト `base_instructions`、OS通知、表示言語、音声入力の待ち時間 `voice_timing`、起動ワード `wake_enabled` / `wake_words`、パーソナルデータ `user_profile`、ナレッジ整理の間隔 `batch_interval_minutes`、通信のプロキシの一覧と既定 `proxy_list` / `proxy_default`、チャット以外のプロンプト `global_prompt_*`、Claude Code の settings.json `sandbox_claude_settings_shared`)は、`app_settings` ではなく `workspaces/global_settings.json` に保存する。エージェントのDBに残った同名の古い値は、全体設定の取り込みが済んだあとにDBを開いたとき消す([global-settings.md](global-settings.md))。
 
 **キーの一覧(`services/settings_registry.rs`)**: すべての設定キーについて、保存先(エージェントのDB / 全体設定)と、書き出し・コピーの対象かどうか(と検証方法)をここで決める。書き出しの項目、全体設定のバックアップの項目、初回の取り込み・古い値の削除の対象は、この一覧から作る。保存先の取り違えを防ぐため、DBは全体設定のキーを、全体設定はエージェントのキーを書き込みで拒否する。新しい設定を足すときは、この一覧にも登録する。
 
@@ -192,3 +192,7 @@ erDiagram
 5. コマンド権限は検証(`cleaned`)して保存する。デバッグモードの出力先を決め直す。
 
 結果は `{ applied, skipped }` で返す。
+
+## 全体設定への追従(全体設定を利用 / 個別設定)
+
+プロンプト(`prompt_*`)・Claude Code の settings.json・Sandbox の Dockerfile は、全体設定にも同じものを持つ。エージェントの保存(上書き・専用の登録)が無ければ「全体設定を利用」で、全体設定を変えると次の呼び出しから自動で反映される(通知はしない)。エージェントが保存すると「個別設定」になり、全体設定の変更では更新されない。「全体設定を利用」で個別の内容を消すと追従へ戻る。解決の順は、エージェントの保存 → 全体設定 → 組み込みの既定。`sandbox.env` は認証情報を含むため対象外。

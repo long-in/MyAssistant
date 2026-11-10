@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Heading } from "@/components/GlobalPanels";
 import {
   PROMPT_MAX_CHARS,
+  SANDBOX_PROVIDER,
   listModels,
   listPrompts,
   loadBatchRoute,
@@ -25,6 +26,7 @@ import {
   saveSkillsRoute,
   type KeyStatus,
   type ModelInfo,
+  type ModelKeyStatus,
   type PromptId,
   type PromptInfo,
   type Route,
@@ -60,7 +62,7 @@ const SANDBOX_ROUTE: Route = { provider: "sandbox" as Route["provider"], model: 
  * ワークのエージェント(`work`)は、会話・整理・校正をコンテナ内の Claude Code が受け持つため、モデル選択は出さない
  * (校正だけ、コンテナ / 端末内のQwen / オフの選択)。プロンプトは編集できる。
  *LLMを使う機能ごとに、使うモデルと渡すプロンプトを1か所で扱う。
- * プロンプトは全文を編集でき、「初期値へ戻す」で既定へ戻る。変更は次の呼び出しから反映される。
+ * プロンプトは全文を編集でき、「全体設定を利用」で個別の上書きを外す(以後は全体設定の変更に自動で追従する)。変更は次の呼び出しから反映される。
  */
 export default function AiSettings({ keyStatus, leader, work = false }: { keyStatus: Partial<KeyStatus>; leader: boolean; work?: boolean }) {
   const t = useT();
@@ -97,9 +99,9 @@ export default function AiSettings({ keyStatus, leader, work = false }: { keySta
     [],
   );
 
-  const usable = models.filter((m) => keyStatus[m.provider]);
-  // 校正は短い文を毎回処理するため、オンにするときは軽量モデルを初期値にする
-  const initial = usable.find((m) => m.tier === "light") ?? usable[0];
+  // コンテナ内の Claude Code を選べるのは、校正と整理だけ(スキルの選定・宛先の提案は、毎回呼ぶので選べない)
+  const modelsFor = (id: PromptId) => (id === "proofread" || id === "organize" ? models : models.filter((m) => m.provider !== SANDBOX_PROVIDER));
+  const keysFor = (list: ModelInfo[]): ModelKeyStatus => ({ ...keyStatus, sandbox: list.some((m) => m.provider === SANDBOX_PROVIDER) });
 
   return (
     <section className="hud-panel hud-accent px-5 py-4">
@@ -108,7 +110,8 @@ export default function AiSettings({ keyStatus, leader, work = false }: { keySta
         <ul>
           <li>{t("プロンプトは全文を編集できます。変更は次の呼び出しから反映されます。")}</li>
           <li>{t("出力の形式(JSONなど)を示す部分を消すと、結果を読み取れず機能が働かなくなることがあります。")}</li>
-          <li>{t("「初期値へ戻す」で、いつでも既定の指示に戻せます。")}</li>
+          <li>{t("編集しないものは、全体設定の指示を利用し、全体設定の変更に自動で追従します。編集すると個別設定になり、追従しません。")}</li>
+          <li>{t("「全体設定を利用」で、いつでも個別の指示をやめて全体設定の指示に戻せます。")}</li>
           <li>{t("入力した内容は、AIのプロバイダへ送信されます。")}</li>
         </ul>
       </Heading>
@@ -117,6 +120,11 @@ export default function AiSettings({ keyStatus, leader, work = false }: { keySta
           const api = work && f.id !== "proofread" ? undefined : ROUTES[f.id];
           const route = routes[f.id] ?? null;
           const localModel = models.find((m) => m.provider === "local");
+          const list = modelsFor(f.id);
+          const keys = keysFor(list);
+          const usable = list.filter((m) => keys[m.provider]);
+          // 校正は短い文を毎回処理するため、オンにするときは軽量モデルを初期値にする
+          const initial = usable.find((m) => m.tier === "light") ?? usable[0];
           return (
             <FeatureCard key={f.id} feature={f} info={prompts[f.id]} onInfo={(i) => setPrompts((p) => ({ ...p, [f.id]: i }))}>
               {api && work && (
@@ -157,7 +165,12 @@ export default function AiSettings({ keyStatus, leader, work = false }: { keySta
                   {route && (
                     <>
                       {f.modelLabel && <p className="text-xs text-muted-foreground">{t(f.modelLabel)}</p>}
-                      <ModelSelector route={route} models={models} keyStatus={keyStatus} onChange={(r) => changeRoute(f.id, r)} />
+                      <ModelSelector route={route} models={list} keyStatus={keys} onChange={(r) => changeRoute(f.id, r)} />
+                      {route.provider === SANDBOX_PROVIDER && (
+                        <p className="text-xs text-muted-foreground">
+                          {t("コンテナ内の Claude Code は、発話のたびに起動するため数秒かかります。遅さが気になるときは、端末内のモデル(AI Link で取得)を選べます。")}
+                        </p>
+                      )}
                     </>
                   )}
                   {!route && !api.optional && <p className="text-xs text-muted-foreground">{t("先にAIのAPIキーを接続してください。")}</p>}
@@ -199,7 +212,7 @@ function FeatureCard({ feature, info, onInfo, children }: { feature: Feature; in
     <div className="rounded-md border bg-background/40 px-4 py-3">
       <div className="flex items-center gap-2">
         <h3 className="text-sm font-medium">{t(feature.title)}</h3>
-        {info?.custom && <Badge variant="secondary">{t("カスタム")}</Badge>}
+        {info && <Badge variant={info.custom ? "secondary" : "outline"}>{info.custom ? t("個別設定") : t("全体設定を利用")}</Badge>}
       </div>
       <p className="mt-1 mb-3 text-xs text-muted-foreground">{t(feature.description)}</p>
       {children}
@@ -232,9 +245,9 @@ function FeatureCard({ feature, info, onInfo, children }: { feature: Feature; in
                     variant="ghost"
                     size="sm"
                     disabled={busy || (!info.custom && value === info.default)}
-                    onClick={() => run(() => resetPrompt(feature.id), t("初期値に戻しました。"))}
+                    onClick={() => run(() => resetPrompt(feature.id), t("全体設定を利用します。"))}
                   >
-                    {t("初期値へ戻す")}
+                    {t("全体設定を利用")}
                   </Button>
                   <Button
                     type="button"

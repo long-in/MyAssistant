@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { addSttCorrection, reportError } from "@/lib/api";
+import { ChatMarkdown } from "./ChatMarkdown";
 import { Reply, type Turn } from "./Reply";
 import TurnLog from "./TurnLog";
 
@@ -138,8 +139,8 @@ export default function ChatThread({
             {turn.log && <TurnLog log={turn.log} running={running} onCancel={onCancelTask} />}
             {turn.reply && (
               <div className="flex max-w-3xl flex-col items-start gap-1">
-                <div className="text-sm leading-6 break-words whitespace-pre-wrap text-foreground">
-                  {isLast && !turn.restored ? <Reply text={turn.reply} /> : turn.reply}
+                <div className="max-w-full min-w-0 text-sm leading-6 break-words text-foreground">
+                  {isLast && !turn.restored ? <Reply text={turn.reply} /> : <ChatMarkdown text={turn.reply} />}
                 </div>
                 <div className="flex items-center gap-2">
                 {onSpeak && (

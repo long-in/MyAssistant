@@ -19,11 +19,10 @@ use crate::{
         graph::{self, GraphCache},
         knowledge, leader,
         llm_client::SystemPrompt,
-        llm_router::{self, ModelInfo, Route},
+        llm_router::{self, Route},
         memory,
         cancel::CancelToken,
         chat_session, profile, prompts, sandbox, sandbox_agent,
-        secrets::Provider,
         skills, skills_migration,
         agent_data, tuning,
         workspace::{self, Ctx, WorkspaceCtx, Workspaces, active},
@@ -45,7 +44,7 @@ const CONTEXT_CHARS: usize = 2_000;
 pub const CORRECTIONS_MAX: usize = 30;
 
 /// 音声での会話を前提とした、常にシステムプロンプトの先頭へ置く基本指示。
-/// 応答はそのまま音声合成され、読み上げ後は自動で音声入力が再開する。読み上げに不要な記号を含めない。
+/// 応答はそのまま音声合成され、読み上げ後は自動で音声入力が再開する。画面にはMarkdownで描画し、読み上げには地の文だけを使う。
 pub const DEFAULT_BASE_INSTRUCTIONS: &str = "\
 あなたは音声対話アシスタントです。ユーザーの発話は音声認識の文字起こしで、回答はそのまま読み上げられ、読み上げ後はユーザーが続けて話せます。一問一答で終わらせず、会話を重ねて一緒に進めてください。\n\
 \n\
@@ -61,7 +60,9 @@ pub const DEFAULT_BASE_INSTRUCTIONS: &str = "\
 - 誤変換が疑われるときは文脈から自然な意味を推測する。意味が大きく変わり判断できないときだけ短く聞き返す。\n\
 \n\
 読み上げ向けの書き方\n\
-- Markdown、見出し、箇条書きの記号、表、コード、絵文字、URLは使わない。列挙は「まず」「次に」などの話し言葉でつなぐ。\n\
+- 画面にはMarkdownで表示され、読み上げられるのは地の文だけ。表・コードブロック・リンク先・記号は読み上げられない。\n\
+- 一覧や比較など画面で見せたいものは、Markdownの表・箇条書き・コードブロックで書いてよい。表やコードの中身は読まれないので、結論や要点は地の文でも一〜二文で伝える。\n\
+- 地の文では見出し、箇条書きの記号、絵文字、URLを避け、列挙は「まず」「次に」などの話し言葉でつなぐ。\n\
 - 数式・記号・英略語は読み上げて自然な言い方にする。話し言葉で、一文を短く。";
 
 /// 画面から登録されたベース指示。未登録(空白のみ含む)なら既定値。
@@ -252,9 +253,10 @@ pub struct ChatReply {
     pub model: String,
 }
 
+/// モデルの選択肢。個人・リーダーには、コンテナ内の Claude Code(settings.json で許可したモデル)も含める。
 #[tauri::command]
-pub fn list_models(ctx: Ctx) -> Vec<ModelInfo> {
-    llm_router::catalog(&ctx)
+pub fn list_models(ctx: Ctx) -> Vec<llm_router::ModelEntry> {
+    llm_router::entries(&ctx, &sandbox_agent::available_models(&ctx.db, &*ctx.global))
 }
 
 #[tauri::command]
@@ -376,12 +378,18 @@ async fn send_chat_sandbox(
         .clone();
     let base = prompts::load_chat(&ctx.db, &*ctx.global)?;
     let (personal, instructions, pinned) = instruction_blocks(app, ctx)?;
+    // リーダーは、ツールを使わず、台帳とエージェントの一覧を毎回の文脈で受け取る。配布の下書きは返答のブロックで返す
+    let is_leader = ctx.id == workspace::LEADER_ID;
+    let ws = app.state::<Workspaces>();
+    let agents = ws.list();
+    let live = |sid: &str| (ws.run_status(sid), ws.run_session(sid));
+    let guide = if is_leader { format!("{}\n\n{}", leader::SANDBOX_GUIDE, leader::sandbox_context(ctx, &agents, live)) } else { sandbox_agent::guide() };
     let system: Vec<String> = std::iter::once(base)
         .chain(instructions)
         .chain(pinned)
         .chain(personal)
         .chain(corrections)
-        .chain(std::iter::once(sandbox_agent::guide()))
+        .chain(std::iter::once(guide))
         .collect();
     // コマンド実行・Web検索を無効にしているエージェントでは、対応するツールも拒否する
     let mut deny = Vec::new();
@@ -398,7 +406,7 @@ async fn send_chat_sandbox(
     ctx.shared.task.set_cancel(cancel.clone());
     let mut preparing = false;
     let emit = |event: TaskEvent| ctx.shared.task.emit(event);
-    let model = sandbox_agent::selected_model(&ctx.db);
+    let model = sandbox_agent::selected_model(&ctx.db, &*ctx.global);
     let turn = sandbox_agent::Turn {
         ctx,
         knowledge_root: &root,
@@ -407,7 +415,7 @@ async fn send_chat_sandbox(
         resume: resume.as_deref(),
         model: model.as_deref(),
         deny,
-        no_tools: false,
+        no_tools: is_leader,
         timeout: None,
     };
     let result = sandbox_agent::run_turn(turn, &cancel, |event| {
@@ -448,8 +456,21 @@ async fn send_chat_sandbox(
     if r.timed_out {
         return Err(AppError::Sandbox(format!("上限時間({}分)を超えたため中断しました。続きは、もう一度指示してください。", cfg.timeout_mins)));
     }
-    let content = if r.cancelled { tool_loop::CANCELLED_TEXT.to_owned() } else { r.text };
-    let model = sandbox_agent::configured_model(&ctx.db).unwrap_or_else(|| "default".to_owned());
+    let mut content = if r.cancelled { tool_loop::CANCELLED_TEXT.to_owned() } else { r.text };
+    if is_leader && !r.cancelled {
+        // 返答のブロックを配布の下書きにする(検証は`draft_dispatch`と同じ。配布はしない)。作れなかった理由は返答に添える
+        let (body, drafts) = leader::take_drafts(&content);
+        content = body;
+        for (i, input) in drafts.iter().enumerate() {
+            let (result, event) = leader::run_tool(ctx, &agents, live, &format!("draft-{i}"), "draft_dispatch", input);
+            match (result, event) {
+                (Ok(_), Some(event)) => emit(event),
+                (Err(e), _) => content = format!("{content}\n\n(配布の下書きを作れませんでした: {e})").trim().to_owned(),
+                _ => {}
+            }
+        }
+    }
+    let model = sandbox_agent::configured_model(&ctx.db, &*ctx.global).unwrap_or_else(|| "default".to_owned());
     // 実行中に削除されたエージェントへは、応答もキャプチャも書かない
     ctx.ensure_alive()?;
     ctx.db.insert_log(session_id, "assistant", &content, Some(SANDBOX_PROVIDER), Some(&model))?;
@@ -476,14 +497,11 @@ async fn send_chat_inner(
     route: Route,
     skill: Option<String>,
 ) -> Result<ChatReply, AppError> {
-    // サンドボックスが有効なら、会話はコンテナ内の Claude Code が受け持つ(リーダーは対象外)
-    if sandbox_enabled(ctx) {
+    // ワークは常に、個人・リーダーはモデルにコンテナ内の Claude Code を選んだとき、会話をコンテナ内の Claude Code が受け持つ
+    if sandbox_enabled(ctx) || (llm_router::is_sandbox(&route) && llm_router::offers_sandbox(ctx)) {
         return send_chat_sandbox(app, ctx, contexts, &session_id, text).await;
     }
-    let available: Vec<Provider> = Provider::ALL
-        .into_iter()
-        .filter(|p| ctx.secrets.has_key(*p).unwrap_or(false))
-        .collect();
+    let available = batch::available_providers(&ctx.secrets);
     let target = llm_router::resolve(&ctx, &route, &available)?;
 
     // 訂正履歴はセッションの最初の発話で1回だけ読む

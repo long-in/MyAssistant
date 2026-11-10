@@ -24,6 +24,12 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   local: "Local (Qwen)",
 };
 
+/** モデルの選択肢の見出し。`sandbox`は、コンテナ内の Claude Code(Bedrockもここで使う)。 */
+export const MODEL_PROVIDER_LABELS: Record<ModelProvider, string> = {
+  ...PROVIDER_LABELS,
+  sandbox: "コンテナ内の Claude Code",
+};
+
 export const ERROR_MESSAGES: Record<string, string> = {
   empty_key: "APIキーを入力してください。",
   unauthorized: "APIキーが無効です。内容を確認してください。",
@@ -141,13 +147,9 @@ export type AwsStatus = {
   selected: string | null;
   /** 一時クレデンシャルの期限(UNIX秒)。未取得ならnull。 */
   session_expires_at: number | null;
-  /** 登録済みのBedrockモデルID(推論プロファイルIDやARNも可)。モデル選択に並ぶ。 */
-  models: string[];
-  /** 初期候補のうち、未登録のもの。 */
-  suggested_models: string[];
 };
 
-/** MFAコードの入力を求めるイベント(Bedrock呼び出しはコードが届くまで待つ)。 */
+/** MFAコードの入力を求めるイベント(AWSの認証はコードが届くまで待つ)。 */
 export const AWS_MFA_EVENT = "aws-mfa-required";
 export type AwsMfaPrompt = {
   profile: string;
@@ -171,27 +173,31 @@ export const previewAwsConfig = (config: string, credentials: string) =>
 /** 貼り付けた内容と使うプロファイルをRust側で検証して保存する。保存後、内容はフロントエンドへ戻らない。 */
 export const saveAwsConfig = (config: string, credentials: string, profile: string) =>
   invoke<AwsStatus>("save_aws_config", { config, credentials, profile });
-/** Bedrockの推論プロファイルから`global.anthropic.`のIDを取得する(登録はしない)。MFAが必要なら`AWS_MFA_EVENT`が飛ぶ。 */
-export const fetchAwsModels = () => invoke<string[]>("fetch_aws_models");
-export const addAwsModel = (model: string) => invoke<AwsStatus>("add_aws_model", { model });
-export const removeAwsModel = (model: string) => invoke<AwsStatus>("remove_aws_model", { model });
 export const selectAwsProfile = (name: string) => invoke<AwsStatus>("select_aws_profile", { name });
-/** 認証からモデル呼び出しまで通しで確認する。MFAが必要なら`AWS_MFA_EVENT`が飛び、コード入力まで待つ。 */
+/** AWSの認証(プロファイル・ロールの引き受け)が通るかを確認する。MFAが必要なら`AWS_MFA_EVENT`が飛び、コード入力まで待つ。 */
 export const testAwsConnection = () => invoke<AwsStatus>("test_aws_connection");
 /** コードは、求めたワークスペースへ返す(選択中とは限らない)。 */
 export const submitAwsMfa = (workspaceId: string, code: string) => invoke<void>("submit_aws_mfa", { workspaceId, code });
 export const cancelAwsMfa = (workspaceId: string) => invoke<void>("cancel_aws_mfa", { workspaceId });
 
-export type Route = { provider: Provider; model: string };
+/**
+ * モデルの選択肢の接続先。`Provider`に加えて、`sandbox`(コンテナ内の Claude Code。モデルは settings.json で決まる)がある。
+ * Bedrockはこのアプリから直接は呼ばず、`sandbox`で使う。`sandbox`を選べるのは、パーソナルとリーダーだけ。
+ */
+export type ModelProvider = Provider | "sandbox";
+export type ModelKeyStatus = Partial<Record<ModelProvider, boolean>>;
+export const SANDBOX_PROVIDER = "sandbox" as const;
+
+export type Route = { provider: ModelProvider; model: string };
 
 export type ModelInfo = {
-  provider: Provider;
+  provider: ModelProvider;
   id: string;
   label: string;
   tier: "light" | "heavy";
 };
 
-export type ChatReply = { content: string; provider: Provider; model: string };
+export type ChatReply = { content: string; provider: string; model: string };
 
 /** 聞き取り間違いの訂正をナレッジ(Markdown)へ記録する。保存した場合はtrue。 */
 export const addSttCorrection = (heard: string, correct: string) =>
@@ -349,7 +355,12 @@ export type SandboxModels = { models: string[]; selected: string | null };
 export const getSandboxModels = () => invoke<SandboxModels>("get_sandbox_models");
 /** チャットで使うモデルを選ぶ。null で解除(settings.json の model に任せる)。 */
 export const setSandboxModel = (model: string | null) => invoke<void>("set_sandbox_model", { model });
-export const getSandboxClaudeSettings = () => invoke<string>("get_sandbox_claude_settings");
+/** `own`はこのエージェントの保存(空なら全体設定を利用)、`shared`は全体設定の内容。 */
+export type ClaudeSettings = { own: string; shared: string };
+export const getSandboxClaudeSettings = () => invoke<ClaudeSettings>("get_sandbox_claude_settings");
+/** 全体設定の settings.json。自分の settings.json を持たないエージェントが使う。 */
+export const getSharedClaudeSettings = () => invoke<string>("get_shared_claude_settings");
+export const setSharedClaudeSettings = (content: string) => invoke<void>("set_shared_claude_settings", { content });
 export const setSandboxClaudeSettings = (content: string) => invoke<void>("set_sandbox_claude_settings", { content });
 export const getSandboxLlm = () => invoke<SandboxLlm>("get_sandbox_llm");
 export const setSandboxLlm = (config: SandboxLlm) => invoke<SandboxLlm>("set_sandbox_llm", { config });
@@ -1054,16 +1065,21 @@ export type PromptInfo = {
   id: PromptId;
   /** いま使われる文章。 */
   text: string;
-  /** 「初期値へ戻す」で戻る文章。 */
+  /** 「全体設定を利用」で使われる文章(全体設定にあればそれ、なければ組み込みの既定)。 */
   default: string;
-  /** このエージェントで上書きしているか。 */
+  /** このエージェントで上書きしている(個別設定)か。falseなら全体設定を利用している。 */
   custom: boolean;
 };
 export const PROMPT_MAX_CHARS = 20000;
 export const listPrompts = () => invoke<PromptInfo[]>("list_prompts");
 /** 空、または既定と同じ文章は上書きなしになる。保存後の状態を返す。 */
 export const savePrompt = (id: PromptId, text: string) => invoke<PromptInfo>("save_prompt", { id, text });
+/** 上書きを外し、全体設定を利用する状態へ戻す。 */
 export const resetPrompt = (id: PromptId) => invoke<PromptInfo>("reset_prompt", { id });
+/** 全体設定のプロンプト。`custom`は組み込みの既定から書き換えているか、`default`は組み込みの既定。 */
+export const listGlobalPrompts = () => invoke<PromptInfo[]>("list_global_prompts");
+export const saveGlobalPrompt = (id: PromptId, text: string) => invoke<PromptInfo>("save_global_prompt", { id, text });
+export const resetGlobalPrompt = (id: PromptId) => invoke<PromptInfo>("reset_global_prompt", { id });
 
 /** 会話の継続。保存済みの現在の会話のIDと、画面に戻す直近のやり取り(発話ごとの実行ログ付き)。 */
 export type SessionTurn = {

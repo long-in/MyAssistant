@@ -552,7 +552,7 @@ async fn select(ctx: &WorkspaceCtx, skills: &[Skill], text: &str, previous: &str
         cut(text, SELECT_TEXT_CHARS)
     );
     let msg = [ChatMessage { role: "user".into(), content }];
-    let system = match prompts::load(&ctx.db, PromptId::Skills) {
+    let system = match prompts::load(&ctx.db, &*ctx.global, PromptId::Skills) {
         Ok(s) => s,
         Err(e) => {
             log::warn!("skill selection skipped: {e}");
@@ -1062,12 +1062,12 @@ mod tests {
         let catalog = vec![
             info(Provider::Anthropic, "claude-sonnet-5-5"),
             info(Provider::Anthropic, "claude-haiku-5-5"),
-            info(Provider::Bedrock, "us.anthropic.claude-haiku-5-5-v1:0"),
+            info(Provider::Local, "local-model"),
         ];
-        let r = default_route(&catalog, &[Provider::Anthropic, Provider::Bedrock]).unwrap();
+        let r = default_route(&catalog, &[Provider::Anthropic, Provider::Local]).unwrap();
         assert_eq!((r.provider.as_str(), r.model.as_str()), ("anthropic", "claude-haiku-5-5"));
-        let r = default_route(&catalog, &[Provider::Bedrock]).unwrap();
-        assert_eq!(r.model, "us.anthropic.claude-haiku-5-5-v1:0");
+        let r = default_route(&catalog, &[Provider::Local]).unwrap();
+        assert_eq!(r.model, "local-model");
         assert!(default_route(&catalog, &[]).is_none());
         let sonnet_only = &catalog[..1];
         assert_eq!(default_route(sonnet_only, &[Provider::Anthropic]).unwrap().model, "claude-sonnet-5-5");

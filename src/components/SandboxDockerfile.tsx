@@ -174,7 +174,7 @@ export default function SandboxDockerfile({
       okLabel: t("解除する"),
       cancelLabel: t("キャンセル"),
     });
-    if (yes) await run("unregister", async () => { await unregisterAgentSandboxDockerfile(); await load(); }, t("登録を解除しました。共通の Dockerfile を使います。"));
+    if (yes) await run("unregister", async () => { await unregisterAgentSandboxDockerfile(); await load(); }, t("登録を解除しました。全体設定の Dockerfile を利用します(以後は全体設定の変更に追従します)。"));
   };
 
   const building = busy === "build" || !!ready?.building;
@@ -214,7 +214,7 @@ export default function SandboxDockerfile({
 
       <div className="flex flex-wrap items-center gap-2">
         {agent ? (
-          <Badge variant={registered ? "default" : "outline"}>{registered ? t("専用を使用中") : t("共通を使用中")}</Badge>
+          <Badge variant={registered ? "default" : "outline"}>{registered ? t("個別設定を使用中") : t("全体設定を利用")}</Badge>
         ) : (
           <Badge variant="outline">{state === "edited" ? t("編集済み") : state === "template" ? t("標準") : t("未作成")}</Badge>
         )}
@@ -264,7 +264,7 @@ export default function SandboxDockerfile({
         {agent
           ? registered && (
               <Button size="sm" variant="outline" disabled={!!busy} onClick={() => void unregister()}>
-                {t("専用をやめて共通を使う")}
+                {t("全体設定を利用")}
               </Button>
             )
           : state !== "template" && (

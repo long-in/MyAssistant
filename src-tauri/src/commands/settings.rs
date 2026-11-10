@@ -4,6 +4,7 @@ use crate::{
     services::{
         aws, debug_log,
         secrets::{self, Provider},
+        sandbox,
         workspace::Ctx,
     },
     utils::error::AppError,
@@ -22,6 +23,10 @@ pub fn get_key_status(ctx: Ctx) -> Result<BTreeMap<&'static str, bool>, AppError
 #[tauri::command]
 pub async fn save_api_key(ctx: Ctx, provider: String, key: String) -> Result<(), AppError> {
     let provider = Provider::from_str(&provider)?;
+    // ワークのエージェントはコンテナ内の Claude Code が Bedrock 固定で動くので、Anthropic のキーは持たない
+    if provider == Provider::Anthropic && sandbox::runs_in_sandbox(&ctx.id) {
+        return Err(AppError::InvalidProvider(provider.as_str().to_owned()));
+    }
     let key = key.trim();
     if key.is_empty() {
         return Err(AppError::EmptyKey);

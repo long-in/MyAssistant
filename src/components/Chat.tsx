@@ -22,6 +22,7 @@ import { useDownloadProgress } from "./DownloadBar";
 import { cn } from "@/lib/utils";
 import { isPlainSpace, matchShortcut } from "@/lib/shortcuts";
 import { judgeAnswer } from "@/lib/voiceApproval";
+import { speechText } from "@/lib/speech-sync";
 import { detectSwitch } from "@/lib/voiceCommands";
 import {
   LEADER_ID,
@@ -56,6 +57,7 @@ import {
   playBase64Mp3,
   recordingWaveform,
   getSandboxEnabled,
+  SANDBOX_PROVIDER,
   getSandboxStatus,
   getSandboxModels,
   setSandboxModel,
@@ -82,7 +84,7 @@ import {
 } from "@/lib/api";
 
 /** サンドボックスで、このアプリにモデルが無いときに送る仮の経路(バックエンドでは使わない)。 */
-const SANDBOX_ROUTE: Route = { provider: "anthropic", model: "sandbox" };
+const SANDBOX_ROUTE: Route = { provider: SANDBOX_PROVIDER, model: "default" };
 
 // 録音の待ち時間(エージェントを離したあとの猶予・声が入らず終える時間・話し終わりの無音)は、全体設定で変えられる(`voice_timing`)。
 
@@ -189,11 +191,13 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   const approvalRef = useRef<Approval | null>(null);
   const [listening, setListening] = useState<Listening>("idle");
   const [route, setRoute] = useState<Route | null>(null);
-  /** サンドボックスが有効なら、会話はコンテナ内の Claude Code が受け持つ(このアプリのAPIキーやモデルの選択は使わない)。 */
-  const [sandboxOn, setSandboxOn] = useState(false);
+  /** ワークのエージェントは常に、会話をコンテナ内の Claude Code が受け持つ(このアプリのAPIキーやモデルの選択は使わない)。 */
+  const [sandboxAlways, setSandboxAlways] = useState(false);
   useEffect(() => {
-    getSandboxEnabled().then(setSandboxOn).catch(() => {});
+    getSandboxEnabled().then(setSandboxAlways).catch(() => {});
   }, []);
+  /** コンテナ内の Claude Code で会話するか。ワークは常に、パーソナルとリーダーはモデルに選んだとき。 */
+  const sandboxOn = sandboxAlways || route?.provider === SANDBOX_PROVIDER;
   /** サンドボックスのコンテナが使える状態か(未確認は null)。使えるまでは、指示を送れない。 */
   const [sandboxReady, setSandboxReady] = useState<boolean | null>(null);
   const [sandboxStatus, setSandboxStatus] = useState<SandboxStatus | null>(null);
@@ -372,6 +376,11 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   const changeRoute = (r: Route) => {
     setRoute(r);
     saveRouting(r).catch(fail);
+    // コンテナ内の Claude Code では、選んだモデルを settings.json の許可の中から渡す("default"は settings.json の model に任せる)
+    if (r.provider === SANDBOX_PROVIDER) {
+      setSandboxModels((m) => (m ? { ...m, selected: r.model === "default" ? null : r.model } : m));
+      setSandboxModel(r.model === "default" ? null : r.model).catch(fail);
+    }
   };
 
   const showApproval = (a: Approval | null) => {
@@ -555,7 +564,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     let result: "spoke" | "replied" | "none" = "none";
     try {
       // サンドボックスでは、経路はバックエンドで使われない(接続先はエージェントの Sandbox の設定)
-      const sendRoute = route ?? (sandboxOn ? SANDBOX_ROUTE : null);
+      const sendRoute = route ?? (sandboxAlways ? SANDBOX_ROUTE : null);
       if (!sendRoute) throw new Error(t("使えるモデルがありません。設定でAPIキーを登録してください。"));
       const r = await sendChat(sessionId, text, sendRoute, null, onTaskEvent);
       if (aborted()) return "none"; // 待っている間に新しい会話へ切り替わった、または中断された
@@ -563,7 +572,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
       result = "replied";
       if (speakReply) {
         // 字幕を読み上げの再生位置に合わせるため、音声を作って再生を始めてから返答を表示する
-        const audio = await synthesizeSpeech(r.content).catch((e) => {
+        const audio = await synthesizeSpeech(speechText(r.content)).catch((e) => {
           fail(e);
           return null;
         });
@@ -587,7 +596,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     unlockAudio();
     stopSpeech();
     try {
-      const audio = await synthesizeSpeech(text);
+      const audio = await synthesizeSpeech(speechText(text));
       await playBase64Mp3(audio, text);
     } catch (e) {
       fail(e);
@@ -1168,9 +1177,9 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
         busy={busy}
         onStop={abortAll}
         model={
-          sandboxOn
+          sandboxAlways
             ? { kind: "sandbox", models: sandboxModels?.models ?? [], selected: sandboxModels?.selected ?? sandboxModels?.models[0] ?? null, onChange: changeSandboxModel }
-            : { kind: "app", route, models, keyStatus, onChange: changeRoute }
+            : { kind: "app", route, models, keyStatus: { ...keyStatus, sandbox: models.some((m) => m.provider === SANDBOX_PROVIDER) }, onChange: changeRoute }
         }
       />
     </div>

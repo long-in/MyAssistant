@@ -87,15 +87,16 @@ struct Usage {
 
 // ------------------------------------------------------------------ 名前・Dockerfile
 
-/// サンドボックスを使えるのはパーソナルとワークのエージェント(リーダーはコマンドを実行しないので対象外)。
+/// サンドボックスを使えるのは、パーソナル・リーダー・ワークのエージェント。
+/// リーダーはコマンドを実行しないが、Bedrockを使うときは、会話をコンテナ内の Claude Code に任せる(ツールは使わせない)。
 pub fn is_supported(id: &str) -> bool {
-    id == PERSONAL_ID || (id != LEADER_ID && !id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'))
+    id == PERSONAL_ID || id == LEADER_ID || (!id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'))
 }
 
-/// そのエージェントの作業をコンテナで行うか。ワークのエージェントは常にコンテナで動く。
-/// パーソナルはホストで動き、リーダーはコマンドを実行しないので対象外。
+/// そのエージェントの作業を常にコンテナで行うか。ワークのエージェントは常にコンテナで動く。
+/// パーソナルとリーダーは、モデルにコンテナ内の Claude Code(`llm_router::SANDBOX_PROVIDER`)を選んだときだけコンテナを使う。
 pub fn runs_in_sandbox(id: &str) -> bool {
-    id != PERSONAL_ID && is_supported(id)
+    id != PERSONAL_ID && id != LEADER_ID && is_supported(id)
 }
 
 /// 新しいコンテナの名前。エージェントとの対応は名前ではなくラベル(`myassistant.agent`)で持ち、画面で確認できる。
@@ -1275,9 +1276,10 @@ mod tests {
     const ID: &str = "0b9c3f5e-1d2a-4c6b-8e7f-123456789abc";
 
     #[test]
-    fn leader_and_invalid_ids_cannot_use_the_sandbox() {
+    fn only_work_runs_in_the_sandbox_always_and_invalid_ids_are_rejected() {
         assert!(is_supported(ID) && is_supported(PERSONAL_ID));
-        assert!(!is_supported(LEADER_ID) && !is_supported("") && !is_supported("../x"));
+        assert!(is_supported(LEADER_ID) && !runs_in_sandbox(LEADER_ID) && !runs_in_sandbox(PERSONAL_ID) && runs_in_sandbox(ID));
+        assert!(!is_supported("") && !is_supported("../x"));
         assert!(!is_supported("abc def"));
     }
 

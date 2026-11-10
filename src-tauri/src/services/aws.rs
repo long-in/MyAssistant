@@ -10,11 +10,9 @@ use std::{
 };
 
 use aws_credential_types::Credentials;
-use aws_sdk_bedrockruntime::primitives::Blob;
 use aws_sdk_sts::error::{ProvideErrorMetadata, SdkError};
 use aws_types::region::Region;
 use serde::Serialize;
-use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::oneshot;
 
@@ -199,10 +197,6 @@ pub struct Status {
     pub selected: Option<String>,
     /// 一時クレデンシャルの期限(UNIX秒)。取得していなければnull。
     pub session_expires_at: Option<i64>,
-    /// 登録済みのBedrockモデルID。
-    pub models: Vec<String>,
-    /// 初期候補のうち、未登録のもの。
-    pub suggested_models: Vec<String>,
 }
 
 fn profiles_of(ini: &Ini) -> Vec<ProfileInfo> {
@@ -235,21 +229,15 @@ pub fn status(ctx: &WorkspaceCtx) -> Result<Status, AppError> {
         s.expires.duration_since(SystemTime::UNIX_EPOCH).ok().map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
     });
     let selected = selected(&ini, saved.as_deref());
-    let models = models(ctx);
-    let suggested_models = suggested_models().into_iter().filter(|m| !models.contains(m)).collect();
-    Ok(Status { registered: ctx.secrets.has_aws()?, profiles, selected, session_expires_at, models, suggested_models })
+    Ok(Status { registered: ctx.secrets.has_aws()?, profiles, selected, session_expires_at })
 }
 
-/// 貼り付けた内容と、使うプロファイルを検証して保存する(ネットワークは使わない)。モデルが未登録なら初期候補を登録する。
+/// 貼り付けた内容と、使うプロファイルを検証して保存する(ネットワークは使わない)。
 /// 選んだプロファイルが使えなければ保存しない。
 pub fn save(ctx: &WorkspaceCtx, config: &str, credentials: &str, profile: &str) -> Result<(), AppError> {
     resolve(&merged(config, credentials), profile)?;
     ctx.secrets.set_aws_files(config.trim(), credentials.trim())?;
     ctx.secrets.set_aws_profile(profile)?;
-    // 初回だけ初期候補を登録しておく(後から画面で入力し直せる)
-    if models(ctx).is_empty() {
-        set_models(ctx, &suggested_models())?;
-    }
     clear_session(ctx);
     Ok(())
 }
@@ -520,63 +508,12 @@ pub async fn env_pairs(ctx: &WorkspaceCtx) -> Result<Vec<(String, String)>, AppE
     Ok(pairs)
 }
 
-/// 初期候補にするClaudeのモデルID(`global.`付きの推論プロファイルID)。
-/// 他のモデルや`jp.`などの接頭辞は、画面の「取得」ボタンか手入力で追加する。
-const SUGGESTED_MODELS: &[&str] = &[
-    "global.anthropic.claude-haiku-5-5",
-    "global.anthropic.claude-sonnet-5-5",
-    "global.anthropic.claude-opus-5-5",
-];
-
-fn suggested_models() -> Vec<String> {
-    SUGGESTED_MODELS.iter().map(|m| (*m).to_owned()).collect()
-}
-
-/// モデルID・推論プロファイルID・ARNに使える文字だけを許す。
-fn valid_model_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 256
-        && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b':' | b'_' | b'/' | b'-'))
-}
-
-/// 登録済みのBedrockモデルID(追加順)。
-pub fn models(ctx: &WorkspaceCtx) -> Vec<String> {
-    ctx.secrets.get_aws_models()
-        .ok()
-        .flatten()
-        .and_then(|v| serde_json::from_str(&v).ok())
-        .unwrap_or_default()
-}
-
-fn set_models(ctx: &WorkspaceCtx, list: &[String]) -> Result<(), AppError> {
-    ctx.secrets.set_aws_models(&serde_json::to_string(list).map_err(|e| AppError::AwsConfig(e.to_string()))?)
-}
-
-pub fn add_model(ctx: &WorkspaceCtx, id: &str) -> Result<(), AppError> {
-    let id = id.trim();
-    if !valid_model_id(id) {
-        return Err(AppError::AwsConfig(format!("invalid model id: {id}")));
-    }
-    let mut list = models(ctx);
-    if !list.iter().any(|m| m == id) {
-        list.push(id.to_owned());
-        set_models(ctx, &list)?;
-    }
-    Ok(())
-}
-
-pub fn remove_model(ctx: &WorkspaceCtx, id: &str) -> Result<(), AppError> {
-    let list: Vec<String> = models(ctx).into_iter().filter(|m| m != id).collect();
-    set_models(ctx, &list)
-}
-
-/// Messages API形式のリクエスト(`model`なし)でInvokeModelを呼ぶ。`model_id`はBedrockのモデルID(または推論プロファイルID)。
-/// 応答はMessages API形式のJSON。
-/// クレデンシャルの期限切れで失敗したときは、取り直して1回だけ再試行する。
-pub async fn invoke_model(ctx: &WorkspaceCtx, model_id: &str, request: &Value, timeout: Duration) -> Result<Value, AppError> {
+/// 認証(選択中のプロファイル・MFA・ロールの引き受け)が通るかを、STSのGetCallerIdentityで確かめる。MFAが必要なら画面でコード入力を求める。
+/// モデルは呼ばない(Bedrockは、コンテナ内の Claude Code が settings.json のモデルで呼ぶ)。
+pub async fn test_connection(ctx: &WorkspaceCtx) -> Result<(), AppError> {
     for attempt in 0..2 {
         let (keys, region) = credentials(ctx).await?;
-        match invoke_once(ctx, &keys, &region, model_id, request, timeout).await {
+        match caller_identity(ctx, &keys, &region).await {
             Err(f) if f.expired() && attempt == 0 => clear_session(ctx),
             result => return result.map_err(Failure::into_error),
         }
@@ -584,101 +521,18 @@ pub async fn invoke_model(ctx: &WorkspaceCtx, model_id: &str, request: &Value, t
     unreachable!("the second attempt always returns")
 }
 
-async fn invoke_once(
-    ctx: &WorkspaceCtx,
-    keys: &Keys,
-    region: &str,
-    model_id: &str,
-    request: &Value,
-    timeout: Duration,
-) -> Result<Value, Failure> {
-    let mut body = request.clone();
-    body["anthropic_version"] = json!("bedrock-2023-05-31");
-    let mut conf = aws_sdk_bedrockruntime::Config::builder()
+async fn caller_identity(ctx: &WorkspaceCtx, keys: &Keys, region: &str) -> Result<(), Failure> {
+    let mut conf = aws_sdk_sts::Config::builder()
         .behavior_version_latest()
         .region(Region::new(region.to_owned()))
-        .credentials_provider(keys.credentials())
-        ;
+        .credentials_provider(keys.credentials());
     conf.set_http_client(super::proxy::aws_http_client_for(ctx));
     let conf = conf.build();
-    let out = tokio::time::timeout(
-        timeout,
-        aws_sdk_bedrockruntime::Client::from_conf(conf)
-            .invoke_model()
-            .model_id(model_id)
-            .content_type("application/json")
-            .accept("application/json")
-            .body(Blob::new(serde_json::to_vec(&body).map_err(|_| Failure::Other)?))
-            .send(),
-    )
-    .await
-    .map_err(|_| Failure::Timeout)?
-    .map_err(|e| Failure::of(&e))?;
-    serde_json::from_slice(out.body().as_ref()).map_err(|_| Failure::Other)
-}
-
-/// Bedrockの推論プロファイルから、`global.anthropic.`で始まるClaudeのIDを取得する。
-/// `list-foundation-models`が返すのは接頭辞なしの基盤モデルIDだけで、`global.`付きのIDは推論プロファイル側にある。
-pub async fn fetch_global_models(ctx: &WorkspaceCtx) -> Result<Vec<String>, AppError> {
-    for attempt in 0..2 {
-        let (keys, region) = credentials(ctx).await?;
-        match list_global_profiles(ctx, &keys, &region).await {
-            Err(f) if f.expired() && attempt == 0 => clear_session(ctx),
-            result => return result.map_err(Failure::into_error),
-        }
-    }
-    unreachable!("the second attempt always returns")
-}
-
-async fn list_global_profiles(ctx: &WorkspaceCtx, keys: &Keys, region: &str) -> Result<Vec<String>, Failure> {
-    use aws_sdk_bedrock::types::InferenceProfileType;
-    let mut conf = aws_sdk_bedrock::Config::builder()
-        .behavior_version_latest()
-        .region(Region::new(region.to_owned()))
-        .credentials_provider(keys.credentials())
-        ;
-    conf.set_http_client(super::proxy::aws_http_client_for(ctx));
-    let conf = conf.build();
-    let client = aws_sdk_bedrock::Client::from_conf(conf);
-    let mut ids = Vec::new();
-    let mut token: Option<String> = None;
-    loop {
-        let page = tokio::time::timeout(
-            Duration::from_secs(30),
-            client
-                .list_inference_profiles()
-                .type_equals(InferenceProfileType::SystemDefined)
-                .set_next_token(token.take())
-                .send(),
-        )
+    tokio::time::timeout(STS_TIMEOUT, aws_sdk_sts::Client::from_conf(conf).get_caller_identity().send())
         .await
         .map_err(|_| Failure::Timeout)?
         .map_err(|e| Failure::of(&e))?;
-        ids.extend(page.inference_profile_summaries().iter().map(|p| p.inference_profile_id().to_owned()));
-        token = page.next_token().map(str::to_owned);
-        if token.is_none() {
-            break;
-        }
-    }
-    Ok(global_claude_ids(ids))
-}
-
-/// `global.anthropic.`で始まるIDだけを、重複なく昇順で返す。
-fn global_claude_ids(mut ids: Vec<String>) -> Vec<String> {
-    ids.retain(|id| id.starts_with("global.anthropic."));
-    ids.sort();
-    ids.dedup();
-    ids
-}
-
-/// 認証からモデル呼び出し(登録済みの先頭モデル)までを通しで確認する。MFAが必要なら画面でコード入力を求める。
-pub async fn test_connection(ctx: &WorkspaceCtx) -> Result<(), AppError> {
-    let model = models(ctx)
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::AwsConfig("no model registered".to_owned()))?;
-    let request = json!({ "max_tokens": 8, "messages": [{ "role": "user", "content": "ping" }] });
-    invoke_model(ctx, &model, &request, Duration::from_secs(30)).await.map(|_| ())
+    Ok(())
 }
 
 #[cfg(test)]
@@ -816,32 +670,6 @@ aws_session_token=tok
         assert!(!valid_mfa_code("12345"));
         assert!(!valid_mfa_code("12345a"));
         assert!(!valid_mfa_code("１２３４５６"));
-    }
-
-    #[test]
-    fn suggested_models_are_valid_ids() {
-        let list = suggested_models();
-        assert_eq!(list, ["global.anthropic.claude-haiku-5-5", "global.anthropic.claude-sonnet-5-5", "global.anthropic.claude-opus-5-5"]);
-        assert!(list.iter().all(|m| valid_model_id(m)));
-    }
-
-    #[test]
-    fn keeps_only_global_claude_profiles() {
-        let ids = ["us.anthropic.claude-x", "global.anthropic.claude-b", "global.amazon.nova", "global.anthropic.claude-a", "global.anthropic.claude-b"]
-            .map(String::from)
-            .to_vec();
-        assert_eq!(global_claude_ids(ids), ["global.anthropic.claude-a", "global.anthropic.claude-b"]);
-        assert!(global_claude_ids(Vec::new()).is_empty());
-    }
-
-    #[test]
-    fn model_id_accepts_ids_and_arns_only() {
-        assert!(valid_model_id("us.anthropic.claude-sonnet-4-5-20250929-v1:0"));
-        assert!(valid_model_id("arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.x-v1:0"));
-        assert!(!valid_model_id(""));
-        assert!(!valid_model_id("a b"));
-        assert!(!valid_model_id("a\nb"));
-        assert!(!valid_model_id(&"a".repeat(257)));
     }
 
     #[test]

@@ -38,7 +38,10 @@ function maskEnv(text: string): string | null {
  */
 export default function ClaudeSettingsEditor() {
   const t = useT();
+  // 実際に使われる内容(自分の保存があればそれ、なければ全体設定)。`own`が空なら全体設定を利用している
   const [saved, setSaved] = useState<string | null>(null);
+  const [own, setOwn] = useState("");
+  const [shared, setShared] = useState("");
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -49,8 +52,11 @@ export default function ClaudeSettingsEditor() {
   const load = useCallback(async () => {
     try {
       const s = await getSandboxClaudeSettings();
-      setSaved(s);
-      setDraft(s);
+      const effective = s.own.trim() ? s.own : s.shared;
+      setOwn(s.own);
+      setShared(s.shared);
+      setSaved(effective);
+      setDraft(effective);
       setError(null);
     } catch (e) {
       toast.error(reportError(e));
@@ -66,10 +72,30 @@ export default function ClaudeSettingsEditor() {
     setBusy(true);
     try {
       await setSandboxClaudeSettings(draft);
-      setSaved(draft.trim());
-      setDraft(draft.trim());
-      setError(null);
+      // 全体設定と同じ内容、または空は、全体設定を利用する状態になる(個別設定を持たない)
+      await load();
       toast.success(t("保存しました。次の指示から反映されます。"));
+    } catch (e) {
+      setError(reportError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 個別設定をやめて全体設定を利用する(以後は全体設定の変更に追従する)。 */
+  const switchToShared = async () => {
+    const yes = await ask(t("このエージェント専用の settings.json を破棄して、全体設定の settings.json を利用します。よろしいですか?"), {
+      title: t("全体設定を利用"),
+      kind: "warning",
+      okLabel: t("利用する"),
+      cancelLabel: t("キャンセル"),
+    });
+    if (!yes) return;
+    setBusy(true);
+    try {
+      await setSandboxClaudeSettings("");
+      await load();
+      toast.success(t("全体設定を利用します。"));
     } catch (e) {
       setError(reportError(e));
     } finally {
@@ -93,6 +119,7 @@ export default function ClaudeSettingsEditor() {
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
         <span className="hud-label">Claude Code settings.json</span>
+        {saved !== null && <Badge variant={own.trim() ? "secondary" : "outline"}>{own.trim() ? t("個別設定") : t("全体設定を利用")}</Badge>}
         {dirty && <Badge variant="secondary">{t("未保存の変更")}</Badge>}
       </div>
       <Textarea
@@ -116,6 +143,11 @@ export default function ClaudeSettingsEditor() {
         <Button size="sm" variant="outline" disabled={busy} onClick={() => void reload()}>
           {t("再読み込み")}
         </Button>
+        {own.trim() !== "" && (
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => void switchToShared()}>
+            {t("全体設定を利用")}
+          </Button>
+        )}
         {(masked !== null || (revealed && maskEnv(draft) !== null)) && (
           <Button size="sm" variant="outline" onClick={() => setRevealed((v) => !v)}>
             {revealed ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
@@ -123,7 +155,7 @@ export default function ClaudeSettingsEditor() {
           </Button>
         )}
       </div>
-      {saved !== null && saved.trim() === "" && (
+      {saved !== null && saved.trim() === "" && shared.trim() === "" && (
         <div className="flex flex-col gap-2 border border-amber-500/40 bg-amber-500/5 p-2 text-xs">
           <p>{t("settings.json が空のため、Bash・Read などのツールは許可されていません(指示を実行しても、ツールを使えません)。許可するツールを書いた雛形を入れてから、保存してください。")}</p>
           <div>
@@ -133,6 +165,9 @@ export default function ClaudeSettingsEditor() {
           </div>
         </div>
       )}
+      <p className="text-xs text-muted-foreground">
+        {own.trim() ? t("このエージェント専用の内容です。全体設定が変わっても更新されません。") : t("全体設定の内容を利用しています。全体設定が変わると、次の指示から自動で反映されます。編集して保存すると、このエージェント専用の個別設定になります。")}
+      </p>
       {masked !== null && <p className="text-xs text-muted-foreground">{t("env の値は伏せています。編集するには「値を表示して編集」を押してください。")}</p>}
       {error && <p className="text-xs text-destructive">{error}</p>}
       <p className="text-xs text-muted-foreground">

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import ModelPicker from "./ModelPicker";
 import { cn } from "@/lib/utils";
-import type { KeyStatus, ModelInfo, Route } from "@/lib/api";
+import type { ModelInfo, ModelKeyStatus, Route } from "@/lib/api";
 
 export type MicState = "idle" | "starting" | "recording" | "transcribing" | "standby";
 
@@ -31,7 +31,7 @@ type Props = {
   onStop: () => void;
   /** モデルの選択。サンドボックスでは、settings.json で許可したモデル(名前の文字列)から選ぶ。 */
   model:
-    | { kind: "app"; route: Route | null; models: ModelInfo[]; keyStatus: Partial<KeyStatus>; onChange: (route: Route) => void }
+    | { kind: "app"; route: Route | null; models: ModelInfo[]; keyStatus: ModelKeyStatus; onChange: (route: Route) => void }
     | { kind: "sandbox"; models: string[]; selected: string | null; onChange: (model: string) => void };
 };
 

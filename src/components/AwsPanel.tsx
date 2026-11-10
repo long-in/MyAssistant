@@ -1,21 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, Download, Eye, EyeOff, FolderOpen, KeyRound, Loader2, Plug, Plus, Trash2, X } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, FolderOpen, KeyRound, Loader2, Plug, Trash2 } from "lucide-react";
 import { StatusPill, UsedBy, linkCardClass } from "@/components/GlobalPanels";
 import { toast } from "sonner";
 import { useT } from "@/lib/i18n";
 import {
   type AwsStatus,
-  addAwsModel,
   deleteApiKey,
   type AwsProfile,
-  fetchAwsModels,
   getAwsFiles,
   getAwsStatus,
   previewAwsConfig,
   revealSecretsFile,
-  removeAwsModel,
   reportError,
   saveAwsConfig,
   selectAwsProfile,
@@ -23,7 +20,6 @@ import {
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -52,9 +48,7 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
   const [reveal, setReveal] = useState(false);
   const [preview, setPreview] = useState<AwsProfile[]>([]);
   const [chosen, setChosen] = useState("");
-  const [modelInput, setModelInput] = useState("");
-  const [fetched, setFetched] = useState<string[] | null>(null);
-  const [busy, setBusy] = useState<"save" | "test" | "delete" | "model" | "fetch" | null>(null);
+  const [busy, setBusy] = useState<"save" | "test" | "delete" | null>(null);
 
   const refresh = useCallback(
     () =>
@@ -197,7 +191,7 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
             variant="outline"
             size="sm"
             disabled={busy !== null}
-            onClick={() => run("test", testAwsConnection, t("Bedrockに接続できました。"))}
+            onClick={() => run("test", testAwsConnection, t("AWSの認証に成功しました。"))}
           >
             {busy === "test" ? <Loader2 className="animate-spin" /> : <Plug />}
             {busy === "test" ? t("確認中…") : t("接続テスト")}
@@ -214,118 +208,9 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
       )}
 
       {registered && (
-        <div className="mt-3 flex flex-col gap-2 pl-5">
-          <div className="text-xs text-muted-foreground">{t("使うモデル(モデルID・推論プロファイルID・ARN)")}</div>
-          {status.models.length === 0 && (
-            <div className="text-xs text-destructive">{t("モデルが未登録です。追加するとモデル選択に並びます。")}</div>
-          )}
-          <ul className="flex flex-col gap-1">
-            {status.models.map((m) => (
-              <li key={m} className="flex items-center gap-2 rounded-md border px-2 py-1">
-                <span className="min-w-0 flex-1 break-all font-mono text-xs">{m}</span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={t("削除")}
-                  disabled={busy !== null}
-                  onClick={() => run("model", () => removeAwsModel(m))}
-                >
-                  <X />
-                </Button>
-              </li>
-            ))}
-          </ul>
-          <form
-            className="flex gap-2"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              if (await run("model", () => addAwsModel(modelInput))) setModelInput("");
-            }}
-          >
-            <Input
-              autoComplete="off"
-              spellCheck={false}
-              className="font-mono text-xs"
-              placeholder="us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-              value={modelInput}
-              onChange={(e) => setModelInput(e.target.value)}
-            />
-            <Button type="submit" variant="outline" disabled={busy !== null || !modelInput.trim()}>
-              <Plus />
-              {t("追加")}
-            </Button>
-          </form>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={busy !== null}
-              onClick={async () => {
-                setBusy("fetch");
-                try {
-                  setFetched(await fetchAwsModels());
-                } catch (e) {
-                  toast.error(reportError(e));
-                } finally {
-                  setBusy(null);
-                }
-              }}
-            >
-              {busy === "fetch" ? <Loader2 className="animate-spin" /> : <Download />}
-              {busy === "fetch" ? t("取得中…") : t("Bedrockからglobalのモデルを取得")}
-            </Button>
-            {fetched && fetched.filter((m) => !status.models.includes(m)).length === 0 && (
-              <span className="text-xs text-muted-foreground">
-                {fetched.length === 0 ? t("globalのClaudeモデルが見つかりませんでした。") : t("取得したモデルはすべて登録済みです。")}
-              </span>
-            )}
-          </div>
-          {fetched && fetched.filter((m) => !status.models.includes(m)).length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs text-muted-foreground">{t("取得結果:")}</span>
-              {fetched
-                .filter((m) => !status.models.includes(m))
-                .map((m) => (
-                  <Button
-                    key={m}
-                    type="button"
-                    variant="outline"
-                    size="xs"
-                    className="font-mono"
-                    disabled={busy !== null}
-                    onClick={() => run("model", () => addAwsModel(m))}
-                  >
-                    <Plus />
-                    {m}
-                  </Button>
-                ))}
-            </div>
-          )}
-          {status.suggested_models.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs text-muted-foreground">{t("候補:")}</span>
-              {status.suggested_models.map((m) => (
-                <Button
-                  key={m}
-                  type="button"
-                  variant="outline"
-                  size="xs"
-                  className="font-mono"
-                  disabled={busy !== null}
-                  onClick={() => run("model", () => addAwsModel(m))}
-                >
-                  <Plus />
-                  {m}
-                </Button>
-              ))}
-            </div>
-          )}
-          <p className="text-xs text-muted-foreground">
-            {t("実在のIDはAWSコンソール、または aws bedrock list-inference-profiles で確認できます。「接続テスト」は先頭のモデルで確認します。")}
-          </p>
-        </div>
+        <p className="mt-3 pl-5 text-xs text-muted-foreground">
+          {t("Bedrockのモデルは、Sandbox タブの Claude Code の settings.json で決めます。接続テストは、AWSの認証(MFA・ロールの引き受け)が通るかを確かめます。")}
+        </p>
       )}
 
       {open && (

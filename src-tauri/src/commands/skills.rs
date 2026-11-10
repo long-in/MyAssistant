@@ -36,7 +36,7 @@ pub async fn list_skills(ctx: Ctx) -> Result<SkillsOverview, AppError> {
     let root = batch::knowledge_root(&ctx)?;
     skills_migration::migrate_with_names(&ctx, &root).await;
     let skills = skills::list(&root);
-    let index_tokens = skills::index_tokens(&prompts::load(&ctx.db, PromptId::Skills)?, &skills);
+    let index_tokens = skills::index_tokens(&prompts::load(&ctx.db, &*ctx.global, PromptId::Skills)?, &skills);
     Ok(SkillsOverview { skills, index_tokens })
 }
 

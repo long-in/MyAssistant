@@ -98,6 +98,13 @@ pub const ALL: &[Setting] = &[
     agent(skills::ROUTE_KEY, None),
     // ---- 全体設定 ----
     global(chat::BASE_INSTRUCTIONS_KEY, Some(Kind::Text)),
+    // 全体設定のプロンプト(チャット以外)と Claude Code の settings.json。エージェントが上書きしていなければ、これが使われる
+    global(prompts::GLOBAL_SUMMARY_KEY, Some(Kind::Text)),
+    global(prompts::GLOBAL_PROOFREAD_KEY, Some(Kind::Text)),
+    global(prompts::GLOBAL_ORGANIZE_KEY, Some(Kind::Text)),
+    global(prompts::GLOBAL_SKILLS_KEY, Some(Kind::Text)),
+    global(prompts::GLOBAL_SUGGEST_KEY, Some(Kind::Text)),
+    global(sandbox_agent::SHARED_CLAUDE_SETTINGS_KEY, Some(Kind::Json)),
     global(global_settings::OS_NOTIFICATIONS_KEY, Some(Kind::Flag)),
     global(global_settings::LANGUAGE_KEY, Some(Kind::OneOf(&["ja", "en"]))),
     global(tuning::VOICE_KEY, Some(Kind::Json)),
