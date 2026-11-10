@@ -3,7 +3,7 @@ import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, AudioLines, Bot, Brain, Check, Container, ChevronDown, Download, KeyRound, Loader2, Pencil, Play, Plug, Plus, ShieldCheck, Square, Trash2, Upload, X } from "lucide-react";
+import { ArrowRight, AudioLines, Bot, Brain, Check, Container, ChevronDown, Download, KeyRound, Loader2, Pencil, Play, Plus, ShieldCheck, Square, Trash2, Upload, X } from "lucide-react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -1265,17 +1265,16 @@ export default function Setup() {
           }
         />
 
-        <Tabs defaultValue="ai" className="gap-6">
+        <Tabs defaultValue="llm" className="gap-6">
           <TabsList variant="line" className="w-full justify-start overflow-x-auto border-b pb-1">
-            <TabsTrigger value="ai" className="flex-none gap-1.5 px-3"><Plug className="size-3.5" />{t("AI接続")}</TabsTrigger>
-            <TabsTrigger value="behavior" className="flex-none gap-1.5 px-3"><Brain className="size-3.5" />{t("AIの動作")}</TabsTrigger>
+            <TabsTrigger value="llm" className="flex-none gap-1.5 px-3"><Brain className="size-3.5" />LLM</TabsTrigger>
             <TabsTrigger value="voice" className="flex-none gap-1.5 px-3"><AudioLines className="size-3.5" />{t("音声")}</TabsTrigger>
             {active.id !== LEADER_ID && <TabsTrigger value="access" className="flex-none gap-1.5 px-3"><ShieldCheck className="size-3.5" />{t("権限")}</TabsTrigger>}
             {active.id !== LEADER_ID && <TabsTrigger value="sandbox" className="flex-none gap-1.5 px-3"><Container className="size-3.5" />Sandbox</TabsTrigger>}
-            <TabsTrigger value="agent" className="flex-none gap-1.5 px-3"><Bot className="size-3.5" />{t("エージェント")}</TabsTrigger>
+            <TabsTrigger value="agent" className="flex-none gap-1.5 px-3"><Bot className="size-3.5" />{t("その他")}</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="ai" className="flex flex-col gap-6">
+          <TabsContent value="llm" className="flex flex-col gap-6">
           <section className="hud-panel hud-accent px-5 py-4">
               <Heading title="AI Link" help={t("AIの接続")} status={<StatusPill on={linked > 0}>{linked} / {PROVIDERS.length}</StatusPill>}>
                 <p>{t("使いたいAIのAPIキーを登録します。全部は不要で、1つ以上あれば使えます。")}</p>
@@ -1304,64 +1303,28 @@ export default function Setup() {
             </div>
           </section>
           {active.id === LEADER_ID && <LeaderKeyCopy onCopied={refresh} />}
-
+          {active.id !== LEADER_ID && <TuningPanel
+            title="Limits"
+            help={t("検索回数などの上限")}
+            helpBody={
+              <>
+                <p>{t("AIが1回の依頼で使う量の上限です。")}</p>
+                <ul>
+                  <li>{t("Web検索とページ取得の回数は、Web Searchがオンのときだけ使われます。")}</li>
+                  <li>{t("次の送信から反映されます。")}</li>
+                </ul>
+              </>
+            }
+            fields={TASK_FIELDS}
+            load={getTuning}
+            store={setTuning}
+            defaults={DEFAULT_TUNING}
+          />}
+          <AiSettings keyStatus={status} leader={active.id === LEADER_ID} />
+          {active.id === LEADER_ID ? <><LeaderPrompt /><LeaderLimit /></> : active.id !== PERSONAL_ID && <AgentData />}
           </TabsContent>
 
           <TabsContent value="voice" className="flex flex-col gap-6">
-          {/* 読み上げ(出力) */}
-          <section className="hud-panel hud-accent px-5 py-4">
-            <Heading title="Voice Output" help={t("読み上げ")} status={<StatusPill on={speechReady}>{ttsEngine === "voicevox" ? "VOICEVOX" : "Google Cloud"}</StatusPill>}>
-              <p>{t("応答の読み上げ(Text-to-Speech)です。Google Cloudはキーが必要で課金対象、VOICEVOXは端末内で合成し無料です。")}</p>
-              <ul>
-                <li>{t("Google Cloud ConsoleでCloud Text-to-Speech API(認識も使うならCloud Speech-to-Text API)の有効化が必要です。")}</li>
-                <li>{t("音声認識にGoogleを選ぶと録音音声がGoogleへ送信され、課金対象になります。")}</li>
-              </ul>
-            </Heading>
-            <div className="flex flex-col gap-2">
-            <KeyRow
-              card
-              title="Google Cloud"
-              description={t("読み上げ・音声認識用のAPIキー")}
-              registered={ttsReady}
-              busy={busy === "tts"}
-              onSave={(k) => run("tts", () => saveTtsKey(k), t("APIキーを保存しました。"))}
-              onDelete={() =>
-                run("tts", async () => {
-                  await deleteTtsKey();
-                  if (sttEngine === "google") await setSttEngine("local"); // キーがないGoogle認識は使えない
-                })
-              }
-            />
-            </div>
-            <div className="flex items-center gap-3 border-t py-3">
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium">{t("読み上げエンジン")}</div>
-                <div className="text-xs text-muted-foreground">{t("Google Cloudはクラウドで合成し、課金対象です。VOICEVOXは端末内で合成し、無料です。")}</div>
-              </div>
-              <select
-                aria-label={t("読み上げエンジン")}
-                className="h-9 rounded-md border bg-background px-2 text-sm"
-                value={ttsEngine}
-                disabled={busy === "tts-engine"}
-                onChange={(e) => {
-                  const engine = e.target.value as TtsEngine;
-                  run("tts-engine", () => setTtsEngine(engine));
-                }}
-              >
-                <option value="google">Google Cloud</option>
-                <option value="voicevox">VOICEVOX</option>
-              </select>
-            </div>
-            <VoicevoxPanel
-              installed={vvInstalled}
-              style={vvStyle}
-              onChanged={refresh}
-              onStyle={(id) => run("vv-style", () => setVoicevoxStyle(id))}
-            />
-            <VoicePhrases ready={speechReady} engine={ttsEngine} style={vvStyle} />
-            <PronunciationDictionary />
-          </section>
-
           {/* 音声認識(入力) */}
           <section className="hud-panel hud-accent px-5 py-4">
             <Heading title="Voice Input" help={t("音声認識")} status={<StatusPill on>{sttEngine === "local" ? t("ローカル (Whisper)") : sttEngine === "google" ? "Google Cloud" : "Aqua Voice"}</StatusPill>}>
@@ -1458,29 +1421,62 @@ export default function Setup() {
             </Heading>
             <ModelSourcesPanel onChanged={refresh} />
           </section>
+          {/* 読み上げ(出力) */}
+          <section className="hud-panel hud-accent px-5 py-4">
+            <Heading title="Voice Output" help={t("読み上げ")} status={<StatusPill on={speechReady}>{ttsEngine === "voicevox" ? "VOICEVOX" : "Google Cloud"}</StatusPill>}>
+              <p>{t("応答の読み上げ(Text-to-Speech)です。Google Cloudはキーが必要で課金対象、VOICEVOXは端末内で合成し無料です。")}</p>
+              <ul>
+                <li>{t("Google Cloud ConsoleでCloud Text-to-Speech API(認識も使うならCloud Speech-to-Text API)の有効化が必要です。")}</li>
+                <li>{t("音声認識にGoogleを選ぶと録音音声がGoogleへ送信され、課金対象になります。")}</li>
+              </ul>
+            </Heading>
+            <div className="flex flex-col gap-2">
+            <KeyRow
+              card
+              title="Google Cloud"
+              description={t("読み上げ・音声認識用のAPIキー")}
+              registered={ttsReady}
+              busy={busy === "tts"}
+              onSave={(k) => run("tts", () => saveTtsKey(k), t("APIキーを保存しました。"))}
+              onDelete={() =>
+                run("tts", async () => {
+                  await deleteTtsKey();
+                  if (sttEngine === "google") await setSttEngine("local"); // キーがないGoogle認識は使えない
+                })
+              }
+            />
+            </div>
+            <div className="flex items-center gap-3 border-t py-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">{t("読み上げエンジン")}</div>
+                <div className="text-xs text-muted-foreground">{t("Google Cloudはクラウドで合成し、課金対象です。VOICEVOXは端末内で合成し、無料です。")}</div>
+              </div>
+              <select
+                aria-label={t("読み上げエンジン")}
+                className="h-9 rounded-md border bg-background px-2 text-sm"
+                value={ttsEngine}
+                disabled={busy === "tts-engine"}
+                onChange={(e) => {
+                  const engine = e.target.value as TtsEngine;
+                  run("tts-engine", () => setTtsEngine(engine));
+                }}
+              >
+                <option value="google">Google Cloud</option>
+                <option value="voicevox">VOICEVOX</option>
+              </select>
+            </div>
+            <VoicevoxPanel
+              installed={vvInstalled}
+              style={vvStyle}
+              onChanged={refresh}
+              onStyle={(id) => run("vv-style", () => setVoicevoxStyle(id))}
+            />
+            <VoicePhrases ready={speechReady} engine={ttsEngine} style={vvStyle} />
+            <PronunciationDictionary />
+          </section>
+
           </TabsContent>
 
-          <TabsContent value="behavior" className="flex flex-col gap-6">
-          {active.id === LEADER_ID ? <><LeaderPrompt /><LeaderLimit /></> : active.id !== PERSONAL_ID && <AgentData />}
-          {active.id !== LEADER_ID && <TuningPanel
-            title="Limits"
-            help={t("検索回数などの上限")}
-            helpBody={
-              <>
-                <p>{t("AIが1回の依頼で使う量の上限です。")}</p>
-                <ul>
-                  <li>{t("Web検索とページ取得の回数は、Web Searchがオンのときだけ使われます。")}</li>
-                  <li>{t("次の送信から反映されます。")}</li>
-                </ul>
-              </>
-            }
-            fields={TASK_FIELDS}
-            load={getTuning}
-            store={setTuning}
-            defaults={DEFAULT_TUNING}
-          />}
-          <AiSettings keyStatus={status} leader={active.id === LEADER_ID} />
-          </TabsContent>
 
           {active.id !== LEADER_ID && (
             <TabsContent value="access" className="flex flex-col gap-6">
