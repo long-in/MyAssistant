@@ -16,6 +16,9 @@ import SandboxEnvEditor from "@/components/SandboxEnvEditor";
 import ClaudeSettingsEditor from "@/components/ClaudeSettingsEditor";
 import SandboxTimeout from "@/components/SandboxTimeout";
 
+/** イメージを再ビルドしたあと、まだコンテナを作り直していないエージェントのID(画面を離れても覚えておく)。 */
+const staleContainers = new Set<string>();
+
 /**
  * エージェントごとのサンドボックス(専用のDockerコンテナの中で Claude Code が作業する)の準備(イメージのビルド→コンテナの起動)と設定、Dockerfile・環境変数の確認。
  * ワークのエージェントは常にサンドボックスで動くので、切り替えは無い(Claude Code の設定は下の settings.json と上限時間)。
@@ -24,6 +27,17 @@ import SandboxTimeout from "@/components/SandboxTimeout";
 export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
   const t = useT();
   const [status, setStatus] = useState<SandboxStatus | null>(null);
+  const [dockerfileDirty, setDockerfileDirty] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [containerStale, setContainerStaleState] = useState(() => staleContainers.has(workspaceId));
+  const setContainerStale = useCallback(
+    (v: boolean) => {
+      if (v) staleContainers.add(workspaceId);
+      else staleContainers.delete(workspaceId);
+      setContainerStaleState(v);
+    },
+    [workspaceId],
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -45,6 +59,18 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
       cancelled = true;
     };
   }, []);
+
+  // 共通の Dockerfile を別の画面で変えて戻ってきたときなど、画面に戻ったら状態を読み直す
+  useEffect(() => {
+    const onFocus = () => void refresh();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refresh]);
+
+  const editDockerfile = () => {
+    setDetailsOpen(true);
+    setTimeout(() => document.getElementById("sandbox-dockerfile")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  };
 
   return (
     <section className="hud-panel hud-accent flex flex-col gap-4 px-5 py-4">
@@ -68,25 +94,42 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
       </div>
 
       <div className="flex flex-col gap-4 border-t pt-4">
-        <SandboxSteps workspaceId={workspaceId} status={status} onChange={refresh} />
+        <SandboxSteps
+          workspaceId={workspaceId}
+          status={status}
+          onChange={refresh}
+          dockerfileDirty={dockerfileDirty}
+          containerStale={containerStale}
+          onRebuilt={() => setContainerStale(true)}
+          onContainerRefreshed={() => setContainerStale(false)}
+          onEditDockerfile={editDockerfile}
+        />
 
-        <div className="border-t pt-4">
-          <SandboxAgentSettings key={workspaceId} />
-        </div>
+        <details open={detailsOpen} onToggle={(e) => setDetailsOpen(e.currentTarget.open)} className="group border-t pt-4">
+          <summary className="hud-label cursor-pointer select-none">{t("詳細設定(任意)")}</summary>
+          <p className="mt-2 text-xs text-muted-foreground">
+            {t("Dockerfile を変更したときは、上のチェックリストで ② イメージのビルド → ③ コンテナの起動 をやり直してください。環境変数・settings.json・上限時間の変更は、次の指示から有効になります(やり直しは不要です)。")}
+          </p>
+          <div className="mt-4 flex flex-col gap-4">
+            <SandboxAgentSettings key={workspaceId} />
 
-        <SandboxDockerfile key={workspaceId} agent={{ id: workspaceId }} embedded onChange={refresh} />
+            <div id="sandbox-dockerfile" className="scroll-mt-4">
+              <SandboxDockerfile key={workspaceId} agent={{ id: workspaceId }} embedded onChange={refresh} onDirtyChange={setDockerfileDirty} />
+            </div>
 
-        <div className="border-t pt-4">
-          <SandboxEnvEditor key={workspaceId} />
-        </div>
+            <div className="border-t pt-4">
+              <SandboxEnvEditor key={workspaceId} />
+            </div>
 
-        <div className="border-t pt-4">
-          <SandboxTimeout key={workspaceId} />
-        </div>
+            <div className="border-t pt-4">
+              <SandboxTimeout key={workspaceId} />
+            </div>
 
-        <div className="border-t pt-4">
-          <ClaudeSettingsEditor key={workspaceId} />
-        </div>
+            <div className="border-t pt-4">
+              <ClaudeSettingsEditor key={workspaceId} />
+            </div>
+          </div>
+        </details>
       </div>
     </section>
   );

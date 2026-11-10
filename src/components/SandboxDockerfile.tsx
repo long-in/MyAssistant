@@ -11,7 +11,6 @@ import {
   type DockerfileState,
   type SandboxBuildProgress,
   type SandboxImageStatus,
-  buildAgentSandboxImage,
   buildSandboxImage,
   getAgentSandboxDockerfile,
   getSandboxDockerfile,
@@ -38,7 +37,18 @@ import { Heading, StatusPill } from "@/components/GlobalPanels";
  * 画面内で編集して保存するか、Finderで開いて外部のエディタで編集する(どちらも同じファイル)。
  * 保存したら、Sandbox 設定でイメージを再ビルドし、コンテナを作り直す(チャットは、準備が済むまで使えない)。
  */
-export default function SandboxDockerfile({ agent, embedded, onChange }: { agent?: { id: string }; embedded?: boolean; onChange?: () => void }) {
+export default function SandboxDockerfile({
+  agent,
+  embedded,
+  onChange,
+  onDirtyChange,
+}: {
+  agent?: { id: string };
+  embedded?: boolean;
+  onChange?: () => void;
+  /** 未保存の変更の有無が変わったとき(チェックリストの警告に使う)。 */
+  onDirtyChange?: (dirty: boolean) => void;
+}) {
   const t = useT();
   const scope = agent?.id ?? "shared";
   const [saved, setSaved] = useState<string | null>(null);
@@ -53,7 +63,8 @@ export default function SandboxDockerfile({ agent, embedded, onChange }: { agent
   const dirtyRef = useRef(false);
   useEffect(() => {
     dirtyRef.current = dirty;
-  }, [dirty]);
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -140,20 +151,8 @@ export default function SandboxDockerfile({ agent, embedded, onChange }: { agent
         }
         setSaved(draft);
       },
-      t("Dockerfile を保存しました。イメージを再ビルドしてください。"),
+      t("Dockerfile を保存しました。チェックリストで、②イメージのビルド → ③コンテナの起動 をやり直してください。"),
     );
-
-  const reload = async () => {
-    const ok =
-      !dirty ||
-      (await ask(t("編集中の内容は破棄されます。ファイルから読み込み直しますか?"), {
-        title: t("再読み込み"),
-        kind: "warning",
-        okLabel: t("読み込む"),
-        cancelLabel: t("キャンセル"),
-      }));
-    if (ok) await load();
-  };
 
   const reset = async () => {
     const yes = await ask(t("Dockerfile を標準の内容で上書きします。編集した内容は失われます。続行しますか?"), {
@@ -191,11 +190,11 @@ export default function SandboxDockerfile({ agent, embedded, onChange }: { agent
       >
         {agent ? (
           <>
-            <p>{t("専用の Dockerfile を登録すると、このエージェントだけ、共通ではなく専用のイメージを使います。登録がなければ共通の Dockerfile を使います。")}</p>
+            <p>{t("専用の Dockerfile を作ると、このエージェントだけ、共通ではなく専用のイメージを使います。なければ共通の Dockerfile を使います。")}</p>
             <ul>
               <li>{t("登録すると、共通の Dockerfile の内容がコピーされます。以後、共通を変更しても専用には反映されません。")}</li>
-              <li>{t("画面で編集して保存するか、「ファイルを表示」で外部のエディタで編集できます(同じファイルです)。")}</li>
-              <li>{t("登録・編集・解除をしたら、上の手順でイメージを再ビルドし、コンテナを作り直してください。専用ボリュームは残ります。")}</li>
+              <li>{t("画面で編集して保存するか、「Finder で開く」で外部のエディタで編集できます(同じファイルです)。")}</li>
+              <li>{t("作成・編集・解除をしたら、上の手順でイメージを再ビルドし、コンテナを作り直してください。専用ボリュームは残ります。")}</li>
               <li>{t("ユーザー agent、sh、setsid(util-linux)、/workspace と /home/agent が必要です。")}</li>
             </ul>
           </>
@@ -203,7 +202,7 @@ export default function SandboxDockerfile({ agent, embedded, onChange }: { agent
           <>
             <p>{t("すべてのエージェントのコンテナは、このDockerfileから作る共通のイメージを使います。ただし、専用の Dockerfile を登録したエージェントは、そちらを優先します。")}</p>
             <ul>
-              <li>{t("画面で編集して保存するか、「ファイルを表示」で外部のエディタで編集できます(同じファイルです)。")}</li>
+              <li>{t("画面で編集して保存するか、「Finder で開く」で外部のエディタで編集できます(同じファイルです)。")}</li>
               <li>{t("保存したら、イメージを再ビルドし、各エージェントのコンテナを作り直してください(エージェントの Sandbox 設定の手順で行います)。専用ボリュームは残ります。")}</li>
               <li>{t("必要なツール(AWS CLI など)はここに入れます。エージェントごとの違いは sandbox.env か、エージェント専用の Dockerfile で与えます。")}</li>
               <li>{t("ユーザー agent、sh、setsid(util-linux)、/workspace と /home/agent が必要です。")}</li>
@@ -219,11 +218,14 @@ export default function SandboxDockerfile({ agent, embedded, onChange }: { agent
         ) : (
           <Badge variant="outline">{state === "edited" ? t("編集済み") : state === "template" ? t("標準") : t("未作成")}</Badge>
         )}
-        <StatusPill on={ready?.docker === "ready"}>{dockerLabel}</StatusPill>
+        {/* Docker の状態と更新は、エージェントの画面では上のチェックリスト(①)が示すので出さない */}
+        {!embedded && <StatusPill on={ready?.docker === "ready"}>{dockerLabel}</StatusPill>}
         {dirty && <Badge variant="secondary">{t("未保存の変更")}</Badge>}
-        <Button size="icon-sm" variant="ghost" onClick={() => void refreshStatus()} aria-label={t("状態を更新")}>
-          <RefreshCw className="size-3.5" />
-        </Button>
+        {!embedded && (
+          <Button size="icon-sm" variant="ghost" onClick={() => void refreshStatus()} aria-label={t("状態を更新")}>
+            <RefreshCw className="size-3.5" />
+          </Button>
+        )}
       </div>
 
       <Textarea
@@ -239,15 +241,16 @@ export default function SandboxDockerfile({ agent, embedded, onChange }: { agent
       <div className="flex flex-wrap items-center gap-2">
         {agent && !registered && (
           <Button size="sm" disabled={!!busy || saved === null} onClick={() => void register()}>
-            {t("専用の Dockerfile を登録")}
+            {t("専用の Dockerfile を作る")}
           </Button>
         )}
-        {registered && (
+        {/* 保存と取り消しは、編集して変更があるときだけ出す。取り消しはファイルから読み直す(外部のエディタでの保存も取り込む) */}
+        {dirty && (
           <>
-            <Button size="sm" disabled={!dirty || !!busy} onClick={() => void save()}>
+            <Button size="sm" disabled={!!busy} onClick={() => void save()}>
               {t("保存")}
             </Button>
-            <Button size="sm" variant="outline" disabled={!dirty || !!busy} onClick={() => setDraft(saved ?? "")}>
+            <Button size="sm" variant="outline" disabled={!!busy} onClick={() => void load()}>
               {t("変更を破棄")}
             </Button>
           </>
@@ -255,29 +258,26 @@ export default function SandboxDockerfile({ agent, embedded, onChange }: { agent
         {registered && (
           <Button size="sm" variant="outline" disabled={!!busy} onClick={() => void run("reveal", () => revealSandboxFile(agent ? "agent_dockerfile" : "dockerfile"))}>
             <FileText className="size-3.5" />
-            {t("ファイルを表示")}
+            {t("Finder で開く")}
           </Button>
         )}
-        <Button size="sm" variant="outline" disabled={!!busy} onClick={() => void reload()}>
-          {t("再読み込み")}
-        </Button>
-        {agent ? (
-          registered && (
-            <Button size="sm" variant="outline" disabled={!!busy} onClick={() => void unregister()}>
-              {t("登録を解除")}
-            </Button>
-          )
-        ) : (
-          <Button size="sm" variant="outline" disabled={!!busy || state === "template"} onClick={() => void reset()}>
-            {t("標準に戻す")}
-          </Button>
-        )}
+        {agent
+          ? registered && (
+              <Button size="sm" variant="outline" disabled={!!busy} onClick={() => void unregister()}>
+                {t("専用をやめて共通を使う")}
+              </Button>
+            )
+          : state !== "template" && (
+              <Button size="sm" variant="outline" disabled={!!busy} onClick={() => void reset()}>
+                {t("標準に戻す")}
+              </Button>
+            )}
         {!agent && (
           <Button
             size="sm"
             variant="outline"
             disabled={ready?.docker !== "ready" || !!busy || dirty || building}
-            onClick={() => void run("build", () => (agent ? buildAgentSandboxImage(false) : buildSandboxImage(false)), t("イメージを準備しました。"))}
+            onClick={() => void run("build", () => buildSandboxImage(false), t("イメージを準備しました。"))}
           >
             {building ? <Loader2 className="size-3.5 animate-spin" /> : null}
             {t("イメージをビルド")}
