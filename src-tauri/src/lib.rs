@@ -88,7 +88,6 @@ pub fn run() {
       commands::chat::set_tuning,
       commands::chat::set_web_access,
       commands::sandbox::get_sandbox_enabled,
-      commands::sandbox::set_sandbox_enabled,
       commands::sandbox::get_sandbox_status,
       commands::sandbox::get_sandbox_files,
       commands::sandbox::get_sandbox_env,

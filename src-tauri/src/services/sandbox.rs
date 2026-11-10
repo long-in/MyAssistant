@@ -94,6 +94,12 @@ pub fn is_supported(id: &str) -> bool {
     id == PERSONAL_ID || (id != LEADER_ID && !id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'))
 }
 
+/// そのエージェントの作業をコンテナで行うか。ワークのエージェントは常にコンテナで動く。
+/// パーソナルはホストで動き、リーダーはコマンドを実行しないので対象外。
+pub fn runs_in_sandbox(id: &str) -> bool {
+    id != PERSONAL_ID && is_supported(id)
+}
+
 /// 新しいコンテナの名前。エージェントとの対応は名前ではなくラベル(`myassistant.agent`)で持ち、画面で確認できる。
 fn new_container_name() -> String {
     let random: String = uuid::Uuid::new_v4().simple().to_string().chars().take(8).collect();
@@ -942,9 +948,9 @@ pub struct Request<'a> {
     pub timeout: Duration,
 }
 
-/// 渡す環境変数(`sandbox.env`とAWSの一時キー)。同じ名前は`sandbox.env`が優先。
+/// 渡す環境変数(アプリに登録したAPIキー・AWSの一時キー・`sandbox.env`)。同じ名前は後のものが優先(`sandbox.env`が最優先)。
 pub(crate) async fn env_for(ctx: &WorkspaceCtx) -> Result<BTreeMap<String, String>, String> {
-    let mut vars = BTreeMap::new();
+    let mut vars = ctx.secrets.sandbox_env().map_err(|e| e.to_string())?;
     if ctx.secrets.has_aws().unwrap_or(false) {
         let pairs = aws::env_pairs(ctx).await.map_err(|e| format!("AWSの認証情報を取得できませんでした: {e}"))?;
         vars.extend(pairs);

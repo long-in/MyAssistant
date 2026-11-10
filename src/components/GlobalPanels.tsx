@@ -16,7 +16,7 @@ import HelpDrawer from "@/components/HelpDrawer";
 import BackupPasswordModal from "@/components/BackupPasswordModal";
 import { ensureOsPermission, osNotificationsEnabled, setOsNotificationsEnabled, syncOsNotifications } from "@/lib/osNotify";
 import NotePanel from "@/components/NotePanel";
-import { getSandboxEnabled, setSandboxEnabled, getSharedData, saveSharedData, LEADER_COLOR, LEADER_ID, createLeader, errorMessage, leaderExists, setWorkEnabled, workEnabled, setGlobalLanguage, getProxies, saveProxy, deleteProxy, setDefaultProxy, getProxyChoice, setProxyChoice, type ProxyList, type ProxyEntry, backupCreate, restorePrepare, restoreApply, restoreDiscard, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, getBatchInterval, setBatchInterval, type WakeConfig, reportError, type AppError, saveBaseInstructions, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
+import { getSharedData, saveSharedData, LEADER_COLOR, LEADER_ID, createLeader, errorMessage, leaderExists, setWorkEnabled, workEnabled, setGlobalLanguage, getProxies, saveProxy, deleteProxy, setDefaultProxy, getProxyChoice, setProxyChoice, type ProxyList, type ProxyEntry, backupCreate, restorePrepare, restoreApply, restoreDiscard, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, getBatchInterval, setBatchInterval, type WakeConfig, reportError, type AppError, saveBaseInstructions, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
 
 /** 見出しの左に出すアイコン(英字の見出しごと)。無いものは歯車。 */
 const HEADING_ICONS: Record<string, LucideIcon> = {
@@ -358,43 +358,6 @@ export function OsNotifications() {
           {t("アプリが背面にあるときや、ウィンドウを閉じているときに、ほかのエージェントの承認待ち・完了・失敗を、macOSの通知でも知らせます。")}
         </span>
         <Switch checked={on} onCheckedChange={(v) => void change(v)} />
-      </label>
-    </section>
-  );
-}
-
-/** コマンドをDockerコンテナで実行するか。全体設定で、有効なら全エージェント(パーソナルを含む)が対象。 */
-export function SandboxSwitch() {
-  const t = useT();
-  const [on, setOn] = useState<boolean | null>(null);
-  useEffect(() => {
-    getSandboxEnabled().then(setOn).catch((e) => toast.error(reportError(e)));
-  }, []);
-  const change = async (next: boolean) => {
-    setOn(next);
-    try {
-      await setSandboxEnabled(next);
-    } catch (e) {
-      setOn(!next);
-      toast.error(reportError(e));
-    }
-  };
-  return (
-    <section className="hud-panel hud-accent px-5 py-4">
-      <Heading title="Sandbox" help={t("サンドボックス")} status={<StatusPill on={!!on}>{on ? t("オン") : t("オフ")}</StatusPill>}>
-        <p>{t("有効にすると、すべてのエージェント(パーソナルを含む、リーダーを除く)への指示を、エージェントごとの専用のDockerコンテナの中の Claude Code が受け持ちます。")}</p>
-        <ul>
-          <li>{t("コンテナから見えるのは、そのエージェントの担当フォルダ(/workspace)、ナレッジ(/knowledge)、専用ボリュームだけです。ほかのエージェントや ~/.aws には届きません。")}</li>
-          <li>{t("Dockerが使えないときは、ホストでは実行せずエラーにします。")}</li>
-          <li>{t("コマンドはLinux(Debian)上で動きます。brew や open などmacOS向けのコマンドは使えません。")}</li>
-          <li>{t("イメージは、下の Sandbox Image の共通 Dockerfile から作ります。エージェントの設定の「Sandbox」タブで専用の Dockerfile を登録したエージェントは、そちらを優先します。sandbox.env もそのタブで編集できます。")}</li>
-        </ul>
-      </Heading>
-      <label className="flex items-center justify-between gap-4 text-sm">
-        <span className="text-xs text-muted-foreground">
-          {t("エージェントの作業を、すべてエージェントごとのDockerコンテナの中に限ります(無効のときは、このアプリが直接処理します)。")}
-        </span>
-        <Switch checked={on ?? false} disabled={on === null} onCheckedChange={(v) => void change(v)} aria-label={t("サンドボックス")} />
       </label>
     </section>
   );

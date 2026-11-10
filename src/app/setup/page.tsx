@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import AwsPanel from "@/components/AwsPanel";
 import LocalLlmPanel from "@/components/LocalLlmPanel";
 import SandboxPanel from "@/components/SandboxPanel";
+import ClaudeCodeSettings from "@/components/ClaudeCodeSettings";
 import DeleteAgentModal from "@/components/DeleteAgentModal";
 import NotePanel from "@/components/NotePanel";
 import CopySettingsCard from "@/components/CopySettingsCard";
@@ -1236,15 +1237,17 @@ export default function Setup() {
   // 機能ごとのモデル設定から、プロバイダーごとの使用箇所を集計する(チャットは会話ごとの選択のため含めない)
   useEffect(() => {
     const leader = active.id === LEADER_ID;
+    const work = !leader && active.id !== PERSONAL_ID;
     const sources: [string, () => Promise<Route | null>][] = [
       ["文字起こしの校正", loadProofreadRoute],
-      ["ナレッジの整理", loadBatchRoute],
-      ...(leader ? [] : [["スキルの選定", loadSkillsRoute] as [string, () => Promise<Route | null>]]),
+      // ワークの整理・スキルの選定は、コンテナ内の Claude Code が行うので、アプリのモデルは使わない
+      ...(work ? [] : [["ナレッジの整理", loadBatchRoute] as [string, () => Promise<Route | null>]]),
+      ...(leader || work ? [] : [["スキルの選定", loadSkillsRoute] as [string, () => Promise<Route | null>]]),
     ];
     Promise.all(sources.map(async ([name, load]) => [name, await load()] as const))
       .then((rs) => {
         const next: Partial<Record<Provider, string[]>> = {};
-        for (const [name, r] of rs) if (r) (next[r.provider] ??= []).push(name);
+        for (const [name, r] of rs) if (r && (PROVIDERS as readonly string[]).includes(r.provider)) (next[r.provider] ??= []).push(name);
         setUsage(next);
       })
       .catch((e) => toast.error(reportError(e)));
@@ -1289,11 +1292,12 @@ export default function Setup() {
             <TabsTrigger value="llm" className="flex-none gap-1.5 px-3"><Brain className="size-3.5" />LLM</TabsTrigger>
             <TabsTrigger value="voice" className="flex-none gap-1.5 px-3"><AudioLines className="size-3.5" />{t("音声")}</TabsTrigger>
             {active.id !== LEADER_ID && <TabsTrigger value="access" className="flex-none gap-1.5 px-3"><ShieldCheck className="size-3.5" />{t("権限")}</TabsTrigger>}
-            {active.id !== LEADER_ID && <TabsTrigger value="sandbox" className="flex-none gap-1.5 px-3"><Container className="size-3.5" />Sandbox</TabsTrigger>}
+            {active.id !== LEADER_ID && active.id !== PERSONAL_ID && <TabsTrigger value="sandbox" className="flex-none gap-1.5 px-3"><Container className="size-3.5" />Sandbox</TabsTrigger>}
             <TabsTrigger value="agent" className="flex-none gap-1.5 px-3"><Bot className="size-3.5" />{t("その他")}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="llm" className="flex flex-col gap-6">
+          {active.id !== LEADER_ID && active.id !== PERSONAL_ID && <ClaudeCodeSettings key={active.id} />}
           <section className="hud-panel hud-accent px-5 py-4">
               <Heading title="AI Link" help={t("AIの接続")} status={<StatusPill on={linked > 0}>{linked} / {PROVIDERS.length}</StatusPill>}>
                 <p>{t("使いたいAIのAPIキーを登録します。全部は不要で、1つ以上あれば使えます。")}</p>
@@ -1303,6 +1307,7 @@ export default function Setup() {
                   <li>{t("Amazon Bedrockは、APIキーではなく~/.aws/configと~/.aws/credentialsの中身を貼り付けて登録します。MFA付きのスイッチロール(role_arn + source_profile)に対応し、コードが必要なときは入力欄が開きます。")}</li>
                   <li>{t("Bedrockでは、インターネット検索・ページ取得は使えません(ナレッジのファイル操作とコマンド実行は使えます)。")}</li>
                   <li>{t("キーは疎通確認に成功した場合のみ、この端末のアプリデータ内に保存されます。")}</li>
+                  {active.id !== LEADER_ID && active.id !== PERSONAL_ID && <li>{t("ワークのエージェントでは、登録した Anthropic の API キーが、コンテナ内の Claude Code へ指示ごとの環境変数で渡されます。")}</li>}
                   <li>{t("保存先は平文のJSONファイルです(OSのキーチェーンは使っていません)。")}</li>
                 </ul>
               </Heading>
@@ -1341,7 +1346,7 @@ export default function Setup() {
             store={setTuning}
             defaults={DEFAULT_TUNING}
           />}
-          <AiSettings keyStatus={status} leader={active.id === LEADER_ID} />
+          <AiSettings keyStatus={status} leader={active.id === LEADER_ID} work={active.id !== LEADER_ID && active.id !== PERSONAL_ID} />
           {active.id === LEADER_ID ? <><LeaderPrompt /><LeaderLimit /></> : active.id !== PERSONAL_ID && <AgentData />}
           </TabsContent>
 
@@ -1484,7 +1489,7 @@ export default function Setup() {
               <CommandPolicyEditor />
             </TabsContent>
           )}
-          {active.id !== LEADER_ID && (
+          {active.id !== LEADER_ID && active.id !== PERSONAL_ID && (
             <TabsContent value="sandbox" className="flex flex-col gap-6">
               <SandboxPanel key={active.id} workspaceId={active.id} />
             </TabsContent>

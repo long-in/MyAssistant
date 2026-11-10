@@ -1,7 +1,7 @@
 //! APIキーの保存。アプリデータ配下の`secrets.json`(所有者のみ読み書き可)に保持する。
 //! キーの生値はこのモジュールの外へ出さない。
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
     str::FromStr,
     sync::Mutex,
@@ -250,6 +250,16 @@ impl Secrets {
             Provider::Local => Ok(super::local_llm::installed()),
             p => Ok(self.get_secret(p.as_str())?.is_some()),
         }
+    }
+
+    /// コンテナの Claude Code へ、実行ごとの環境変数で渡す API キー(登録があれば)。
+    /// 専用の取得口で、`sandbox::env_for` だけが使う。コマンドとして公開しないこと。ファイルとしてはコンテナに置かない。
+    pub fn sandbox_env(&self) -> Result<BTreeMap<String, String>, AppError> {
+        let mut vars = BTreeMap::new();
+        if let Some(key) = self.get_secret(Provider::Anthropic.as_str())? {
+            vars.insert("ANTHROPIC_API_KEY".to_owned(), key);
+        }
+        Ok(vars)
     }
 
     /// Rust内部のLLMクライアント専用。コマンドとして公開しないこと。Bedrock(`get_aws_files`)とローカルは対象外。

@@ -9,7 +9,7 @@ use crate::{
         audio::Recorder,
         batch, debug_log, knowledge,
         llm_router::{self, Route},
-        proofread, pronunciation, secrets, settings_transfer::MAX_FILE_BYTES, stt,
+        proofread, pronunciation, sandbox, secrets, settings_transfer::MAX_FILE_BYTES, stt,
         stt::SttEngine,
         stt_google, tts,
         tts::Voice,
@@ -201,6 +201,16 @@ pub fn save_proofread_route(ctx: Ctx, route: Option<Route>) -> Result<(), AppErr
     let Some(route) = route else {
         return ctx.db.set_setting(proofread::ROUTE_KEY, "");
     };
+    if sandbox::runs_in_sandbox(&ctx.id) {
+        // ワークは、コンテナ(Claude Code)か端末内のQwenだけ
+        if route.provider == proofread::SANDBOX_PROVIDER {
+            let route = Route { provider: route.provider, model: String::new() };
+            return ctx.db.set_setting(proofread::ROUTE_KEY, &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?);
+        }
+        if route.provider != secrets::Provider::Local.as_str() {
+            return Err(AppError::Sandbox("ワークの校正は、コンテナ内の Claude Code か端末内のモデルだけ選べます。".into()));
+        }
+    }
     llm_router::resolve(&ctx, &route, &batch::available_providers(&ctx.secrets))?;
     ctx.db.set_setting(
         proofread::ROUTE_KEY,
