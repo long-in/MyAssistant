@@ -23,9 +23,9 @@ import { copyTargets, type CopyRequest } from "@/lib/copyTargets";
 import { DEFAULT_TUNING, getTuning, setTuning, LEADER_ID, PERSONAL_ID, getAgentData, saveAgentData, errorMessage, updateAgent, AGENT_NAME_MAX, leaderCopyApiKey, leaderGetPrompt, leaderSetPrompt, leaderGetLimit, leaderSetLimit, LEADER_LIMIT_MAX, type DeleteReport } from "@/lib/api";
 import { bumpSettingsVersion, refreshWorkspace, useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
-import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, setCommandPolicy, type CommandPolicy, getShellAccess, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setShellAccess, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
+import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, setCommandPolicy, type CommandPolicy, getShellAccess, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, loadBatchRoute, loadProofreadRoute, loadSkillsRoute, type Route, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setShellAccess, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
 import AiSettings from "@/components/AiSettings";
-import { Heading, PageHeader, StatusPill, TuningPanel, type TuningField } from "@/components/GlobalPanels";
+import { Heading, PageHeader, StatusPill, TuningPanel, UsedBy, linkCardClass, type TuningField } from "@/components/GlobalPanels";
 
 type KeyRowProps = {
   title: string;
@@ -34,17 +34,19 @@ type KeyRowProps = {
   busy: boolean;
   /** カードとして出す(AI接続のプロバイダー一覧)。登録済みは縁が発光する。 */
   card?: boolean;
+  /** このプロバイダーを使っている機能(カード表示のときだけ出す)。 */
+  usedBy?: string[];
   onSave: (key: string) => Promise<void>;
   onDelete: () => Promise<void>;
 };
 
 /** 1行のコンパクトな接続モジュール。キー入力は「接続」を押すまで隠しておく。 */
-function KeyRow({ title, description, registered, busy, card, onSave, onDelete }: KeyRowProps) {
+function KeyRow({ title, description, registered, busy, card, usedBy, onSave, onDelete }: KeyRowProps) {
   const t = useT();
   const [value, setValue] = useState("");
   const [open, setOpen] = useState(false);
   return (
-    <div className={card ? cn("rounded-xl border px-4 py-3 transition-colors", registered ? "border-primary/40 bg-primary/5 shadow-[0_0_14px_oklch(0.85_0.14_180/12%)]" : "border-dashed") : "py-3"}>
+    <div className={card ? linkCardClass(registered) : "py-3"}>
       <div className="flex items-center gap-3">
         <span
           aria-hidden
@@ -70,6 +72,7 @@ function KeyRow({ title, description, registered, busy, card, onSave, onDelete }
           <ChevronDown className={cn("transition-transform", open && "rotate-180")} />
         </Button>
       </div>
+      {card && usedBy && <UsedBy features={usedBy} linked={registered} />}
       {open && (
         <form
           className="mt-3 flex gap-2 pl-5"
@@ -99,7 +102,7 @@ function KeyRow({ title, description, registered, busy, card, onSave, onDelete }
 }
 
 const TASK_FIELDS: TuningField<Tuning>[] = [
-  { key: "web_search_max", label: "Web検索の回数", hint: "1回の依頼で検索できる上限。多いほど料金が増える。", unit: "回", min: 1, max: 20, step: 1 },
+  { key: "web_search_max", label: "Web検索の回数", hint: "Claude Codeのみ有効。1回の依頼で検索できる上限。多いほど料金が増える。", unit: "回", min: 1, max: 20, step: 1 },
   { key: "web_fetch_max", label: "ページ取得の回数", hint: "1回の依頼でページを読める上限。", unit: "回", min: 1, max: 20, step: 1 },
   { key: "history_exchanges", label: "そのまま渡す会話の往復数", hint: "超えた古い会話はAIで要約して渡す(要約にも少量のトークンを使う)。", unit: "往復", min: 2, max: 30, step: 1 },
 ];
@@ -1207,6 +1210,7 @@ export default function Setup() {
   const [sttLang, setSttLang] = useState<SttLanguage>("auto");
   const [sttUpgradable, setSttUpgradable] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [usage, setUsage] = useState<Partial<Record<Provider, string[]>>>({});
 
   const refresh = useCallback(
     () =>
@@ -1228,6 +1232,23 @@ export default function Setup() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // 機能ごとのモデル設定から、プロバイダーごとの使用箇所を集計する(チャットは会話ごとの選択のため含めない)
+  useEffect(() => {
+    const leader = active.id === LEADER_ID;
+    const sources: [string, () => Promise<Route | null>][] = [
+      ["文字起こしの校正", loadProofreadRoute],
+      ["ナレッジの整理", loadBatchRoute],
+      ...(leader ? [] : [["スキルの選定", loadSkillsRoute] as [string, () => Promise<Route | null>]]),
+    ];
+    Promise.all(sources.map(async ([name, load]) => [name, await load()] as const))
+      .then((rs) => {
+        const next: Partial<Record<Provider, string[]>> = {};
+        for (const [name, r] of rs) if (r) (next[r.provider] ??= []).push(name);
+        setUsage(next);
+      })
+      .catch((e) => toast.error(reportError(e)));
+  }, [active.id, status]);
 
   const run = async (id: string, fn: () => Promise<void>, ok?: string) => {
     setBusy(id);
@@ -1277,6 +1298,7 @@ export default function Setup() {
               <Heading title="AI Link" help={t("AIの接続")} status={<StatusPill on={linked > 0}>{linked} / {PROVIDERS.length}</StatusPill>}>
                 <p>{t("使いたいAIのAPIキーを登録します。全部は不要で、1つ以上あれば使えます。")}</p>
                 <ul>
+                  <li>{t("各カードの「使用中の機能」は、AI Settingsでそのプロバイダーのモデルを選んでいる機能です。チャットと会話の要約は、チャット画面で選んだモデルを使うため含みません。")}</li>
                   <li>{t("ローカル(Qwen)は、キーの代わりにモデルをこの端末へダウンロードして使います。取得したモデルは全エージェントで共通です。")}</li>
                   <li>{t("Amazon Bedrockは、APIキーではなく~/.aws/configと~/.aws/credentialsの中身を貼り付けて登録します。MFA付きのスイッチロール(role_arn + source_profile)に対応し、コードが必要なときは入力欄が開きます。")}</li>
                   <li>{t("Bedrockでは、インターネット検索・ページ取得は使えません(ナレッジのファイル操作とコマンド実行は使えます)。")}</li>
@@ -1291,24 +1313,25 @@ export default function Setup() {
                   key={p}
                   title={PROVIDER_LABELS[p]}
                   registered={!!status[p]}
+                  usedBy={usage[p] ?? []}
                   busy={busy === p}
                   onSave={(k) => run(p, () => saveApiKey(p, k), t("APIキーを保存しました。"))}
                   onDelete={() => run(p, () => deleteApiKey(p))}
                 />
               ))}
-              <AwsPanel onChanged={refresh} />
-              <LocalLlmPanel onChanged={refresh} />
+              <AwsPanel onChanged={refresh} usedBy={usage.bedrock ?? []} />
+              <LocalLlmPanel onChanged={refresh} usedBy={usage.local ?? []} />
             </div>
           </section>
           {active.id === LEADER_ID && <LeaderKeyCopy onCopied={refresh} />}
           {active.id !== LEADER_ID && <TuningPanel
-            title="Limits"
+            title="AI Limits"
             help={t("検索回数などの上限")}
             helpBody={
               <>
                 <p>{t("AIが1回の依頼で使う量の上限です。")}</p>
                 <ul>
-                  <li>{t("Web検索とページ取得の回数は、Web Searchがオンのときだけ使われます。")}</li>
+                  <li>{t("Web検索とページ取得の回数は、Web Searchがオンのときだけ使われます。Web検索の回数はClaude Codeのみ有効です。")}</li>
                   <li>{t("次の送信から反映されます。")}</li>
                 </ul>
               </>

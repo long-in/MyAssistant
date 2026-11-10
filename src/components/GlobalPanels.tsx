@@ -27,7 +27,7 @@ const HEADING_ICONS: Record<string, LucideIcon> = {
   "AI Settings": BrainCircuit,
   "Wake Words": Mic,
   "Voice Timing": AudioLines,
-  Limits: SlidersHorizontal,
+  "AI Limits": SlidersHorizontal,
   Backup: Archive,
   Work: Briefcase,
   "OS Notifications": Bell,
@@ -60,6 +60,28 @@ export function StatusPill({ on, children }: { on: boolean; children: React.Reac
       <span className={cn("size-1.5 rounded-full", on ? "bg-primary shadow-[0_0_6px_var(--primary)]" : "bg-muted-foreground/50")} />
       {children}
     </span>
+  );
+}
+
+/** AI Linkの各カードの外枠。接続済みは縁が発光し、未接続は破線にする。 */
+export const linkCardClass = (linked: boolean) =>
+  cn("rounded-xl border px-4 py-3 transition-colors", linked ? "border-primary/40 bg-primary/5 shadow-[0_0_14px_oklch(0.85_0.14_180/12%)]" : "border-dashed");
+
+/** プロバイダーを使っている機能の一覧。接続済みで1つも使われていなければ「未使用」と出す。 */
+export function UsedBy({ features, linked }: { features: string[]; linked: boolean }) {
+  const t = useT();
+  if (!linked) return null;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-5 text-[0.65rem] text-muted-foreground">
+      <span>{t("使用中の機能")}:</span>
+      {features.length === 0 ? (
+        <span className="rounded-full border border-dashed px-2 py-0.5">{t("未使用")}</span>
+      ) : (
+        features.map((f) => (
+          <span key={f} className="rounded-full border border-primary/30 bg-primary/5 px-2 py-0.5 text-primary">{t(f)}</span>
+        ))
+      )}
+    </div>
   );
 }
 
