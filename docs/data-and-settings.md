@@ -111,6 +111,9 @@ erDiagram
 | `web_access` | `0` / `1` | 有効 | Web Search |
 | `shell_access` | `0` / `1` | 有効 | Command Tasks |
 | `sandbox_enabled` | `0` / `1` | 無効 | 全体設定の Sandbox(全体設定のため、設定の書き出し・コピーの対象外) |
+| `sandbox_llm` | 接続先・モデル・上限時間(分)・許可するツール(JSON) | Anthropic API・既定のモデル・30分 | Sandbox |
+| `sandbox_workspace_dir` | `/workspace` にマウントするフォルダ(空なら未設定) | 未設定 | Sandbox(端末ごとに異なるため、書き出し・コピーの対象外) |
+| `sandbox_claude_sessions` | 会話 ID と Claude Code のセッション ID の対応(JSON、直近 50 件) | なし | なし(端末の会話と対なので対象外) |
 | `stt_engine` | `local` / `google` / `aqua` | `local` | Voice Link |
 | `stt_language` | `auto` / `ja` / `en` / `zh` / `ko` | `auto` | Voice Link |
 | `tts_engine` | `google` / `voicevox` | `voicevox` | Voice Link |
