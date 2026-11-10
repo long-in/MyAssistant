@@ -52,9 +52,6 @@ impl FromStr for Provider {
 /// Google Cloud TTS用のキー。
 const TTS_ACCOUNT: &str = "google_tts";
 
-/// Aqua Voice API用のキー。
-const AQUA_ACCOUNT: &str = "aqua";
-
 /// 通信のプロキシのパスワード(`proxy.rs`専用の保管庫に置く)。
 const PROXY_PASSWORD_ACCOUNT: &str = "proxy_password";
 
@@ -226,23 +223,6 @@ impl Secrets {
         self.delete_secret(PROXY_PASSWORD_ACCOUNT)
     }
 
-    pub fn has_aqua_key(&self) -> Result<bool, AppError> {
-        Ok(self.get_secret(AQUA_ACCOUNT)?.is_some())
-    }
-
-    /// Rust内部のAqua STTクライアント専用。コマンドとして公開しないこと。
-    pub fn get_aqua_key(&self) -> Result<Option<String>, AppError> {
-        self.get_secret(AQUA_ACCOUNT)
-    }
-
-    pub fn set_aqua_key(&self, key: &str) -> Result<(), AppError> {
-        self.set_secret(AQUA_ACCOUNT, key)
-    }
-
-    pub fn delete_aqua_key(&self) -> Result<(), AppError> {
-        self.delete_secret(AQUA_ACCOUNT)
-    }
-
     /// そのプロバイダーを使えるか。ローカルはキーではなく、取得済みかどうか(全ワークスペース共通)。
     pub fn has_key(&self, provider: Provider) -> Result<bool, AppError> {
         match provider {
@@ -404,11 +384,11 @@ mod tests {
         sa.set_key(Provider::Anthropic, "ka").unwrap();
         sa.set_tts_key("tts-a").unwrap();
         sb.set_tts_key("tts-b").unwrap();
-        sb.set_aqua_key("aqua-b").unwrap();
+        sb.set_proxy_password("pw-b").unwrap();
         assert_eq!(sb.copy_from(&sa).unwrap(), 2);
         assert_eq!(sb.get_key(Provider::Anthropic).unwrap().as_deref(), Some("ka"));
         assert_eq!(sb.get_tts_key().unwrap().as_deref(), Some("tts-a")); // 上書き
-        assert_eq!(sb.get_aqua_key().unwrap().as_deref(), Some("aqua-b")); // 残る
+        assert_eq!(sb.get_proxy_password().unwrap().as_deref(), Some("pw-b")); // 残る
         assert_eq!(sa.get_tts_key().unwrap().as_deref(), Some("tts-a"));
         // 保存済みで、開き直しても残る
         assert!(Secrets::open(b.path()).unwrap().has_key(Provider::Anthropic).unwrap());

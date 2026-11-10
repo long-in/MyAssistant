@@ -19,7 +19,7 @@ export default function CopyOptions({ includeKeys, includeDictionary, onKeys, on
         <span>
           {t("APIキーもコピーする")}
           <span className="block text-xs text-muted-foreground">
-            {t("Anthropic・AWS・Google・Aquaのキーを、コピー先にも保存します(コピー先の同じキーは上書き)。")}
+            {t("Anthropic・AWS・Googleのキーを、コピー先にも保存します(コピー先の同じキーは上書き)。")}
           </span>
         </span>
         <Switch checked={includeKeys} onCheckedChange={onKeys} />

@@ -116,7 +116,7 @@ export default function GlobalSettings() {
           </TabsContent>
 
           <TabsContent value="voice" className="flex flex-col gap-6">
-        <WakeWords ttsReady={speechReady} engine={ttsEngine} cloudStt={sttEngine === "google" ? "Google Speech-to-Text" : sttEngine === "aqua" ? "Aqua Voice" : null} />
+        <WakeWords ttsReady={speechReady} engine={ttsEngine} cloudStt={sttEngine === "google" ? "Google Speech-to-Text" : null} />
         <TuningPanel
           title="Voice Timing"
           help={t("音声入力の待ち時間")}

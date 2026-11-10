@@ -23,7 +23,7 @@ import { copyTargets, type CopyRequest } from "@/lib/copyTargets";
 import { DEFAULT_TUNING, getTuning, setTuning, LEADER_ID, PERSONAL_ID, getAgentData, saveAgentData, errorMessage, updateAgent, AGENT_NAME_MAX, leaderCopyApiKey, leaderGetPrompt, leaderSetPrompt, leaderGetLimit, leaderSetLimit, LEADER_LIMIT_MAX, type DeleteReport } from "@/lib/api";
 import { bumpSettingsVersion, refreshWorkspace, useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
-import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, aquaKeyRegistered, deleteAquaKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, setCommandPolicy, type CommandPolicy, getShellAccess, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, saveAquaKey, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setShellAccess, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
+import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, setCommandPolicy, type CommandPolicy, getShellAccess, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setShellAccess, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
 import AiSettings from "@/components/AiSettings";
 import { Heading, PageHeader, StatusPill, TuningPanel, type TuningField } from "@/components/GlobalPanels";
 
@@ -1203,7 +1203,6 @@ export default function Setup() {
   const [ttsEngine, setTtsEngineState] = useState<TtsEngine>("voicevox");
   const [vvInstalled, setVvInstalled] = useState(false);
   const [vvStyle, setVvStyle] = useState(3);
-  const [aquaReady, setAquaReady] = useState(false);
   const [sttEngine, setSttEngineState] = useState<SttEngine>("local");
   const [sttLang, setSttLang] = useState<SttLanguage>("auto");
   const [sttUpgradable, setSttUpgradable] = useState(false);
@@ -1211,8 +1210,8 @@ export default function Setup() {
 
   const refresh = useCallback(
     () =>
-      Promise.all([getKeyStatus(), ttsKeyRegistered(), aquaKeyRegistered(), getSttEngine(), getSttLanguage(), sttModelUpgradable(), getTtsEngine(), voicevoxInstalled(), getVoicevoxStyle(), fetchTtsReady()])
-        .then(([s, t, a, e, l, u, te, vi, vs, sr]) => {
+      Promise.all([getKeyStatus(), ttsKeyRegistered(), getSttEngine(), getSttLanguage(), sttModelUpgradable(), getTtsEngine(), voicevoxInstalled(), getVoicevoxStyle(), fetchTtsReady()])
+        .then(([s, t, e, l, u, te, vi, vs, sr]) => {
           setTtsEngineState(te);
           setVvInstalled(vi);
           setVvStyle(vs);
@@ -1221,7 +1220,6 @@ export default function Setup() {
           setSttUpgradable(u);
           setStatus(s);
           setTtsReady(t);
-          setAquaReady(a);
           setSttEngineState(e);
         })
         .catch((e) => toast.error(reportError(e))),
@@ -1327,16 +1325,16 @@ export default function Setup() {
           <TabsContent value="voice" className="flex flex-col gap-6">
           {/* 音声認識(入力) */}
           <section className="hud-panel hud-accent px-5 py-4">
-            <Heading title="Voice Input" help={t("音声認識")} status={<StatusPill on>{sttEngine === "local" ? t("ローカル (Whisper)") : sttEngine === "google" ? "Google Cloud" : "Aqua Voice"}</StatusPill>}>
-              <p>{t("音声認識のエンジンがローカルの間は、Whisperで認識します(無料)。Aqua Voiceは音声認識のみで、読み上げ(TTS)には対応していません。")}</p>
+            <Heading title="Voice Input" help={t("音声認識")} status={<StatusPill on>{sttEngine === "local" ? t("ローカル (Whisper)") : "Google Cloud"}</StatusPill>}>
+              <p>{t("音声認識のエンジンがローカルの間は、Whisperで認識します(無料)。")}</p>
               <ul>
-                <li>{t("GoogleとAquaは録音音声を送信し、課金対象です。")}</li>
+                <li>{t("Googleは録音音声を送信し、課金対象です。")}</li>
               </ul>
             </Heading>
             <div className="flex items-center gap-3 border-t py-3">
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">{t("音声認識エンジン")}</div>
-                <div className="text-xs text-muted-foreground">{t("ローカルのWhisperは無料。GoogleとAquaは録音音声を送信し、課金対象です。")}</div>
+                <div className="text-xs text-muted-foreground">{t("ローカルのWhisperは無料。Googleは録音音声を送信し、課金対象です。")}</div>
               </div>
               <select
                 aria-label={t("音声認識エンジン")}
@@ -1350,24 +1348,7 @@ export default function Setup() {
               >
                 <option value="local">{t("ローカル (Whisper)")}</option>
                 <option value="google" disabled={!ttsReady}>Google Cloud</option>
-                <option value="aqua" disabled={!aquaReady}>Aqua Voice</option>
               </select>
-            </div>
-            <div className="flex flex-col gap-2 pb-3">
-            <KeyRow
-              card
-              title="Aqua Voice"
-              description={t("音声認識用のAPIキー(読み上げには使えません)")}
-              registered={aquaReady}
-              busy={busy === "aqua"}
-              onSave={(k) => run("aqua", () => saveAquaKey(k), t("APIキーを保存しました。"))}
-              onDelete={() =>
-                run("aqua", async () => {
-                  await deleteAquaKey();
-                  if (sttEngine === "aqua") await setSttEngine("local"); // キーがないAqua認識は使えない
-                })
-              }
-            />
             </div>
             {sttEngine === "local" && sttUpgradable && (
               <div className="flex items-center gap-3 border-t py-3">
