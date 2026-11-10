@@ -289,7 +289,7 @@ impl Secrets {
         Ok(self.get_secret(AWS_CONFIG_ACCOUNT)?.is_some() || self.get_secret(AWS_CREDENTIALS_ACCOUNT)?.is_some())
     }
 
-    /// Rust内部のAWS認証(`aws.rs`)専用。コマンドとして公開しないこと。未登録の側は空文字を返す。
+    /// Rust内部のAWS認証(`aws.rs`)専用。公開してよいのは、本人が確認・編集する`get_aws_files`コマンドだけ。未登録の側は空文字を返す。
     pub fn get_aws_files(&self) -> Result<(String, String), AppError> {
         Ok((
             self.get_secret(AWS_CONFIG_ACCOUNT)?.unwrap_or_default(),

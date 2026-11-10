@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, Download, FolderOpen, KeyRound, Loader2, Plug, Plus, Trash2, X } from "lucide-react";
+import { ChevronDown, Download, Eye, EyeOff, FolderOpen, KeyRound, Loader2, Plug, Plus, Trash2, X } from "lucide-react";
 import { StatusPill, UsedBy, linkCardClass } from "@/components/GlobalPanels";
 import { toast } from "sonner";
 import { useT } from "@/lib/i18n";
@@ -11,6 +11,7 @@ import {
   deleteApiKey,
   type AwsProfile,
   fetchAwsModels,
+  getAwsFiles,
   getAwsStatus,
   previewAwsConfig,
   revealSecretsFile,
@@ -40,7 +41,7 @@ aws_secret_access_key = ...`;
 
 /**
  * Amazon Bedrock(Claude)の接続設定。`~/.aws/config`と`~/.aws/credentials`の中身をそのまま貼り付けて登録する。
- * 保存後の内容は画面に戻らない(プロファイルの一覧だけ表示する)。更新するときは貼り付け直す。
+ * 登録後は「更新」を開くと保存済みの内容が入った状態で編集できる。credentialsは既定で伏せ字にする。
  */
 export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => void; usedBy?: string[] }) {
   const t = useT();
@@ -48,6 +49,7 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
   const [open, setOpen] = useState(false);
   const [config, setConfig] = useState("");
   const [credentials, setCredentials] = useState("");
+  const [reveal, setReveal] = useState(false);
   const [preview, setPreview] = useState<AwsProfile[]>([]);
   const [chosen, setChosen] = useState("");
   const [modelInput, setModelInput] = useState("");
@@ -80,6 +82,23 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
     }, 300);
     return () => clearTimeout(timer);
   }, [config, credentials, status?.selected]);
+
+  // 更新を開いたら、保存済みの内容を読み込んで編集できるようにする(閉じたら破棄)
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    getAwsFiles()
+      .then((f) => {
+        if (!alive) return;
+        setConfig(f.config);
+        setCredentials(f.credentials);
+      })
+      .catch((e) => toast.error(reportError(e)));
+    return () => {
+      alive = false;
+      setReveal(false);
+    };
+  }, [open]);
 
   const run = async (kind: NonNullable<typeof busy>, fn: () => Promise<AwsStatus | void>, ok?: string) => {
     setBusy(kind);
@@ -337,19 +356,31 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
             />
           </label>
           <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-            ~/.aws/credentials
+            <span className="flex items-center gap-1">
+              ~/.aws/credentials
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                aria-pressed={reveal}
+                onClick={() => setReveal((r) => !r)}
+              >
+                {reveal ? <EyeOff /> : <Eye />}
+                {reveal ? t("隠す") : t("表示")}
+              </Button>
+            </span>
             <Textarea
               autoComplete="off"
               spellCheck={false}
               rows={4}
-              className="font-mono text-xs"
+              className={cn("font-mono text-xs", !reveal && "[-webkit-text-security:disc]")}
               placeholder={CREDENTIALS_PLACEHOLDER}
               value={credentials}
               onChange={(e) => setCredentials(e.target.value)}
             />
           </label>
           <p className="text-xs text-muted-foreground">
-            {t("それぞれの中身をそのまま貼り付けます。保存済みの内容は表示されないため、更新するときは両方を貼り付け直してください。")}
+            {t("それぞれの中身をそのまま貼り付けます。登録済みの場合は保存済みの内容が入っているので、編集して保存してください。credentialsは既定で伏せ字です。")}
           </p>
           {pasted && (
             <div className="flex flex-col gap-1 text-xs text-muted-foreground">

@@ -8,6 +8,12 @@ use crate::{
     utils::error::AppError,
 };
 
+#[derive(serde::Serialize)]
+pub struct AwsFiles {
+    pub config: String,
+    pub credentials: String,
+}
+
 /// このワークスペースの`secrets.json`をFinderで選択した状態で開く。未作成ならワークスペースのフォルダを開く。
 /// パスは`ctx.dir`から組み立てるだけで、ファイルの中身は読まない。
 #[tauri::command]
@@ -27,6 +33,14 @@ pub fn reveal_secrets_file(ctx: Ctx) -> Result<(), AppError> {
 #[tauri::command]
 pub fn get_aws_status(ctx: Ctx) -> Result<Status, AppError> {
     aws::status(&ctx)
+}
+
+/// 保存済みの`~/.aws/config`と`credentials`の全文。ユーザー本人が画面で確認・編集するための例外的な公開で、
+/// ログ・LLM・他のコマンドへは渡さない。
+#[tauri::command]
+pub fn get_aws_files(ctx: Ctx) -> Result<AwsFiles, AppError> {
+    let (config, credentials) = ctx.secrets.get_aws_files()?;
+    Ok(AwsFiles { config, credentials })
 }
 
 /// 貼り付け中の内容から読み取れるプロファイル一覧(保存しない)。使うプロファイルを選ばせるために使う。
