@@ -46,26 +46,3 @@ pub fn import_settings(ctx: Ctx, src: String) -> Result<Report, AppError> {
     debug_log::refresh(&ctx)?;
     Ok(report)
 }
-
-/// 全体設定を`dest`のJSONファイルへ書き出す。エージェントごとの設定やAPIキーは含まない。
-#[tauri::command]
-pub fn export_global_settings(ctx: Ctx, dest: String) -> Result<Report, AppError> {
-    let dest = json_path(&dest)?;
-    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    let file = settings_transfer::collect_global(&ctx.global, now)?;
-    let json = serde_json::to_string_pretty(&file).map_err(|e| AppError::Io(e.to_string()))?;
-    std::fs::write(&dest, json).map_err(|e| AppError::Io(e.to_string()))?;
-    Ok(Report { applied: file.item_count(), skipped: 0 })
-}
-
-/// 書き出した全体設定のファイルを読み込んで反映する。不正な項目があれば何も変更しない。
-#[tauri::command]
-pub fn import_global_settings(ctx: Ctx, src: String) -> Result<Report, AppError> {
-    let src = json_path(&src)?;
-    let meta = std::fs::metadata(&src).map_err(|e| AppError::Io(e.to_string()))?;
-    if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
-        return Err(AppError::InvalidSettings("ファイルが大きすぎます".into()));
-    }
-    let text = std::fs::read_to_string(&src).map_err(|e| AppError::Io(e.to_string()))?;
-    settings_transfer::apply_global(&ctx.global, &settings_transfer::parse(&text)?)
-}

@@ -8,7 +8,6 @@ import {
   BatchInterval,
   PageHeader,
   StatusPill,
-  GlobalBackup,
   AppBackup,
   LanguageSetting,
   OsNotifications,
@@ -151,7 +150,6 @@ export default function GlobalSettings() {
           </TabsContent>
 
           <TabsContent value="backup" className="flex flex-col gap-6">
-            <GlobalBackup />
             <AppBackup />
           </TabsContent>
         </Tabs>

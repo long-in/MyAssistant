@@ -898,9 +898,6 @@ export type SettingsTransferReport = { applied: number; skipped: number };
 export const exportSettings = (dest: string) => invoke<SettingsTransferReport>("export_settings", { dest });
 /** 書き出した設定ファイルを読み込んで反映する。 */
 export const importSettings = (src: string) => invoke<SettingsTransferReport>("import_settings", { src });
-/** 全体設定だけの書き出し・読み込み。 */
-export const exportGlobalSettings = (dest: string) => invoke<SettingsTransferReport>("export_global_settings", { dest });
-export const importGlobalSettings = (src: string) => invoke<SettingsTransferReport>("import_global_settings", { src });
 
 export type BackupSummary = { workspaces: number; files: number; bytes: number };
 export type RestorePreview = { created_at: string; workspaces: number; files: number };

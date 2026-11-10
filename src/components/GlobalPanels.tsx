@@ -16,7 +16,7 @@ import HelpDrawer from "@/components/HelpDrawer";
 import BackupPasswordModal from "@/components/BackupPasswordModal";
 import { ensureOsPermission, osNotificationsEnabled, setOsNotificationsEnabled, syncOsNotifications } from "@/lib/osNotify";
 import NotePanel from "@/components/NotePanel";
-import { getSandboxEnabled, setSandboxEnabled, getSharedData, saveSharedData, LEADER_COLOR, LEADER_ID, createLeader, errorMessage, leaderExists, setWorkEnabled, workEnabled, setGlobalLanguage, getProxySettings, setProxySettings, type ProxySettings, exportGlobalSettings, importGlobalSettings, backupCreate, restorePrepare, restoreApply, restoreDiscard, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, getBatchInterval, setBatchInterval, type WakeConfig, reportError, type AppError, saveBaseInstructions, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
+import { getSandboxEnabled, setSandboxEnabled, getSharedData, saveSharedData, LEADER_COLOR, LEADER_ID, createLeader, errorMessage, leaderExists, setWorkEnabled, workEnabled, setGlobalLanguage, getProxySettings, setProxySettings, type ProxySettings, backupCreate, restorePrepare, restoreApply, restoreDiscard, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, getBatchInterval, setBatchInterval, type WakeConfig, reportError, type AppError, saveBaseInstructions, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
 
 /** 見出しの左に出すアイコン(英字の見出しごと)。無いものは歯車。 */
 const HEADING_ICONS: Record<string, LucideIcon> = {
@@ -962,71 +962,6 @@ export function AppBackup() {
           onSubmit={(pw) => (modal.mode === "create" ? void create(pw) : void prepare(modal.src, pw))}
         />
       )}
-    </section>
-  );
-}
-
-/** 全体設定だけのバックアップ。エージェントごとの設定のバックアップ(設定画面の Backup)とは別に書き出す。 */
-export function GlobalBackup() {
-  const t = useT();
-  const [busy, setBusy] = useState(false);
-
-  const exportAll = async () => {
-    const stamp = new Date().toISOString().slice(0, 10);
-    const dest = await saveDialog({
-      title: t("全体設定のエクスポート"),
-      defaultPath: `myassistant-global-settings-${stamp}.json`,
-      filters: [{ name: "JSON", extensions: ["json"] }],
-    });
-    if (!dest) return;
-    setBusy(true);
-    try {
-      const r = await exportGlobalSettings(dest);
-      toast.success(t("{applied}項目を書き出しました。", { applied: r.applied }));
-    } catch (e) {
-      toast.error(reportError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const importAll = async () => {
-    const src = await openDialog({
-      title: t("全体設定のインポート"),
-      multiple: false,
-      directory: false,
-      filters: [{ name: "JSON", extensions: ["json"] }],
-    });
-    if (typeof src !== "string") return;
-    setBusy(true);
-    try {
-      const r = await importGlobalSettings(src);
-      toast.success(t("{applied}項目を読み込みました。", { applied: r.applied }));
-      // 各項目が保持している画面上の値を、読み込んだ内容に合わせ直す
-      setTimeout(() => window.location.reload(), 600);
-    } catch (e) {
-      toast.error(reportError(e));
-      setBusy(false);
-    }
-  };
-
-  return (
-    <section className="hud-panel hud-accent px-5 py-4">
-      <Heading title="Backup" help={t("全体設定の移行")}>
-        <p>{t("全体設定をJSONファイルで書き出し・読み込みできます。")}</p>
-        <ul>
-          <li>{t("エージェントごとの設定、APIキー、ナレッジは含まれません。それらは各エージェントの設定のバックアップを使ってください。")}</li>
-          <li>{t("読み込むと、ファイルにある項目が現在の全体設定を上書きし、すべてのエージェントに反映されます。")}</li>
-        </ul>
-      </Heading>
-      <div className="mt-3 flex gap-2">
-        <Button variant="outline" size="sm" disabled={busy} onClick={exportAll}>
-          <Download /> {t("エクスポート")}
-        </Button>
-        <Button variant="outline" size="sm" disabled={busy} onClick={importAll}>
-          {busy ? <Loader2 className="animate-spin" /> : <Upload />} {t("インポート")}
-        </Button>
-      </div>
     </section>
   );
 }
