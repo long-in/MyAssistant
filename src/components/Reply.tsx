@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { speechProgress } from "@/lib/api";
 import { revealedLength } from "@/lib/speech-sync";
+import { ChatMarkdown } from "./ChatMarkdown";
 import type { LogState } from "./ExecutionLog";
 
 export type Turn = {
@@ -55,13 +56,14 @@ export function useSpokenReveal(text: string): number | null {
   return state.n;
 }
 
+/** 返答をMarkdownで表示する。新しい返答はタイプライター、読み上げ中は再生位置に合わせて出す。 */
 export function Reply({ text }: { text: string }) {
   const { text: typed, done } = useTypewriter(text);
   const spoken = useSpokenReveal(text);
   const synced = spoken !== null;
   return (
     <>
-      {synced ? text.slice(0, spoken) : typed}
+      <ChatMarkdown text={synced ? text.slice(0, spoken) : typed} />
       {(synced ? spoken < text.length : !done) && <span className="animate-hud-blink ml-0.5 inline-block h-3.5 w-1.5 translate-y-0.5 bg-primary" />}
     </>
   );
