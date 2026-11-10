@@ -202,7 +202,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           aria-label={collapsed ? "Expand" : "Collapse"}
           className={cn(
             "flex items-center justify-center gap-2 rounded-sm px-3 py-2 text-sm text-muted-foreground transition-all hover:bg-primary/10 hover:text-foreground",
-            collapsed ? "mt-auto" : "mt-2 md:justify-start",
+            "mt-auto", !collapsed && "md:justify-start",
           )}
         >
           {collapsed ? <PanelLeftOpen className="size-4 shrink-0" /> : <PanelLeftClose className="size-4 shrink-0" />}
