@@ -100,6 +100,8 @@ pub fn run() {
       commands::sandbox::get_sandbox_llm,
       commands::sandbox::set_sandbox_llm,
       commands::sandbox::get_sandbox_claude_settings,
+      commands::sandbox::get_sandbox_models,
+      commands::sandbox::set_sandbox_model,
       commands::sandbox::set_sandbox_claude_settings,
       commands::sandbox::open_sandbox_workspace_dir,
       commands::sandbox::get_agent_sandbox_dockerfile,

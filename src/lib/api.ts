@@ -344,6 +344,11 @@ export type SandboxProvider = "anthropic" | "bedrock";
 /** コンテナ内の Claude Code の接続の設定(モデルと許可するツールは settings.json で決める)。 */
 export type SandboxLlm = { provider: SandboxProvider; timeout_mins: number; idle_stop_mins: number };
 /** 貼り付けた Claude Code の settings.json(未設定は空文字)。保存時に検証し、誤りがあれば保存しない。 */
+/** チャットで選べるモデル(settings.json の model・availableModels)と、選ばれているモデル。 */
+export type SandboxModels = { models: string[]; selected: string | null };
+export const getSandboxModels = () => invoke<SandboxModels>("get_sandbox_models");
+/** チャットで使うモデルを選ぶ。null で解除(settings.json の model に任せる)。 */
+export const setSandboxModel = (model: string | null) => invoke<void>("set_sandbox_model", { model });
 export const getSandboxClaudeSettings = () => invoke<string>("get_sandbox_claude_settings");
 export const setSandboxClaudeSettings = (content: string) => invoke<void>("set_sandbox_claude_settings", { content });
 export const getSandboxLlm = () => invoke<SandboxLlm>("get_sandbox_llm");

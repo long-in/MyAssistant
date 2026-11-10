@@ -233,6 +233,27 @@ pub fn get_sandbox_claude_settings(ctx: Ctx) -> Result<String, AppError> {
     sandbox_agent::load_settings(&ctx.db)
 }
 
+/// チャットで選べるモデル(settings.json の`model`・`availableModels`)と、選ばれているモデル。
+#[derive(Serialize)]
+pub struct SandboxModels {
+    pub models: Vec<String>,
+    pub selected: Option<String>,
+}
+
+#[tauri::command]
+pub fn get_sandbox_models(ctx: Ctx) -> Result<SandboxModels, AppError> {
+    supported(&ctx)?;
+    sandbox_agent::migrate_legacy_llm(&ctx.db)?;
+    Ok(SandboxModels { models: sandbox_agent::available_models(&ctx.db), selected: sandbox_agent::selected_model(&ctx.db) })
+}
+
+/// チャットで使うモデルを選ぶ。settings.json で許可していないモデルは保存しない。`None`で選択を解除する。
+#[tauri::command]
+pub fn set_sandbox_model(ctx: Ctx, model: Option<String>) -> Result<(), AppError> {
+    supported(&ctx)?;
+    sandbox_agent::save_selected_model(&ctx.db, model.as_deref())
+}
+
 /// 検証して保存する。JSON のオブジェクトでなければ保存しない。空にすると未設定に戻る。
 #[tauri::command]
 pub fn set_sandbox_claude_settings(ctx: Ctx, content: String) -> Result<(), AppError> {

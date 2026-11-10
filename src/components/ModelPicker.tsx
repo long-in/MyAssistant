@@ -16,13 +16,15 @@ type Props = {
   compact?: boolean;
   /** 応答の生成中など、切り替えさせないとき。 */
   disabled?: boolean;
+  /** プロバイダの見出しを出さず、一覧だけを並べる(サンドボックスのモデル)。 */
+  flat?: boolean;
 };
 
 /**
  * チャットのモデル切り替え。VS Codeの拡張機能のチャットのように、現在のモデルを示すボタンを押すと、
  * プロバイダごとに分けたモデルの一覧が開き、選ぶとすぐ切り替わる。
  */
-export default function ModelPicker({ route, models, keyStatus, onChange, compact, disabled }: Props) {
+export default function ModelPicker({ route, models, keyStatus, onChange, compact, disabled, flat }: Props) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState<DOMRect | null>(null);
@@ -80,7 +82,7 @@ export default function ModelPicker({ route, models, keyStatus, onChange, compac
             <div role="listbox" style={style} className="fixed z-50 max-h-80 overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-lg">
               {providers.map((p) => (
                 <div key={p} className="py-1">
-                  <div className="px-2 py-1 text-[0.65rem] font-medium tracking-wide text-muted-foreground">{PROVIDER_LABELS[p]}</div>
+                  {!flat && <div className="px-2 py-1 text-[0.65rem] font-medium tracking-wide text-muted-foreground">{PROVIDER_LABELS[p]}</div>}
                   {usable
                     .filter((m) => m.provider === p)
                     .map((m) => {
