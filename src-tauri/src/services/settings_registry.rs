@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{
-    batch, chat_session, debug_log, global_settings, leader, profile, proofread, proxy, prompts, agent_data, skills, stt, tuning, voicevox, wake, workspace,
+    batch, chat_session, debug_log, global_settings, leader, profile, proofread, proxy, prompts, agent_data, sandbox, skills, stt, tuning, voicevox, wake, workspace,
 };
 
 /// 設定の保存先。
@@ -78,6 +78,8 @@ pub const ALL: &[Setting] = &[
     agent(debug_log::ENABLED_KEY, Some(Kind::Flag)),
     // ---- エージェントごと(対象外: 端末ごとに異なるもの、エージェント固有のもの) ----
     agent(batch::KNOWLEDGE_DIR_KEY, None),
+    // サンドボックスの/workspaceにマウントするフォルダ。端末ごとに異なるので対象外
+    agent(sandbox::WORKSPACE_DIR_KEY, None),
     agent(debug_log::DIR_KEY, None),
     agent(stt::REVISION_KEY, None),
     agent(voicevox::VERSIONS_KEY, None),

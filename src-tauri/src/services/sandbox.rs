@@ -51,13 +51,18 @@ const BUILD_KEY: &str = "shared";
 const AGENT_DOCKERFILE_DIR: &str = "agent-sandbox";
 /// Dockerfileの最大バイト数(画面から保存するとき)。
 const DOCKERFILE_MAX_BYTES: usize = 256 * 1024;
-const LABEL_ROOT: &str = "myassistant.root";
+/// コンテナを作ったときのマウント元(ナレッジとワークスペース)。変わったら作り直す。
+const LABEL_MOUNTS: &str = "myassistant.mounts";
 
 const DOCKERFILE_DIR: &str = "sandbox";
 const DOCKERFILE_NAME: &str = "Dockerfile";
 const DOCKERIGNORE: &str = "# ビルドの文脈に含めないものを書きます。\n.dockerignore\nDockerfile\n";
+/// コンテナ内の作業フォルダ(エージェントごとに選んだ担当システムのフォルダ)の場所。
+pub const WORKSPACE_MOUNT: &str = "/workspace";
 /// コンテナ内のナレッジの場所。
-pub const WORKDIR: &str = "/workspace";
+pub const KNOWLEDGE_MOUNT: &str = "/knowledge";
+/// `/workspace`にマウントするフォルダの設定(エージェントごと。端末ごとに異なるので書き出しの対象外)。
+pub const WORKSPACE_DIR_KEY: &str = "sandbox_workspace_dir";
 /// 使われなくなったコンテナを止めるまでの時間。
 const IDLE_STOP: Duration = Duration::from_secs(10 * 60);
 const REAP_INTERVAL: Duration = Duration::from_secs(60);
@@ -293,17 +298,54 @@ pub fn dockerfile_state(app_dir: &Path) -> DockerfileState {
 
 // ------------------------------------------------------------------ 作業ディレクトリ
 
-/// `cwd`をナレッジ配下のホストのパスと、コンテナ内のパスへ解決する。省略時はナレッジの直下。
-/// 受け付けるのは、ナレッジ配下の絶対パス、`~/`始まり、`/workspace`始まり、ナレッジからの相対パス。
-pub fn map_cwd(root: &Path, arg: Option<&str>) -> Result<(PathBuf, String), String> {
-    let outside = || "サンドボックスでは、作業ディレクトリをナレッジの中にしてください。".to_owned();
-    let root = root.canonicalize().map_err(|_| "ナレッジのフォルダが見つかりません。".to_owned())?;
+/// コンテナにマウントするホストのフォルダ。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mounts {
+    /// ナレッジ(`/knowledge`)。
+    pub knowledge: PathBuf,
+    /// 担当システムのフォルダ(`/workspace`)。未設定なら`None`でマウントしない。
+    pub workspace: Option<PathBuf>,
+}
+
+impl Mounts {
+    /// コンテナ内の既定の作業ディレクトリ。`/workspace`があればそこ、なければ`/knowledge`。
+    pub fn default_dir(&self) -> &'static str {
+        if self.workspace.is_some() { WORKSPACE_MOUNT } else { KNOWLEDGE_MOUNT }
+    }
+
+    /// (コンテナ内の場所, ホストのフォルダ)の一覧。
+    fn pairs(&self) -> Vec<(&'static str, &Path)> {
+        let mut v = Vec::new();
+        if let Some(w) = &self.workspace {
+            v.push((WORKSPACE_MOUNT, w.as_path()));
+        }
+        v.push((KNOWLEDGE_MOUNT, self.knowledge.as_path()));
+        v
+    }
+
+    /// コンテナのラベルに残す値。マウント元が変わったかどうかの比較に使う。
+    fn label(&self) -> String {
+        format!("knowledge={};workspace={}", self.knowledge.display(), self.workspace.as_deref().map(|p| p.display().to_string()).unwrap_or_default())
+    }
+}
+
+/// `cwd`を、マウントしたフォルダ配下のホストのパスと、コンテナ内のパスへ解決する。省略時は既定の作業ディレクトリ。
+/// 受け付けるのは、`/workspace`・`/knowledge`始まり、マウント元配下の絶対パス、`~/`始まり、既定の作業ディレクトリからの相対パス。
+pub fn map_cwd(mounts: &Mounts, arg: Option<&str>) -> Result<(PathBuf, String), String> {
+    let outside = || "サンドボックスでは、作業ディレクトリを /workspace か /knowledge の中にしてください。".to_owned();
+    let mut roots = Vec::new();
+    for (inner, host) in mounts.pairs() {
+        let host = host.canonicalize().map_err(|_| format!("{inner} にマウントするフォルダが見つかりません。"))?;
+        roots.push((inner, host));
+    }
+    let base = roots.iter().find(|(i, _)| *i == mounts.default_dir()).map(|(_, h)| h.clone()).ok_or_else(outside)?;
     let arg = arg.map(str::trim).filter(|s| !s.is_empty());
     let candidate = match arg {
-        None => root.clone(),
+        None => base.clone(),
         Some(p) => {
-            if p == WORKDIR || p.starts_with(&format!("{WORKDIR}/")) {
-                root.join(p[WORKDIR.len()..].trim_start_matches('/'))
+            let inner = roots.iter().find(|(i, _)| p == *i || p.starts_with(&format!("{i}/")));
+            if let Some((i, host)) = inner {
+                host.join(p[i.len()..].trim_start_matches('/'))
             } else if let Some(rest) = p.strip_prefix("~/") {
                 PathBuf::from(std::env::var_os("HOME").ok_or_else(outside)?).join(rest)
             } else if p == "~" {
@@ -311,21 +353,76 @@ pub fn map_cwd(root: &Path, arg: Option<&str>) -> Result<(PathBuf, String), Stri
             } else if Path::new(p).is_absolute() {
                 PathBuf::from(p)
             } else {
-                root.join(p)
+                base.join(p)
             }
         }
     };
     let host = candidate.canonicalize().map_err(|_| "指定された作業ディレクトリが見つかりません。".to_owned())?;
-    let rel = host.strip_prefix(&root).map_err(|_| outside())?;
+    let (inner_root, rel) = roots
+        .iter()
+        .find_map(|(i, root)| host.strip_prefix(root).ok().map(|rel| (*i, rel.to_owned())))
+        .ok_or_else(outside)?;
     if !host.is_dir() {
         return Err("作業ディレクトリがディレクトリではありません。".into());
     }
-    let mut inner = WORKDIR.to_owned();
+    let mut inner = inner_root.to_owned();
     for part in rel.components() {
         inner.push('/');
         inner.push_str(part.as_os_str().to_str().ok_or("作業ディレクトリの名前をUTF-8で扱えません。")?);
     }
     Ok((host, inner))
+}
+
+/// `/workspace`にマウントできるフォルダか確かめ、正規化したパスを返す。
+/// `forbidden`は、重なってはいけない場所(アプリデータ・各エージェントのナレッジやデバッグログ)。
+/// ほかに、`/`・ホームフォルダそのものとその親・`~/.ssh`・`~/.aws`と重なる場所を拒否する。
+pub fn check_workspace_dir(candidate: &Path, home: Option<&Path>, forbidden: &[PathBuf]) -> Result<PathBuf, String> {
+    if !candidate.is_absolute() {
+        return Err("フォルダは絶対パスで指定してください。".into());
+    }
+    let dir = candidate.canonicalize().map_err(|_| "フォルダが見つかりません。".to_owned())?;
+    if !dir.is_dir() {
+        return Err("フォルダではありません。".into());
+    }
+    if dir.parent().is_none() {
+        return Err("ルート(/)はマウントできません。".into());
+    }
+    if dir.display().to_string().contains(',') {
+        return Err("フォルダのパスに「,」を含むため、マウントできません。".into());
+    }
+    let overlaps = |a: &Path, b: &Path| a.starts_with(b) || b.starts_with(a);
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_owned());
+    if let Some(home) = home.map(canon) {
+        if home.starts_with(&dir) {
+            return Err("ホームフォルダやその親はマウントできません。".into());
+        }
+        for name in [".ssh", ".aws"] {
+            if overlaps(&dir, &canon(&home.join(name))) {
+                return Err(format!("~/{name} と重なるフォルダはマウントできません。"));
+            }
+        }
+    }
+    if forbidden.iter().any(|f| overlaps(&dir, &canon(f))) {
+        return Err("アプリのデータやナレッジと重なるフォルダはマウントできません。".into());
+    }
+    Ok(dir)
+}
+
+/// 設定された`/workspace`のフォルダ。未設定なら`None`。設定後に消えた・使えなくなった場合はエラー(マウントせずに進めない)。
+pub fn workspace_dir(ctx: &WorkspaceCtx) -> Result<Option<PathBuf>, String> {
+    let Some(saved) = ctx.db.get_setting(WORKSPACE_DIR_KEY).map_err(|e| e.to_string())?.filter(|p| !p.is_empty()) else {
+        return Ok(None);
+    };
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let forbidden: Vec<PathBuf> = app_dir().ok().into_iter().collect();
+    check_workspace_dir(Path::new(&saved), home.as_deref(), &forbidden)
+        .map(Some)
+        .map_err(|e| format!("/workspace のフォルダ({saved})を使えません: {e}"))
+}
+
+/// コンテナにマウントするフォルダ。
+pub fn mounts_for(ctx: &WorkspaceCtx, knowledge: &Path) -> Result<Mounts, String> {
+    Ok(Mounts { knowledge: knowledge.to_owned(), workspace: workspace_dir(ctx)? })
 }
 
 // ------------------------------------------------------------------ 出力の伏せ字
@@ -689,7 +786,7 @@ struct Container {
     name: String,
     running: bool,
     image: String,
-    root: String,
+    mounts: String,
 }
 
 /// このエージェントのコンテナの名前をすべて返す(ラベルで探す。通常は0か1つ)。
@@ -702,15 +799,15 @@ async fn container_names(bin: &Path, id: &str) -> Vec<String> {
 }
 
 async fn find_container(bin: &Path, id: &str) -> Option<Container> {
-    let fmt = format!("{{{{.State.Running}}}}|{{{{index .Config.Labels \"{LABEL_IMAGE}\"}}}}|{{{{index .Config.Labels \"{LABEL_ROOT}\"}}}}");
+    let fmt = format!("{{{{.State.Running}}}}|{{{{index .Config.Labels \"{LABEL_IMAGE}\"}}}}|{{{{index .Config.Labels \"{LABEL_MOUNTS}\"}}}}");
     for name in container_names(bin, id).await {
         let Ok(o) = docker(bin, &["inspect", "-f", &fmt, &name], CLI_TIMEOUT).await else { continue };
         if !o.ok {
             continue;
         }
         let mut parts = o.stdout.splitn(3, '|');
-        let (Some(running), Some(image), Some(root)) = (parts.next(), parts.next(), parts.next()) else { continue };
-        return Some(Container { name, running: running == "true", image: image.to_owned(), root: root.to_owned() });
+        let (Some(running), Some(image), Some(mounts)) = (parts.next(), parts.next(), parts.next()) else { continue };
+        return Some(Container { name, running: running == "true", image: image.to_owned(), mounts: mounts.to_owned() });
     }
     None
 }
@@ -722,15 +819,14 @@ async fn remove_containers(bin: &Path, id: &str) {
     }
 }
 
-/// `docker run`の引数。マウントはナレッジと専用ボリュームだけ。
-fn run_args(id: &str, name: &str, tag: &str, root: &Path) -> Vec<String> {
-    let root = root.display().to_string();
+/// `docker run`の引数。マウントは、ナレッジ・`/workspace`のフォルダ(設定時)・専用ボリュームだけ。
+fn run_args(id: &str, name: &str, tag: &str, mounts: &Mounts) -> Vec<String> {
     let mut a: Vec<String> = ["run", "-d", "--init", "--name"].iter().map(|s| (*s).to_owned()).collect();
     a.push(name.to_owned());
     let mut push = |items: &[&str]| a.extend(items.iter().map(|s| (*s).to_owned()));
     push(&["--label", &format!("{LABEL_AGENT}={id}")]);
     push(&["--label", &format!("{LABEL_IMAGE}={tag}")]);
-    push(&["--label", &format!("{LABEL_ROOT}={root}")]);
+    push(&["--label", &format!("{LABEL_MOUNTS}={}", mounts.label())]);
     push(&["--network", &network_name(id)]);
     push(&["--read-only"]);
     push(&["--tmpfs", "/tmp:rw,nosuid,size=512m"]);
@@ -740,24 +836,28 @@ fn run_args(id: &str, name: &str, tag: &str, root: &Path) -> Vec<String> {
     push(&["--pids-limit", "512"]);
     push(&["--memory", "2g"]);
     push(&["--cpus", "2"]);
-    push(&["--mount", &format!("type=bind,source={root},target={WORKDIR}")]);
+    for (inner, host) in mounts.pairs() {
+        push(&["--mount", &format!("type=bind,source={},target={inner}", host.display())]);
+    }
     push(&["--mount", &format!("type=volume,source={},target=/home/agent", volume_name(id))]);
-    push(&["-u", "agent", "-w", WORKDIR, "-e", "HOME=/home/agent"]);
+    push(&["-u", "agent", "-w", mounts.default_dir(), "-e", "HOME=/home/agent"]);
     push(&[tag, "sleep", "infinity"]);
     a
 }
 
-/// コンテナが使える状態(イメージが現在のもの、ナレッジが同じ、起動中)になるようにして、名前を返す。
-async fn ensure_container(bin: &Path, id: &str, spec: &ImageSpec, root: &Path) -> Result<String, String> {
+/// コンテナが使える状態(イメージが現在のもの、マウント元が同じ、起動中)になるようにして、名前を返す。
+async fn ensure_container(bin: &Path, id: &str, spec: &ImageSpec, mounts: &Mounts) -> Result<String, String> {
     let tag = spec.tag.as_str();
     let lock = ws_lock(id);
     let _held = lock.lock().await;
-    let root_s = root.display().to_string();
-    if root_s.contains(',') {
-        return Err("ナレッジのフォルダ名に「,」を含むため、サンドボックスにマウントできません。".into());
+    for (inner, host) in mounts.pairs() {
+        if host.display().to_string().contains(',') {
+            return Err(format!("{inner} のフォルダ名に「,」を含むため、サンドボックスにマウントできません。"));
+        }
     }
+    let label = mounts.label();
     match find_container(bin, id).await {
-        Some(c) if c.image == tag && c.root == root_s => {
+        Some(c) if c.image == tag && c.mounts == label => {
             if !c.running {
                 let o = docker(bin, &["start", &c.name], CLI_TIMEOUT).await?;
                 if !o.ok {
@@ -766,7 +866,7 @@ async fn ensure_container(bin: &Path, id: &str, spec: &ImageSpec, root: &Path) -
             }
             return Ok(c.name);
         }
-        // イメージかナレッジの場所が変わった。ボリュームは残して作り直す
+        // イメージかマウント元が変わった。ボリュームは残して作り直す
         Some(_) => remove_containers(bin, id).await,
         None => {}
     }
@@ -779,7 +879,7 @@ async fn ensure_container(bin: &Path, id: &str, spec: &ImageSpec, root: &Path) -
             return Err(format!("ネットワークを作れませんでした: {}", clip_err(&o.stderr)));
         }
     }
-    let args = run_args(id, &name, tag, root);
+    let args = run_args(id, &name, tag, mounts);
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let o = docker(bin, &refs, Duration::from_secs(120)).await?;
     if !o.ok {
@@ -855,8 +955,8 @@ async fn kill_group(bin: &Path, container: &str, pidfile: &str) {
 
 pub struct Request<'a> {
     pub ctx: &'a WorkspaceCtx,
-    /// ナレッジのルート(ホストのパス)。
-    pub root: &'a Path,
+    /// マウントするフォルダ(`mounts_for`の結果)。
+    pub mounts: &'a Mounts,
     pub command: &'a str,
     /// コンテナ内の作業ディレクトリ(`map_cwd`の結果)。
     pub cwd: &'a str,
@@ -893,7 +993,7 @@ pub async fn run(
     let bin = require_docker().await?;
     let spec = resolve_image(&app_dir()?, id, &req.ctx.dir)?;
     build_image(&spec, false, cancel, &mut |l| on_chunk(Stream::Stderr, &format!("[sandbox] {l}\n"))).await?;
-    let container = ensure_container(&bin, id, &spec, req.root).await?;
+    let container = ensure_container(&bin, id, &spec, req.mounts).await?;
     let _use = UseGuard::new(id);
 
     let pidfile = format!("{PIDFILE_DIR}/ma-{}.pid", uuid::Uuid::new_v4().simple());
@@ -1136,32 +1236,85 @@ mod tests {
     }
 
     #[test]
-    fn cwd_maps_into_the_workspace_mount() {
+    fn cwd_maps_into_the_knowledge_mount_without_a_workspace() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("knowledge");
         std::fs::create_dir_all(root.join("a/b")).unwrap();
         let canon = root.canonicalize().unwrap();
-        assert_eq!(map_cwd(&root, None).unwrap(), (canon.clone(), "/workspace".into()));
-        assert_eq!(map_cwd(&root, Some("a/b")).unwrap().1, "/workspace/a/b");
-        assert_eq!(map_cwd(&root, Some("/workspace/a")).unwrap().1, "/workspace/a");
-        assert_eq!(map_cwd(&root, Some(canon.join("a").to_str().unwrap())).unwrap().1, "/workspace/a");
-        // ナレッジの外・親をたどる指定は拒否する
-        assert!(map_cwd(&root, Some("/tmp")).is_err());
-        assert!(map_cwd(&root, Some("..")).is_err());
-        assert!(map_cwd(&root, Some("/workspace/../..")).is_err());
-        assert!(map_cwd(&root, Some("missing")).is_err());
+        let m = Mounts { knowledge: root.clone(), workspace: None };
+        assert_eq!(map_cwd(&m, None).unwrap(), (canon.clone(), "/knowledge".into()));
+        assert_eq!(map_cwd(&m, Some("a/b")).unwrap().1, "/knowledge/a/b");
+        assert_eq!(map_cwd(&m, Some("/knowledge/a")).unwrap().1, "/knowledge/a");
+        assert_eq!(map_cwd(&m, Some(canon.join("a").to_str().unwrap())).unwrap().1, "/knowledge/a");
+        // マウントしていない場所・親をたどる指定は拒否する
+        assert!(map_cwd(&m, Some("/workspace")).is_err());
+        assert!(map_cwd(&m, Some("/tmp")).is_err());
+        assert!(map_cwd(&m, Some("..")).is_err());
+        assert!(map_cwd(&m, Some("/knowledge/../..")).is_err());
+        assert!(map_cwd(&m, Some("missing")).is_err());
+    }
+
+    #[test]
+    fn cwd_defaults_to_the_workspace_and_reaches_both_mounts() {
+        let dir = tempfile::tempdir().unwrap();
+        let knowledge = dir.path().join("knowledge");
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(knowledge.join("notes")).unwrap();
+        std::fs::create_dir_all(src.join("app/lib")).unwrap();
+        let m = Mounts { knowledge: knowledge.clone(), workspace: Some(src.clone()) };
+        assert_eq!(map_cwd(&m, None).unwrap().1, "/workspace");
+        assert_eq!(map_cwd(&m, Some("app/lib")).unwrap().1, "/workspace/app/lib");
+        assert_eq!(map_cwd(&m, Some("/knowledge/notes")).unwrap().1, "/knowledge/notes");
+        assert_eq!(map_cwd(&m, Some(src.canonicalize().unwrap().join("app").to_str().unwrap())).unwrap().1, "/workspace/app");
+        assert!(map_cwd(&m, Some("/workspace/../..")).is_err());
+        // マウント元が変われば、コンテナのラベルも変わる(作り直しの判定)
+        let other = Mounts { knowledge, workspace: None };
+        assert_ne!(m.label(), other.label());
+        assert_eq!(m.default_dir(), WORKSPACE_MOUNT);
+        assert_eq!(other.default_dir(), KNOWLEDGE_MOUNT);
     }
 
     #[cfg(unix)]
     #[test]
-    fn cwd_through_a_symlink_out_of_the_workspace_is_rejected() {
+    fn cwd_through_a_symlink_out_of_the_mounts_is_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("knowledge");
         let outside = dir.path().join("outside");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
         std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
-        assert!(map_cwd(&root, Some("link")).is_err());
+        let m = Mounts { knowledge: root, workspace: None };
+        assert!(map_cwd(&m, Some("link")).is_err());
+    }
+
+    #[test]
+    fn workspace_dir_rejects_sensitive_and_overlapping_places() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let app = home.join("Library/MyAssistant");
+        let knowledge = dir.path().join("other-knowledge");
+        let ok = home.join("src/system-a");
+        for p in [&app, &knowledge, &ok, &home.join(".ssh/keys"), &home.join(".aws")] {
+            std::fs::create_dir_all(p).unwrap();
+        }
+        let forbidden = vec![app.clone(), knowledge.clone()];
+        let check = |p: &Path| check_workspace_dir(p, Some(&home), &forbidden);
+        assert_eq!(check(&ok).unwrap(), ok.canonicalize().unwrap());
+        for bad in [
+            Path::new("/"),
+            home.as_path(),
+            dir.path(),                   // ホームの親
+            &home.join(".ssh"),
+            &home.join(".ssh/keys"),
+            &home.join(".aws"),
+            &app,
+            &home.join("Library"),        // アプリデータを含む
+            &knowledge,
+            Path::new("relative/path"),
+            &home.join("missing"),
+        ] {
+            assert!(check(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]
@@ -1186,12 +1339,25 @@ mod tests {
     }
 
     #[test]
-    fn container_mounts_only_the_workspace_and_its_own_volume() {
-        let args = run_args(ID, "myassistant-1a2b3c4d", "img:1", Path::new("/data/knowledge"));
-        let mounts: Vec<&String> = args.iter().enumerate().filter(|(i, _)| *i > 0 && args[i - 1] == "--mount").map(|(_, a)| a).collect();
+    fn container_mounts_only_the_chosen_folders_and_its_own_volume() {
+        let mount_args = |args: &[String]| -> Vec<String> {
+            args.iter().enumerate().filter(|(i, _)| *i > 0 && args[i - 1] == "--mount").map(|(_, a)| a.clone()).collect()
+        };
+        // /workspace が未設定なら、ナレッジと専用ボリュームだけ。作業ディレクトリは /knowledge
+        let m = Mounts { knowledge: PathBuf::from("/data/knowledge"), workspace: None };
+        let args = run_args(ID, "myassistant-1a2b3c4d", "img:1", &m);
+        let mounts = mount_args(&args);
         assert_eq!(mounts.len(), 2);
-        assert!(mounts[0].contains("source=/data/knowledge,target=/workspace"));
+        assert!(mounts[0].contains("source=/data/knowledge,target=/knowledge"));
         assert!(mounts[1].contains(&format!("source=myassistant-home-{ID},target=/home/agent")));
+        assert!(args.windows(2).any(|w| w[0] == "-w" && w[1] == "/knowledge"));
+        // 設定されていれば /workspace も加わり、作業ディレクトリは /workspace
+        let m2 = Mounts { workspace: Some(PathBuf::from("/src/system-a")), ..m };
+        let args2 = run_args(ID, "myassistant-1a2b3c4d", "img:1", &m2);
+        let mounts2 = mount_args(&args2);
+        assert_eq!(mounts2.len(), 3);
+        assert!(mounts2[0].contains("source=/src/system-a,target=/workspace"));
+        assert!(args2.windows(2).any(|w| w[0] == "-w" && w[1] == "/workspace"));
         for flag in ["--read-only", "--cap-drop", "no-new-privileges", "--init"] {
             assert!(args.iter().any(|a| a == flag), "{flag}");
         }
@@ -1261,7 +1427,10 @@ mod tests {
         std::fs::write(root.join("hello.txt"), "hi").unwrap();
         std::fs::write(root2.join("other.txt"), "x").unwrap();
         let cancel = CancelToken::default();
-        let req = |c: &'static str, ctx: &'static WorkspaceCtx, root: &'static Path| Request { ctx, root, command: c, cwd: "/workspace", timeout: Duration::from_secs(60) };
+        let req = |c: &'static str, ctx: &'static WorkspaceCtx, root: &'static Path| {
+            let mounts: &'static Mounts = Box::leak(Box::new(Mounts { knowledge: root.to_owned(), workspace: None }));
+            Request { ctx, mounts, command: c, cwd: KNOWLEDGE_MOUNT, timeout: Duration::from_secs(60) }
+        };
         // テストの間だけ生きるよう、リークさせて'staticにする
         let (ctx, ctx2): (&'static WorkspaceCtx, &'static WorkspaceCtx) = (Box::leak(Box::new(ctx)), Box::leak(Box::new(ctx2)));
         let (root, root2): (&'static Path, &'static Path) = (Box::leak(root.into_boxed_path()), Box::leak(root2.into_boxed_path()));
@@ -1270,14 +1439,14 @@ mod tests {
         let out = run(req("echo token=$MY_TOKEN; pwd; cat hello.txt; id -un", ctx, root), &cancel, |_, _| {}).await.unwrap();
         assert_eq!(out.code, Some(0), "{}{}", out.stdout, out.stderr);
         assert!(out.stdout.contains("token=***") && !out.stdout.contains("supersecretvalue123"), "{}", out.stdout);
-        assert!(out.stdout.contains("/workspace") && out.stdout.contains("hi") && out.stdout.contains("agent"));
+        assert!(out.stdout.contains("/knowledge") && out.stdout.contains("hi") && out.stdout.contains("agent"));
         // 画面で確認できるコンテナ名は myassistant-<ランダム>(エージェントの名前やIDは含まれない)
         let name = status(id, &app_dir().unwrap(), &ctx.dir).await.container_name.expect("container name");
         assert!(name.starts_with("myassistant-") && !name.contains(id), "{name}");
         // 2. ホームの認証情報・アプリのデータは見えない。他エージェントのナレッジも見えない
-        let out = run(req("ls ~/.aws /Users 2>&1; ls /workspace; env | grep -c MY_TOKEN", ctx, root), &cancel, |_, _| {}).await.unwrap();
+        let out = run(req("ls ~/.aws /Users 2>&1; ls /knowledge; env | grep -c MY_TOKEN", ctx, root), &cancel, |_, _| {}).await.unwrap();
         assert!(!out.stdout.contains("other.txt") && !out.stdout.contains("credentials"), "{}", out.stdout);
-        let out2 = run(req("ls /workspace; echo [$MY_TOKEN]", ctx2, root2), &cancel, |_, _| {}).await.unwrap();
+        let out2 = run(req("ls /knowledge; echo [$MY_TOKEN]", ctx2, root2), &cancel, |_, _| {}).await.unwrap();
         assert!(out2.stdout.contains("other.txt") && !out2.stdout.contains("hello.txt") && out2.stdout.contains("[]"), "{}", out2.stdout);
         // 3. 時間切れでコンテナ内のプロセスも止まる
         let started = Instant::now();
