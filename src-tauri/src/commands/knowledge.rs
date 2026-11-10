@@ -23,6 +23,15 @@ pub fn knowledge_dir(ctx: Ctx) -> Result<String, AppError> {
     Ok(root.to_string_lossy().into_owned())
 }
 
+/// ナレッジの保存先を Finder で開く(無ければ作る)。
+#[tauri::command]
+pub fn open_knowledge_dir(ctx: Ctx) -> Result<(), AppError> {
+    let root = batch::knowledge_root(&ctx)?;
+    std::fs::create_dir_all(&root).map_err(|e| AppError::Io(e.to_string()))?;
+    let status = std::process::Command::new("/usr/bin/open").arg(&root).status().map_err(|e| AppError::Io(e.to_string()))?;
+    if status.success() { Ok(()) } else { Err(AppError::Io(format!("open failed: {status}"))) }
+}
+
 /// ナレッジの保存先を変更する。`None`で既定の場所に戻す。既存ファイルは移動しない。
 #[tauri::command]
 pub fn set_knowledge_dir(ws: State<'_, Workspaces>, ctx: Ctx, path: Option<String>) -> Result<String, AppError> {

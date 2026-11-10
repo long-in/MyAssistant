@@ -343,6 +343,9 @@ export const resetSandbox = () => invoke<void>("reset_sandbox");
 export const resetSandboxDockerfile = () => invoke<void>("reset_sandbox_dockerfile");
 /** `/workspace`にマウントするフォルダ(エージェントごとに決まった場所。無ければ作る)。 */
 export const getSandboxWorkspaceDir = () => invoke<string>("get_sandbox_workspace_dir");
+/** デバッグログの出力先を Finder で開く。 */
+export const openDebugLogDir = () => invoke<void>("open_debug_log_dir");
+
 /** `/workspace`にマウントするフォルダを Finder で開く。 */
 export const openSandboxWorkspaceDir = () => invoke<void>("open_sandbox_workspace_dir");
 
@@ -871,6 +874,8 @@ export const revealKnowledgeInFinder = (agentId: string, path?: string) =>
 /** ナレッジ(Markdown)の保存先フォルダ。Obsidianのvaultとして開ける。 */
 export const knowledgeDir = () => invoke<string>("knowledge_dir");
 /** 保存先を変更する(nullで既定に戻す)。既存ファイルは移動されない。変更後のパスを返す。 */
+/** ナレッジの保存先を Finder で開く。 */
+export const openKnowledgeDir = () => invoke<void>("open_knowledge_dir");
 export const setKnowledgeDir = (path: string | null) => invoke<string>("set_knowledge_dir", { path });
 /** スキル(決まった依頼への対応手順)。ナレッジ配下の`.my-assistant/skills/<name>.md`に、エージェントごとに保存される。 */
 export type Skill = { name: string; description: string; body: string };

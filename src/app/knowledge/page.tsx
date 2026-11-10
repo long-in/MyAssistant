@@ -24,6 +24,7 @@ import {
   memoryView,
   memoryForget,
   knowledgeDir,
+  openKnowledgeDir,
   listKnowledge,
   listKnowledgeDirs,
   listOtherKnowledge,
@@ -371,6 +372,9 @@ export default function Knowledge() {
               {t("保存先:")} {dir}
             </p>
             <div className="mt-2 flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => openKnowledgeDir().catch((e) => toast.error(reportError(e)))}>
+                <FolderOpen /> {t("Finder で開く")}
+              </Button>
               <Button size="sm" variant="outline" onClick={pickDir}>
                 <FolderOpen /> {t("変更")}
               </Button>
