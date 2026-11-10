@@ -2,42 +2,35 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { FileText, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import {
-  type SandboxFiles,
   type SandboxStatus,
   getSandboxEnabled,
-  getSandboxFiles,
   getSandboxStatus,
   reportError,
   resetSandbox,
-  revealSandboxFile,
 } from "@/lib/api";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Heading, StatusPill } from "@/components/GlobalPanels";
 import SandboxDockerfile from "@/components/SandboxDockerfile";
 import SandboxAgentSettings from "@/components/SandboxAgentSettings";
+import SandboxEnvEditor from "@/components/SandboxEnvEditor";
 
 /**
  * エージェントごとのサンドボックス(専用のDockerコンテナの中で Claude Code が作業する)の状態と設定、Dockerfile・環境変数の確認。
  * 有効/無効は全体設定(`SandboxSwitch`)で切り替えるので、ここにスイッチは無い。
  * Dockerfileと環境変数(sandbox.env)はワークスペースのファイルで、ここでは状態の確認とFinderでの表示だけを行う。
- * 環境変数の値は画面へ渡されない(名前だけ表示する)。
  */
 export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
   const t = useT();
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [status, setStatus] = useState<SandboxStatus | null>(null);
-  const [files, setFiles] = useState<SandboxFiles | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [s, f] = await Promise.all([getSandboxStatus(), getSandboxFiles()]);
-      setStatus(s);
-      setFiles(f);
+      setStatus(await getSandboxStatus());
     } catch (e) {
       toast.error(reportError(e));
     }
@@ -53,11 +46,9 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    Promise.all([getSandboxStatus(), getSandboxFiles()])
-      .then(([s, f]) => {
-        if (cancelled) return;
-        setStatus(s);
-        setFiles(f);
+    getSandboxStatus()
+      .then((s) => {
+        if (!cancelled) setStatus(s);
       })
       .catch((e) => toast.error(reportError(e)));
     return () => {
@@ -92,7 +83,7 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
               <li>{t("認証情報(sandbox.env と AWS の一時キー)は、指示ごとに環境変数で渡します。")}</li>
               <li>{t("Dockerが使えないときは、ホストでは実行せずエラーにします。")}</li>
               <li>{t("コマンドはLinux(Debian)上で動きます。brew や open などmacOS向けのコマンドは使えません。")}</li>
-              <li>{t("sandbox.env はこのエージェントのフォルダにあり、編集できます。")}</li>
+              <li>{t("sandbox.env(コンテナへ渡す環境変数)は、この画面で編集できます。")}</li>
             </ul>
           </Heading>
           <p className="text-xs text-muted-foreground">
@@ -142,37 +133,8 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
 
           <SandboxDockerfile key={workspaceId} agent={{ id: workspaceId }} embedded />
 
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="hud-label">sandbox.env</span>
-              <Button size="sm" variant="outline" onClick={() => run("reveal-env", () => revealSandboxFile("env"))}>
-                <FileText className="size-3.5" />
-                {t("ファイルを表示")}
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => void refresh()}>
-                {t("再読み込み")}
-              </Button>
-            </div>
-            {files?.env.error ? (
-              <p className="text-xs text-destructive">
-                {files.env.error.line != null
-                  ? t("{line}行目が正しくありません: {message}", { line: files.env.error.line, message: files.env.error.message })
-                  : files.env.error.message}
-              </p>
-            ) : files && files.env.names.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">
-                {files.env.names.map((n) => (
-                  <Badge key={n} variant="secondary" className="font-mono">
-                    {n}
-                  </Badge>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">{t("環境変数は未設定です。")}</p>
-            )}
-            <p className="text-xs text-muted-foreground">
-              {t("NAME=value の形式で書きます。値はここには表示されません。保存すると次のコマンドから反映されます。")}
-            </p>
+          <div className="border-t pt-4">
+            <SandboxEnvEditor key={workspaceId} />
           </div>
         </div>
       )}

@@ -52,19 +52,17 @@ pub fn path(dir: &Path) -> PathBuf {
 
 /// 初回に作る説明入りの空ファイル。
 const TEMPLATE: &str = "\
-# このエージェントのサンドボックス(Dockerコンテナ)でコマンドを実行するときに渡す環境変数です。
-# 1行に1つ、NAME=value の形で書きます。保存すると次のコマンドから反映されます(再起動は不要)。
-# 値は必要なら \"...\" か '...' で囲めます(複数行の値は使えません)。
-#
-# 例:
-# AWS_ACCESS_KEY_ID=AKIA...
-# AWS_SECRET_ACCESS_KEY=...
-# AWS_DEFAULT_REGION=ap-northeast-1
-#
+# このエージェントのサンドボックス(Dockerコンテナ)へ渡す環境変数です。コンテナ内の Claude Code とコマンドから使えます。
+# 1行に1つ、NAME=value の形で書きます。保存すると次の指示から反映されます(再起動は不要)。
+# 値は必要なら \"...\" か '...' で囲めます(複数行の値は使えません)。値が空の行は渡しません。
+# AWS の認証情報は、このエージェントの AWS の設定から一時キーを発行して渡すので、ここには書かなくてかまいません。
 # このファイルは他のエージェントやナレッジからは見えず、コンテナの中にも置かれません。
+
+# Claude Code の API キー(接続先が Anthropic API のとき必要)
+ANTHROPIC_API_KEY=
 ";
 
-/// ファイルが無ければ、説明入りの空ファイルを所有者のみ読み書きできる権限で作る。
+/// ファイルが無ければ、説明と既定の名前(値は空)を入れたファイルを、所有者のみ読み書きできる権限で作る。
 pub fn ensure_template(dir: &Path) -> Result<PathBuf, String> {
     let file = path(dir);
     if file.exists() {
@@ -152,6 +150,28 @@ pub fn parse(text: &str) -> Result<BTreeMap<String, String>, EnvError> {
 }
 
 /// `dir`のファイルを読んで解析する。無ければ空。
+/// ファイルの内容(値を含む)。無ければ既定の内容で作ってから読む。画面での編集に使う。
+pub fn read(dir: &Path) -> Result<String, String> {
+    let file = ensure_template(dir)?;
+    fs::read_to_string(file).map_err(|_| "sandbox.env を UTF-8 のテキストとして読めません。".to_owned())
+}
+
+/// 画面で編集した内容を保存する。書式を検証し、誤りがあれば保存しない。権限は所有者のみ(0600)。
+/// 一時ファイルに書いてから置き換えるので、途中で失敗しても元の内容は壊れない。
+pub fn write(dir: &Path, text: &str) -> Result<(), EnvError> {
+    if text.len() as u64 > MAX_FILE_BYTES {
+        return Err(EnvError { line: None, message: "ファイルが大きすぎます".into() });
+    }
+    parse(text)?;
+    let io = |e: String| EnvError { line: None, message: e };
+    fs::create_dir_all(dir).map_err(|e| io(e.to_string()))?;
+    let tmp = dir.join(format!("{FILE_NAME}.tmp"));
+    let _ = fs::remove_file(&tmp);
+    write_private(&tmp, text).map_err(io)?;
+    fs::rename(&tmp, path(dir)).map_err(|e| io(e.to_string()))
+}
+
+/// 渡す環境変数。値が空の行は除く(空のキーで上書きしないため)。
 pub fn load(dir: &Path) -> Result<BTreeMap<String, String>, EnvError> {
     let file = path(dir);
     let meta = match fs::metadata(&file) {
@@ -163,10 +183,12 @@ pub fn load(dir: &Path) -> Result<BTreeMap<String, String>, EnvError> {
         return Err(EnvError { line: None, message: "ファイルが大きすぎます".into() });
     }
     let text = fs::read_to_string(&file).map_err(|_| EnvError { line: None, message: "UTF-8のテキストとして読めません".into() })?;
-    parse(&text)
+    let mut vars = parse(&text)?;
+    vars.retain(|_, v| !v.is_empty());
+    Ok(vars)
 }
 
-/// 画面に出す内容。値は含めない。
+/// 名前と検証結果の要約(値が空の名前は含めない)。
 #[derive(Debug, Clone, Serialize)]
 pub struct Summary {
     pub names: Vec<String>,
@@ -250,5 +272,37 @@ mod tests {
         assert!(s.error.is_none());
         fs::write(path(dir.path()), "TOKEN abc123\n").unwrap();
         assert!(summary(dir.path()).error.is_some());
+    }
+
+    #[test]
+    fn template_has_the_default_names_with_empty_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = read(dir.path()).unwrap();
+        assert!(text.contains("\nANTHROPIC_API_KEY=\n"));
+        assert_eq!(parse(&text).unwrap().get("ANTHROPIC_API_KEY").map(String::as_str), Some(""));
+        // 値が空の名前は渡さない
+        assert!(load(dir.path()).unwrap().is_empty());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(path(dir.path())).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+    }
+
+    #[test]
+    fn write_validates_before_saving_and_keeps_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "ANTHROPIC_API_KEY=sk-1\nEMPTY=\n").unwrap();
+        assert_eq!(load(dir.path()).unwrap().into_iter().collect::<Vec<_>>(), vec![("ANTHROPIC_API_KEY".to_owned(), "sk-1".to_owned())]);
+        // 不正な内容は保存しない(元の内容が残る)
+        let err = write(dir.path(), "OK=1\nPATH=/x\n").unwrap_err();
+        assert_eq!(err.line, Some(2));
+        assert!(read(dir.path()).unwrap().contains("sk-1"));
+        assert!(!dir.path().join("sandbox.env.tmp").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(path(dir.path())).unwrap().permissions().mode() & 0o777, 0o600);
+        }
     }
 }

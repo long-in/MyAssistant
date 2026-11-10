@@ -88,6 +88,8 @@ pub fn run() {
       commands::sandbox::set_sandbox_enabled,
       commands::sandbox::get_sandbox_status,
       commands::sandbox::get_sandbox_files,
+      commands::sandbox::get_sandbox_env,
+      commands::sandbox::set_sandbox_env,
       commands::sandbox::get_sandbox_image_status,
       commands::sandbox::get_sandbox_dockerfile,
       commands::sandbox::set_sandbox_dockerfile,

@@ -61,6 +61,34 @@ pub fn get_sandbox_files(ctx: Ctx) -> Result<Files, AppError> {
 }
 
 #[derive(Serialize)]
+pub struct EnvFile {
+    /// ファイルの内容(値を含む)。
+    pub content: String,
+    pub summary: sandbox_env::Summary,
+}
+
+/// このエージェントの`sandbox.env`の内容。無ければ既定の内容で作る。
+#[tauri::command]
+pub fn get_sandbox_env(ctx: Ctx) -> Result<EnvFile, AppError> {
+    supported(&ctx)?;
+    let content = sandbox_env::read(&ctx.dir).map_err(AppError::Sandbox)?;
+    Ok(EnvFile { content, summary: sandbox_env::summary(&ctx.dir) })
+}
+
+/// `sandbox.env`を保存する。書式に誤りがあれば保存せず、行番号つきのエラーを返す。
+#[tauri::command]
+pub fn set_sandbox_env(ctx: Ctx, content: String) -> Result<sandbox_env::Summary, AppError> {
+    supported(&ctx)?;
+    sandbox_env::write(&ctx.dir, &content).map_err(|e| {
+        AppError::Sandbox(match e.line {
+            Some(n) => format!("{n}行目が正しくありません: {}", e.message),
+            None => e.message,
+        })
+    })?;
+    Ok(sandbox_env::summary(&ctx.dir))
+}
+
+#[derive(Serialize)]
 pub struct DockerfileInfo {
     pub content: String,
     pub state: DockerfileState,
