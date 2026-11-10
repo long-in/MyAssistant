@@ -15,7 +15,7 @@ import {
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { StatusPill } from "@/components/GlobalPanels";
+import { StatusPill, UsedBy, linkCardClass } from "@/components/GlobalPanels";
 
 const GB = 1024 ** 3;
 
@@ -23,7 +23,7 @@ const GB = 1024 ** 3;
  * 端末内のLLM(Qwen 2.5 7B)の取得と削除。llama-serverとモデルは同梱せず、公式の配布物をアプリデータへ取得して使う。
  * 取得物は全ワークスペース共通。
  */
-export default function LocalLlmPanel({ onChanged }: { onChanged: () => void }) {
+export default function LocalLlmPanel({ onChanged, usedBy = [] }: { onChanged: () => void; usedBy?: string[] }) {
   const t = useT();
   const [status, setStatus] = useState<LocalLlmStatus | null>(null);
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
@@ -88,7 +88,7 @@ export default function LocalLlmPanel({ onChanged }: { onChanged: () => void }) 
   const size = status ? (status.size / GB).toFixed(1) : "4.7";
 
   return (
-    <div className={cn("rounded-xl border px-4 py-3 transition-colors", installed ? "border-primary/40 bg-primary/5 shadow-[0_0_14px_oklch(0.85_0.14_180/12%)]" : "border-dashed")}>
+    <div className={linkCardClass(installed)}>
       <div className="flex items-center gap-3">
         <span
           aria-hidden
@@ -118,6 +118,7 @@ export default function LocalLlmPanel({ onChanged }: { onChanged: () => void }) 
           )
         )}
       </div>
+      <UsedBy features={usedBy} linked={installed} />
       {downloading && (
         <div className="mt-3 flex items-center gap-3 pl-5" role="status">
           <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />

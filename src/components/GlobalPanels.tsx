@@ -27,7 +27,7 @@ const HEADING_ICONS: Record<string, LucideIcon> = {
   "AI Settings": BrainCircuit,
   "Wake Words": Mic,
   "Voice Timing": AudioLines,
-  Limits: SlidersHorizontal,
+  "AI Limits": SlidersHorizontal,
   Backup: Archive,
   Work: Briefcase,
   "OS Notifications": Bell,

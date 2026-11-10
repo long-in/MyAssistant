@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ChevronDown, Download, KeyRound, Loader2, Plug, Plus, Trash2, X } from "lucide-react";
+import { StatusPill, UsedBy, linkCardClass } from "@/components/GlobalPanels";
 import { toast } from "sonner";
 import { useT } from "@/lib/i18n";
 import {
@@ -40,7 +41,7 @@ aws_secret_access_key = ...`;
  * Amazon Bedrock(Claude)の接続設定。`~/.aws/config`と`~/.aws/credentials`の中身をそのまま貼り付けて登録する。
  * 保存後の内容は画面に戻らない(プロファイルの一覧だけ表示する)。更新するときは貼り付け直す。
  */
-export default function AwsPanel({ onChanged }: { onChanged: () => void }) {
+export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => void; usedBy?: string[] }) {
   const t = useT();
   const [status, setStatus] = useState<AwsStatus | null>(null);
   const [open, setOpen] = useState(false);
@@ -109,7 +110,7 @@ export default function AwsPanel({ onChanged }: { onChanged: () => void }) {
   const expires = status?.session_expires_at ? new Date(status.session_expires_at * 1000) : null;
 
   return (
-    <div className="py-3">
+    <div className={linkCardClass(registered)}>
       <div className="flex items-center gap-3">
         <span
           aria-hidden
@@ -122,8 +123,8 @@ export default function AwsPanel({ onChanged }: { onChanged: () => void }) {
           <div className="text-sm font-medium">Amazon Bedrock (Claude)</div>
           <div className="text-xs text-muted-foreground">{t("AWSのスイッチロール(MFA対応)で接続")}</div>
         </div>
-        <span className="hud-label hidden text-[0.6rem] sm:inline" aria-live="polite">
-          {registered ? "linked" : ""}
+        <span className="hidden sm:inline" aria-live="polite">
+          {registered && <StatusPill on>linked</StatusPill>}
         </span>
         {registered && (
           <Button
@@ -142,6 +143,8 @@ export default function AwsPanel({ onChanged }: { onChanged: () => void }) {
           <ChevronDown className={cn("transition-transform", open && "rotate-180")} />
         </Button>
       </div>
+
+      <UsedBy features={usedBy} linked={registered} />
 
       {registered && (
         <div className="mt-3 flex flex-wrap items-center gap-2 pl-5">

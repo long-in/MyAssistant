@@ -99,7 +99,7 @@ function KeyRow({ title, description, registered, busy, card, onSave, onDelete }
 }
 
 const TASK_FIELDS: TuningField<Tuning>[] = [
-  { key: "web_search_max", label: "Web検索の回数", hint: "1回の依頼で検索できる上限。多いほど料金が増える。", unit: "回", min: 1, max: 20, step: 1 },
+  { key: "web_search_max", label: "Web検索の回数", hint: "Claude Codeのみ有効。1回の依頼で検索できる上限。多いほど料金が増える。", unit: "回", min: 1, max: 20, step: 1 },
   { key: "web_fetch_max", label: "ページ取得の回数", hint: "1回の依頼でページを読める上限。", unit: "回", min: 1, max: 20, step: 1 },
   { key: "history_exchanges", label: "そのまま渡す会話の往復数", hint: "超えた古い会話はAIで要約して渡す(要約にも少量のトークンを使う)。", unit: "往復", min: 2, max: 30, step: 1 },
 ];
@@ -1302,13 +1302,13 @@ export default function Setup() {
           </section>
           {active.id === LEADER_ID && <LeaderKeyCopy onCopied={refresh} />}
           {active.id !== LEADER_ID && <TuningPanel
-            title="Limits"
+            title="AI Limits"
             help={t("検索回数などの上限")}
             helpBody={
               <>
                 <p>{t("AIが1回の依頼で使う量の上限です。")}</p>
                 <ul>
-                  <li>{t("Web検索とページ取得の回数は、Web Searchがオンのときだけ使われます。")}</li>
+                  <li>{t("Web検索とページ取得の回数は、Web Searchがオンのときだけ使われます。Web検索の回数はClaude Codeのみ有効です。")}</li>
                   <li>{t("次の送信から反映されます。")}</li>
                 </ul>
               </>
