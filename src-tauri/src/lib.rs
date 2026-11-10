@@ -68,8 +68,6 @@ pub fn run() {
       commands::settings::set_debug_mode,
       commands::settings_transfer::export_settings,
       commands::settings_transfer::import_settings,
-      commands::settings_transfer::export_global_settings,
-      commands::settings_transfer::import_global_settings,
       commands::global_settings::get_global_prefs,
       commands::global_settings::set_global_language,
       commands::global_settings::set_global_os_notifications,

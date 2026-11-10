@@ -9,7 +9,6 @@ use serde_json::Value;
 use super::{
     aws, batch,
     command_policy::{self, Policy},
-    global_settings::{GlobalStore, SettingsStore},
     profile, pronunciation,
     settings_registry::{self, Kind, Scope},
     workspace::WorkspaceCtx,
@@ -28,11 +27,6 @@ const MAX_TEXT_CHARS: usize = 20_000;
 /// 書き出し・コピーの対象(エージェントごとの設定)。一覧は`settings_registry`で決める。
 fn entries() -> impl Iterator<Item = (&'static str, Kind)> {
     settings_registry::transferable(Scope::Agent)
-}
-
-/// 全体設定の項目。全エージェントで共通で、設定のエクスポート・コピーの対象にはしない(全体設定のバックアップだけが扱う)。
-fn global_entries() -> impl Iterator<Item = (&'static str, Kind)> {
-    settings_registry::transferable(Scope::Global)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -141,33 +135,6 @@ pub fn apply(db: &Db, file: &SettingsFile) -> Result<(Report, Option<Policy>), A
     let v = validate(file)?;
     v.write(db)?;
     Ok((v.report(), v.policy))
-}
-
-/// 全体設定をファイルの内容にまとめる。未設定の項目は含めない。
-pub fn collect_global(store: &GlobalStore, exported_at: String) -> Result<SettingsFile, AppError> {
-    let mut settings = BTreeMap::new();
-    for (key, _) in global_entries() {
-        if let Some(v) = store.get_setting(key)? {
-            settings.insert(key.to_owned(), v);
-        }
-    }
-    Ok(SettingsFile { app: APP_ID.into(), version: FORMAT_VERSION, exported_at, settings, command_policy: None })
-}
-
-/// 全体設定のファイルを取り込む。全項目を検証してから書き込み、不正な項目があれば何も変更しない。
-/// ファイルに無い項目は変更せず、未知の項目(エージェントごとの設定など)は読み飛ばす。
-pub fn apply_global(store: &GlobalStore, file: &SettingsFile) -> Result<Report, AppError> {
-    let mut accepted: Vec<(&str, &str)> = Vec::new();
-    let mut skipped = 0;
-    for (key, value) in &file.settings {
-        match global_entries().find(|(k, _)| k == key) {
-            Some((k, kind)) if valid(kind, value) => accepted.push((k, value.as_str())),
-            Some(_) => return Err(AppError::InvalidSettings(format!("{key}の値が不正です"))),
-            None => skipped += 1,
-        }
-    }
-    store.set_settings(&accepted)?;
-    Ok(Report { applied: accepted.len(), skipped })
 }
 
 /// ワークスペース間の設定コピーの対象。
@@ -323,26 +290,6 @@ mod tests {
         let (report, _) = apply(&b, &file(&[(profile::KEY, "{}"), (chat::SHELL_ACCESS_KEY, "0")])).unwrap();
         assert_eq!(report, Report { applied: 1, skipped: 1 });
         assert_eq!(b.get_setting(profile::KEY).unwrap(), None);
-    }
-
-    #[test]
-    fn global_roundtrips_and_bad_item_changes_nothing() {
-        let d = tempfile::tempdir().unwrap();
-        let a = GlobalStore::open(d.path());
-        let json = r#"{"enabled":true,"name":"山田","birthday":"1990-05-20"}"#;
-        a.set_setting(profile::KEY, json).unwrap();
-        a.set_setting(batch::BATCH_INTERVAL_KEY, "45").unwrap();
-        let text = serde_json::to_string(&collect_global(&a, "t".into()).unwrap()).unwrap();
-        let d2 = tempfile::tempdir().unwrap();
-        let b = GlobalStore::open(d2.path());
-        assert_eq!(apply_global(&b, &parse(&text).unwrap()).unwrap(), Report { applied: 2, skipped: 0 });
-        assert_eq!(b.get_setting(profile::KEY).unwrap().as_deref(), Some(json));
-
-        for bad in [(profile::KEY, r#"{"name":"a<b"}"#), (batch::BATCH_INTERVAL_KEY, "1"), (global_settings::LANGUAGE_KEY, "fr")] {
-            let f = file(&[(chat::BASE_INSTRUCTIONS_KEY, "変えない"), bad]);
-            assert!(apply_global(&b, &f).is_err());
-            assert_eq!(b.get_setting(chat::BASE_INSTRUCTIONS_KEY).unwrap(), None);
-        }
     }
 
     #[test]
