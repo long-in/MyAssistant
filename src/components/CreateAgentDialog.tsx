@@ -48,7 +48,7 @@ export default function CreateAgentDialog({ onClose }: { onClose: () => void }) 
       const created = await createAgent(name, color);
       await refreshWorkspace();
       await switchTo(created.id);
-      toast.success(t("エージェントを作成しました。"), { description: t("設定を引き継ぐには、設定の「エージェント」タブにある「設定のコピー」を使ってください。") });
+      toast.success(t("エージェントを作成しました。"), { description: t("設定を引き継ぐには、設定の「その他」タブにある「設定のコピー」を使ってください。") });
       onClose();
       router.push("/");
     } catch (e) {
