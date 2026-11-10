@@ -1,6 +1,5 @@
 //! エージェントごとのDockerサンドボックスの設定・状態・ファイル操作。環境変数の値は画面へ返さない。
 use serde::Serialize;
-use tauri::State;
 
 use crate::{
     commands::chat::SANDBOX_ENABLED_KEY,
@@ -9,7 +8,7 @@ use crate::{
         global_settings::SettingsStore,
         sandbox::{self, DockerfileState, ImageStatus, Status},
         sandbox_agent, sandbox_env,
-        workspace::{Ctx, WorkspaceCtx, Workspaces},
+        workspace::{Ctx, WorkspaceCtx},
     },
     utils::error::AppError,
 };
@@ -59,6 +58,34 @@ pub struct Files {
 pub fn get_sandbox_files(ctx: Ctx) -> Result<Files, AppError> {
     supported(&ctx)?;
     Ok(Files { env: sandbox_env::summary(&ctx.dir) })
+}
+
+#[derive(Serialize)]
+pub struct EnvFile {
+    /// ファイルの内容(値を含む)。
+    pub content: String,
+    pub summary: sandbox_env::Summary,
+}
+
+/// このエージェントの`sandbox.env`の内容。無ければ既定の内容で作る。
+#[tauri::command]
+pub fn get_sandbox_env(ctx: Ctx) -> Result<EnvFile, AppError> {
+    supported(&ctx)?;
+    let content = sandbox_env::read(&ctx.dir).map_err(AppError::Sandbox)?;
+    Ok(EnvFile { content, summary: sandbox_env::summary(&ctx.dir) })
+}
+
+/// `sandbox.env`を保存する。書式に誤りがあれば保存せず、行番号つきのエラーを返す。
+#[tauri::command]
+pub fn set_sandbox_env(ctx: Ctx, content: String) -> Result<sandbox_env::Summary, AppError> {
+    supported(&ctx)?;
+    sandbox_env::write(&ctx.dir, &content).map_err(|e| {
+        AppError::Sandbox(match e.line {
+            Some(n) => format!("{n}行目が正しくありません: {}", e.message),
+            None => e.message,
+        })
+    })?;
+    Ok(sandbox_env::summary(&ctx.dir))
 }
 
 #[derive(Serialize)]
@@ -157,28 +184,21 @@ pub async fn build_agent_sandbox_image(ctx: Ctx, force: bool) -> Result<(), AppE
         .map_err(AppError::Sandbox)
 }
 
-/// `/workspace`にマウントするフォルダ(未設定なら`None`)。
+/// `/workspace`にマウントするフォルダ(エージェントごとに決まった場所)。無ければ作る。
 #[tauri::command]
-pub fn get_sandbox_workspace_dir(ctx: Ctx) -> Result<Option<String>, AppError> {
+pub fn get_sandbox_workspace_dir(ctx: Ctx) -> Result<String, AppError> {
     supported(&ctx)?;
-    Ok(ctx.db.get_setting(sandbox::WORKSPACE_DIR_KEY)?.filter(|p| !p.is_empty()))
+    let dir = sandbox::ensure_workspace_dir(&ctx).map_err(AppError::Sandbox)?;
+    Ok(dir.to_string_lossy().into_owned())
 }
 
-/// `/workspace`にマウントするフォルダを設定する。`None`で解除。次のコマンドでコンテナが作り直される。
-/// アプリデータ・各エージェントのナレッジ・`/`・ホームそのもの・`~/.ssh`・`~/.aws`と重なるフォルダは拒否する。
+/// `/workspace`にマウントするフォルダを Finder で開く(無ければ作る)。
 #[tauri::command]
-pub fn set_sandbox_workspace_dir(ws: State<'_, Workspaces>, ctx: Ctx, path: Option<String>) -> Result<Option<String>, AppError> {
+pub fn open_sandbox_workspace_dir(ctx: Ctx) -> Result<(), AppError> {
     supported(&ctx)?;
-    let Some(path) = path.map(|p| p.trim().to_owned()).filter(|p| !p.is_empty()) else {
-        ctx.db.set_setting(sandbox::WORKSPACE_DIR_KEY, "")?;
-        return Ok(None);
-    };
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-    let dir = sandbox::check_workspace_dir(std::path::Path::new(&path), home.as_deref(), &ws.sandbox_forbidden_paths())
-        .map_err(AppError::Sandbox)?;
-    let saved = dir.to_string_lossy().into_owned();
-    ctx.db.set_setting(sandbox::WORKSPACE_DIR_KEY, &saved)?;
-    Ok(Some(saved))
+    let dir = sandbox::ensure_workspace_dir(&ctx).map_err(AppError::Sandbox)?;
+    let status = std::process::Command::new("/usr/bin/open").arg(&dir).status().map_err(|e| AppError::Io(e.to_string()))?;
+    if status.success() { Ok(()) } else { Err(AppError::Io(format!("open failed: {status}"))) }
 }
 
 /// コンテナ内の Claude Code の接続先・モデル・上限時間。

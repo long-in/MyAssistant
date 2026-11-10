@@ -377,13 +377,12 @@ async fn send_chat_sandbox(
         .clone();
     let base = prompts::load_chat(&ctx.db, &*ctx.global)?;
     let (personal, instructions, pinned) = instruction_blocks(app, ctx)?;
-    let has_workspace = sandbox::workspace_dir(ctx).map_err(AppError::Sandbox)?.is_some();
     let system: Vec<String> = std::iter::once(base)
         .chain(instructions)
         .chain(pinned)
         .chain(personal)
         .chain(corrections)
-        .chain(std::iter::once(sandbox_agent::guide(has_workspace)))
+        .chain(std::iter::once(sandbox_agent::guide()))
         .collect();
     // コマンド実行・Web検索を無効にしているエージェントでは、対応するツールも拒否する
     let mut deny = Vec::new();

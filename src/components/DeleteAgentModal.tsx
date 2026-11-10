@@ -73,6 +73,7 @@ export default function DeleteAgentModal({ agent, onClose, onDeleted }: Props) {
         <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs">
           <li>{t("会話・要約・設定・コマンド権限・読み上げ辞書")}</li>
           <li>{t("APIキー・AWS設定")}</li>
+          <li>{t("サンドボックスの /workspace のフォルダ(置いたソースコードなど)")}</li>
           <li>{t("実行中の依頼(中断されます)")}</li>
         </ul>
 

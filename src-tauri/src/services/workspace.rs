@@ -461,24 +461,6 @@ impl Workspaces {
         Ok(())
     }
 
-    /// サンドボックスの`/workspace`にマウントしてはいけない場所。アプリデータと、すべてのワークスペース
-    /// (ワークが無効でも登録済みのエージェントを含む)のナレッジ・デバッグログの現在と既定の場所。
-    pub fn sandbox_forbidden_paths(&self) -> Vec<PathBuf> {
-        let _op = self.op();
-        let agents = self.agents();
-        let ids = std::iter::once(PERSONAL_ID.to_owned())
-            .chain(self.leader().map(|_| LEADER_ID.to_owned()))
-            .chain(agents.iter().map(|p| p.id.clone()));
-        let mut paths = vec![self.root.clone()];
-        for id in ids {
-            match self.open_transient_locked(&id) {
-                Ok(ctx) => paths.extend(claimed_paths(&ctx)),
-                Err(e) => log::warn!("workspace {id} not opened: {e}"),
-            }
-        }
-        paths
-    }
-
     /// 保存先を使えることを確かめる(確認のみ。テスト用)。実際に保存するときは、確認と保存を分けない`set_location`を使う。
     #[cfg(test)]
     pub fn ensure_paths_free(&self, id: &str, candidate: &Path) -> Result<(), AppError> {

@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{
-    batch, chat_session, debug_log, global_settings, leader, profile, proofread, proxy, prompts, agent_data, sandbox, sandbox_agent, skills, stt, tuning, voicevox, wake, workspace,
+    batch, chat_session, debug_log, global_settings, leader, profile, proofread, proxy, prompts, agent_data, sandbox_agent, skills, stt, tuning, voicevox, wake, workspace,
 };
 
 /// 設定の保存先。
@@ -80,8 +80,6 @@ pub const ALL: &[Setting] = &[
     agent(sandbox_agent::LLM_KEY, Some(Kind::Json)),
     // ---- エージェントごと(対象外: 端末ごとに異なるもの、エージェント固有のもの) ----
     agent(batch::KNOWLEDGE_DIR_KEY, None),
-    // サンドボックスの/workspaceにマウントするフォルダ。端末ごとに異なるので対象外
-    agent(sandbox::WORKSPACE_DIR_KEY, None),
     // アプリの会話とコンテナ内の Claude Code のセッションの対応。端末の履歴(DB)と対なので対象外
     agent(sandbox_agent::SESSIONS_KEY, None),
     agent(debug_log::DIR_KEY, None),

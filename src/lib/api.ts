@@ -304,6 +304,13 @@ export type DockerfileState = "missing" | "template" | "edited";
 export const getSandboxDockerfile = () => invoke<{ content: string; state: DockerfileState }>("get_sandbox_dockerfile");
 export const setSandboxDockerfile = (content: string) => invoke<DockerfileState>("set_sandbox_dockerfile", { content });
 
+/** sandbox.env の名前と検証結果(値が空の名前は含まない)。 */
+export type SandboxEnvSummary = { names: string[]; error: { line: number | null; message: string } | null };
+/** sandbox.env の内容(値を含む)。無ければ既定の内容で作る。 */
+export const getSandboxEnv = () => invoke<{ content: string; summary: SandboxEnvSummary }>("get_sandbox_env");
+/** sandbox.env を保存する。書式に誤りがあれば保存せずエラー。 */
+export const setSandboxEnv = (content: string) => invoke<SandboxEnvSummary>("set_sandbox_env", { content });
+
 export type SandboxFiles = {
   /** 環境変数ファイルの名前と検証結果。値は含まれない。 */
   env: { names: string[]; error: { line: number | null; message: string } | null };
@@ -319,10 +326,10 @@ export type SandboxBuildProgress = { scope: string; line: string };
 export const resetSandbox = () => invoke<void>("reset_sandbox");
 /** Dockerfileを標準の内容で上書きする。 */
 export const resetSandboxDockerfile = () => invoke<void>("reset_sandbox_dockerfile");
-/** `/workspace`にマウントするフォルダ(未設定なら null)。 */
-export const getSandboxWorkspaceDir = () => invoke<string | null>("get_sandbox_workspace_dir");
-/** `/workspace`にマウントするフォルダを設定する。null で解除。保存した(正規化した)パスを返す。 */
-export const setSandboxWorkspaceDir = (path: string | null) => invoke<string | null>("set_sandbox_workspace_dir", { path });
+/** `/workspace`にマウントするフォルダ(エージェントごとに決まった場所。無ければ作る)。 */
+export const getSandboxWorkspaceDir = () => invoke<string>("get_sandbox_workspace_dir");
+/** `/workspace`にマウントするフォルダを Finder で開く。 */
+export const openSandboxWorkspaceDir = () => invoke<void>("open_sandbox_workspace_dir");
 
 export type SandboxProvider = "anthropic" | "bedrock";
 /** コンテナ内の Claude Code の接続の設定。 */

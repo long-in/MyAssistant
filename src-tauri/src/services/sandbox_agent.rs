@@ -447,12 +447,8 @@ pub fn remember_session(db: &impl SettingsStore, app_session: &str, claude: &str
 }
 
 /// コンテナ内の作業環境の説明。システムプロンプトの末尾に加える。
-pub fn guide(has_workspace: bool) -> String {
-    let workspace = if has_workspace {
-        "- /workspace: 担当システムのフォルダ(ソースコードなど)。作業ディレクトリの既定。"
-    } else {
-        "- /workspace: 担当システムのフォルダは未設定(空)。作業ディレクトリの既定は /knowledge。"
-    };
+pub fn guide() -> String {
+    let workspace = "- /workspace: 担当システムのフォルダ(ソースコードなど)。作業ディレクトリの既定。";
     format!(
         "作業環境(サンドボックス)\n\
 - このエージェント専用のLinuxコンテナ(Debian)の中で動いている。macOSのコマンド(brew、open、osascriptなど)は使えない。\n\
@@ -572,8 +568,7 @@ mod tests {
 
     #[test]
     fn guide_describes_the_mounts() {
-        assert!(guide(true).contains("/workspace: 担当システム") && guide(true).contains("/knowledge"));
-        assert!(guide(false).contains("未設定"));
+        assert!(guide().contains("/workspace: 担当システム") && guide().contains("/knowledge"));
     }
 
     #[test]

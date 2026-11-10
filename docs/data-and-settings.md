@@ -21,6 +21,7 @@
 | `workspaces/<UUID>/` | エージェントのデータ。`timeline.db`・`secrets.json`・`knowledge/`・`tts_dictionary.json` をパーソナルと同じ名前で持つ |
 | `workspaces/<UUID>/sandbox.env` | サンドボックスの環境変数(dotenv 形式。**平文**、権限 0600)。パーソナルはアプリデータ直下の `sandbox.env`([sandbox.md](sandbox.md)) |
 | `sandbox/` | 全エージェント共通の `Dockerfile` と `.dockerignore`(Docker のビルドの文脈)。アプリデータ直下 |
+| `workspaces/<UUID>/workspace/` | サンドボックスの `/workspace` にマウントするフォルダ(担当システムのソースコードなど)。パーソナルはアプリデータ直下の `workspace/`。エージェントの削除で一緒に消え、バックアップには含めない([sandbox.md](sandbox.md)) |
 | `workspaces/<UUID>/agent-sandbox/` | そのエージェント専用の `Dockerfile`(登録したときだけ。共通より優先)。パーソナルはアプリデータ直下の `agent-sandbox/` |
 
 旧名(識別子 `dev.longin.tachicoma-agent`)のフォルダがあり新しいフォルダが無ければ、起動時に丸ごと改名して引き継ぐ(`services/legacy_data.rs`)。ナレッジ内の旧 `.tachicoma/` もコマンド権限の読み書き時に `.my-assistant/` へ改名する。旧名の設定ファイルも取り込める。
@@ -112,7 +113,6 @@ erDiagram
 | `shell_access` | `0` / `1` | 有効 | Command Tasks |
 | `sandbox_enabled` | `0` / `1` | 無効 | 全体設定の Sandbox(全体設定のため、設定の書き出し・コピーの対象外) |
 | `sandbox_llm` | 接続先・モデル・上限時間(分)・許可するツール(JSON) | Anthropic API・既定のモデル・30分 | Sandbox |
-| `sandbox_workspace_dir` | `/workspace` にマウントするフォルダ(空なら未設定) | 未設定 | Sandbox(端末ごとに異なるため、書き出し・コピーの対象外) |
 | `sandbox_claude_sessions` | 会話 ID と Claude Code のセッション ID の対応(JSON、直近 50 件) | なし | なし(端末の会話と対なので対象外) |
 | `stt_engine` | `local` / `google` / `aqua` | `local` | Voice Link |
 | `stt_language` | `auto` / `ja` / `en` / `zh` / `ko` | `auto` | Voice Link |
