@@ -32,7 +32,7 @@ use crate::utils::{
 const MAX_STEPS: usize = 20;
 const MAX_STEPS_SHELL: usize = 40;
 /// 中断したときにユーザーへ返す文面。
-const CANCELLED_TEXT: &str = "作業を中断しました。";
+pub const CANCELLED_TEXT: &str = "作業を中断しました。";
 /// `propose_plan`の手順の上限(個数と1件あたりの文字数)。
 const PLAN_MAX_STEPS: usize = 20;
 const PLAN_STEP_CHARS: usize = 300;
@@ -87,7 +87,7 @@ pub fn shell_guide() -> String {
 pub const SANDBOX_GUIDE: &str = "\
 作業実行ツール(サンドボックス)\n\
 - コマンドはこのエージェント専用のLinuxコンテナ(Debian)の中で、/bin/shで実行される。macOSのコマンド(brew、open、osascriptなど)とホームのファイルは使えない。\n\
-- ナレッジはコンテナ内の/workspaceにある。cwdの既定は/workspaceで、cwdには/workspace配下かナレッジ配下のパスだけを指定できる。パスの引数は/workspaceからの相対パスで書く。\n\
+- ナレッジはコンテナ内の/knowledgeにある。担当システムのフォルダが設定されていれば/workspaceにある。cwdの既定は/workspace(無ければ/knowledge)で、cwdには/workspaceか/knowledgeの配下だけを指定できる。\n\
 - awsコマンド、git、jq、python3、nodeなどが入っている。認証情報は環境変数としてすでに渡されているので、読み取ったり出力したりしない。\n\
 - 状態を変える作業は、先にpropose_planで手順を示して承認を得る。承認済みの手順はrun_commandのstepに番号を指定すれば都度の承認なしで実行でき、計画外や破壊的なコマンドには都度承認が入る。\n\
 - 読み取り系(ls、cat、grepなど)は承認なしで実行できる。rm・sudoは拒否される。拒否されたら理由を伝えて別の方法を相談する。\n\
@@ -945,8 +945,9 @@ where
         return Err(format!("コマンドが長すぎます(上限{COMMAND_MAX_CHARS}文字)。"));
     }
     // サンドボックスでは作業ディレクトリをナレッジ配下に限り、コンテナ内のパスへ変換する
-    let (cwd, inner_cwd) = if env.sandbox.is_some() {
-        let (host, inner) = sandbox::map_cwd(env.root, str_arg(input, "cwd"))?;
+    let mounts = env.sandbox.map(|ctx| sandbox::mounts_for(ctx, env.root)).transpose()?;
+    let (cwd, inner_cwd) = if let Some(m) = &mounts {
+        let (host, inner) = sandbox::map_cwd(m, str_arg(input, "cwd"))?;
         (host, Some(inner))
     } else {
         (resolve_cwd(str_arg(input, "cwd"))?, None)
@@ -1005,9 +1006,9 @@ where
     let mut on_chunk = |stream: Stream, text: &str| {
         emit(TaskEvent::CommandOutput { id: call.id.clone(), stream, text: text.to_owned() });
     };
-    let out = match (env.sandbox, inner_cwd.as_deref()) {
-        (Some(ctx), Some(inner)) => {
-            let req = sandbox::Request { ctx, root: env.root, command, cwd: inner, timeout };
+    let out = match (env.sandbox, mounts.as_ref(), inner_cwd.as_deref()) {
+        (Some(ctx), Some(mounts), Some(inner)) => {
+            let req = sandbox::Request { ctx, mounts, command, cwd: inner, timeout };
             sandbox::run(req, &env.cancel, &mut on_chunk).await?
         }
         _ => shell::run(command, &cwd, timeout, &env.cancel, &mut on_chunk).await?,

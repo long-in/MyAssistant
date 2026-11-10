@@ -97,8 +97,9 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
     - 読み取り系以外のコマンドは、ナレッジのディレクトリ内でしか実行できません。
   - 許可・拒否・都度承認のコマンドは、設定画面の Command Policy で編集できます(実体はナレッジ内の `.my-assistant/command-policy.json`)。
 - **サンドボックス** ([sandbox.md](docs/sandbox.md))
-  - 全体設定で有効にすると、パーソナルを含む全エージェントのコマンドを、エージェントごとの専用 Docker コンテナで実行します(既定は無効)。
-  - コンテナから見えるのはそのエージェントのナレッジだけで、ほかのエージェントや `~/.aws` には届きません。
+  - 全体設定で有効にすると、パーソナルを含む全エージェントへの指示を、エージェントごとの専用 Docker コンテナの中の Claude Code が受け持ちます(既定は無効)。続きの指示は同じセッションで引き継ぎます。
+  - コンテナから見えるのは、そのエージェントの担当フォルダ(`/workspace`、ソースコードなど)とナレッジ(`/knowledge`)だけで、ほかのエージェントや `~/.aws` には届きません。
+  - Claude Code の接続先は Anthropic API(`sandbox.env` の API キー)か Amazon Bedrock(AWS の一時キー)を、エージェントごとに選べます。
   - エージェントごとの環境変数(`sandbox.env`)と AWS の一時キーを、実行時にだけコンテナへ渡します。イメージは全エージェント共通で、Dockerfile は全体設定で編集します。エージェントごとに専用の Dockerfile を登録すると、そちらを優先します。
   - Docker が使えないときは、ホストでは実行せずエラーにします。
 
@@ -320,7 +321,7 @@ docs/                   機能ごとの詳細設計
 - API キーの生値は `src-tauri/src/services/secrets.rs` の外へ出しません。フロントエンドには登録有無だけ返します。
 - ナレッジのパスはすべて `src-tauri/src/utils/path.rs` のサンドボックスを通します。
 - `secrets.json`、`timeline.db`、`sandbox.env`、`.env*` はコミットしないでください(実体はアプリデータディレクトリにあります)。
-- ワークのエージェントはコマンドを専用の Docker コンテナで実行でき、ほかのエージェントや端末の認証情報から分離できます([docs/sandbox.md](docs/sandbox.md))。
+- サンドボックスを有効にすると、エージェントの作業は専用の Docker コンテナの中で行われ、ほかのエージェントや端末の認証情報から分離できます([docs/sandbox.md](docs/sandbox.md))。
 
 詳細は [docs/security.md](docs/security.md) を参照してください。
 

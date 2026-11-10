@@ -21,8 +21,9 @@ const RESERVED: [&str; 14] = [
     "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "PWD", "OLDPWD", "TERM", "NO_COLOR", "PAGER", "GIT_PAGER",
     "GIT_TERMINAL_PROMPT", "HOSTNAME",
 ];
-/// docker CLIが読む(読み込みの挙動を変える)名前の接頭辞。
-const RESERVED_PREFIXES: [&str; 3] = ["DOCKER_", "LD_", "DYLD_"];
+/// docker CLIが読む(読み込みの挙動を変える)名前と、アプリが内部で使う名前の接頭辞。
+/// `MYASSISTANT_`はアプリがコンテナへ渡す内部の値(システムプロンプトなど)に使う。
+const RESERVED_PREFIXES: [&str; 4] = ["DOCKER_", "LD_", "DYLD_", "MYASSISTANT_"];
 
 /// 検証のエラー。値は含めず、行番号と理由だけを持つ。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

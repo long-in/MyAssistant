@@ -43,7 +43,23 @@ const TOOL_LABELS: Record<string, string> = {
   create_skill: "スキルの作成",
   update_skill: "スキルの更新",
   delete_skill: "スキルの削除",
+  // サンドボックス(コンテナ内の Claude Code)のツール
+  sandbox_prepare: "サンドボックスの準備",
+  Read: "読み取り",
+  Write: "作成",
+  Edit: "編集",
+  NotebookEdit: "ノートブックの編集",
+  Glob: "ファイルの検索",
+  Grep: "内容の検索",
+  WebFetch: "ページの取得",
+  WebSearch: "Web検索",
+  Task: "サブエージェント",
+  TodoWrite: "作業リスト",
+  Skill: "スキル",
 };
+
+/** コマンドとして表示するツール(タイトルにコマンドそのものを出す)。 */
+const COMMAND_TOOLS = new Set(["run_command", "Bash"]);
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
@@ -54,10 +70,11 @@ export function applyTaskEvent(log: LogState, e: TaskEvent): LogState {
       const steps = Array.isArray(e.input.steps) ? e.input.steps.filter((s): s is string => typeof s === "string") : [];
       return { plan: steps, entries: log.entries };
     }
-    const isCommand = e.name === "run_command";
-    const title = isCommand
-      ? str(e.input.command)
-      : `${tr(TOOL_LABELS[e.name] ?? e.name)} ${str(e.input.path) || str(e.input.query) || str(e.input.text) || str(e.input.name)}`.trim();
+    const isCommand = COMMAND_TOOLS.has(e.name);
+    const i = e.input;
+    const target =
+      str(i.path) || str(i.file_path) || str(i.notebook_path) || str(i.pattern) || str(i.url) || str(i.query) || str(i.description) || str(i.text) || str(i.name);
+    const title = isCommand ? str(i.command) : `${tr(TOOL_LABELS[e.name] ?? e.name)} ${target}`.trim();
     const step = typeof e.input.step === "number" ? e.input.step : undefined;
     return { ...log, entries: [...log.entries, { id: e.id, title, step, isCommand, output: "", status: "running", at: new Date() }] };
   }

@@ -1,5 +1,6 @@
 //! エージェントごとのDockerサンドボックスの設定・状態・ファイル操作。環境変数の値は画面へ返さない。
 use serde::Serialize;
+use tauri::State;
 
 use crate::{
     commands::chat::SANDBOX_ENABLED_KEY,
@@ -7,8 +8,8 @@ use crate::{
         cancel::CancelToken,
         global_settings::SettingsStore,
         sandbox::{self, DockerfileState, ImageStatus, Status},
-        sandbox_env,
-        workspace::{Ctx, WorkspaceCtx},
+        sandbox_agent, sandbox_env,
+        workspace::{Ctx, WorkspaceCtx, Workspaces},
     },
     utils::error::AppError,
 };
@@ -154,6 +155,43 @@ pub async fn build_agent_sandbox_image(ctx: Ctx, force: bool) -> Result<(), AppE
         .await
         .map(|_| ())
         .map_err(AppError::Sandbox)
+}
+
+/// `/workspace`にマウントするフォルダ(未設定なら`None`)。
+#[tauri::command]
+pub fn get_sandbox_workspace_dir(ctx: Ctx) -> Result<Option<String>, AppError> {
+    supported(&ctx)?;
+    Ok(ctx.db.get_setting(sandbox::WORKSPACE_DIR_KEY)?.filter(|p| !p.is_empty()))
+}
+
+/// `/workspace`にマウントするフォルダを設定する。`None`で解除。次のコマンドでコンテナが作り直される。
+/// アプリデータ・各エージェントのナレッジ・`/`・ホームそのもの・`~/.ssh`・`~/.aws`と重なるフォルダは拒否する。
+#[tauri::command]
+pub fn set_sandbox_workspace_dir(ws: State<'_, Workspaces>, ctx: Ctx, path: Option<String>) -> Result<Option<String>, AppError> {
+    supported(&ctx)?;
+    let Some(path) = path.map(|p| p.trim().to_owned()).filter(|p| !p.is_empty()) else {
+        ctx.db.set_setting(sandbox::WORKSPACE_DIR_KEY, "")?;
+        return Ok(None);
+    };
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let dir = sandbox::check_workspace_dir(std::path::Path::new(&path), home.as_deref(), &ws.sandbox_forbidden_paths())
+        .map_err(AppError::Sandbox)?;
+    let saved = dir.to_string_lossy().into_owned();
+    ctx.db.set_setting(sandbox::WORKSPACE_DIR_KEY, &saved)?;
+    Ok(Some(saved))
+}
+
+/// コンテナ内の Claude Code の接続先・モデル・上限時間。
+#[tauri::command]
+pub fn get_sandbox_llm(ctx: Ctx) -> Result<sandbox_agent::LlmConfig, AppError> {
+    supported(&ctx)?;
+    sandbox_agent::load(&ctx.db)
+}
+
+#[tauri::command]
+pub fn set_sandbox_llm(ctx: Ctx, config: sandbox_agent::LlmConfig) -> Result<sandbox_agent::LlmConfig, AppError> {
+    supported(&ctx)?;
+    sandbox_agent::save(&ctx.db, config)
 }
 
 /// このエージェントのコンテナを作り直す(ボリュームは残す)。次のコマンドで新しく作られる。

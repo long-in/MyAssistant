@@ -94,18 +94,36 @@ pub async fn run(
 
 /// 準備済みのコマンドを起動し、出力の逐次通知・タイムアウト・中断を監視して終了を待つ。
 /// 標準入力は閉じ、標準出力・標準エラーはパイプにする。起動前に`process_group(0)`を指定しておくこと(終了時にグループごと止める)。
-pub async fn run_prepared(
+pub async fn run_prepared(cmd: Command, timeout: Duration, cancel: &CancelToken, on_chunk: impl FnMut(Stream, &str)) -> Result<Output, String> {
+    run_prepared_with_input(cmd, None, timeout, cancel, on_chunk).await
+}
+
+/// `run_prepared`と同じ。`input`があれば標準入力へ書き込んでから閉じる(無ければ標準入力は閉じたまま)。
+pub async fn run_prepared_with_input(
     mut cmd: Command,
+    input: Option<Vec<u8>>,
     timeout: Duration,
     cancel: &CancelToken,
     mut on_chunk: impl FnMut(Stream, &str),
 ) -> Result<Output, String> {
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    cmd.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
     #[cfg(unix)]
     cmd.process_group(0);
 
     let mut child = cmd.spawn().map_err(|e| format!("コマンドを起動できませんでした: {e}"))?;
     let pid = child.id();
+    // 書き込みは別タスクで行い、相手が読まなくても出力の監視を止めない。書き終えたら閉じる(EOF)
+    let writer = match (input, child.stdin.take()) {
+        (Some(bytes), Some(mut stdin)) => Some(tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(&bytes).await;
+            let _ = stdin.shutdown().await;
+        })),
+        _ => None,
+    };
     let (tx, mut rx) = mpsc::unbounded_channel::<(Stream, Vec<u8>)>();
     let mut readers = Vec::new();
     if let Some(out) = child.stdout.take() {
@@ -152,6 +170,9 @@ pub async fn run_prepared(
     }
     for r in readers {
         r.abort();
+    }
+    if let Some(w) = writer {
+        w.abort();
     }
     // 起動したコマンドが背景に残した子孫も止める
     kill_tree(pid);

@@ -361,9 +361,9 @@ export function SandboxSwitch() {
   return (
     <section className="hud-panel hud-accent px-5 py-4">
       <Heading title="Sandbox" help={t("サンドボックス")} status={<StatusPill on={!!on}>{on ? t("オン") : t("オフ")}</StatusPill>}>
-        <p>{t("有効にすると、すべてのエージェント(パーソナルを含む)のコマンドを、エージェントごとの専用のDockerコンテナの中で実行します。")}</p>
+        <p>{t("有効にすると、すべてのエージェント(パーソナルを含む、リーダーを除く)への指示を、エージェントごとの専用のDockerコンテナの中の Claude Code が受け持ちます。")}</p>
         <ul>
-          <li>{t("コンテナから見えるのは、そのエージェントのナレッジ(/workspace)と専用ボリュームだけです。ほかのエージェントや ~/.aws には届きません。")}</li>
+          <li>{t("コンテナから見えるのは、そのエージェントの担当フォルダ(/workspace)、ナレッジ(/knowledge)、専用ボリュームだけです。ほかのエージェントや ~/.aws には届きません。")}</li>
           <li>{t("Dockerが使えないときは、ホストでは実行せずエラーにします。")}</li>
           <li>{t("コマンドはLinux(Debian)上で動きます。brew や open などmacOS向けのコマンドは使えません。")}</li>
           <li>{t("イメージは、下の Sandbox Image の共通 Dockerfile から作ります。エージェントの設定の「権限」タブで専用の Dockerfile を登録したエージェントは、そちらを優先します。sandbox.env もそのタブで確認できます。")}</li>
@@ -371,7 +371,7 @@ export function SandboxSwitch() {
       </Heading>
       <label className="flex items-center justify-between gap-4 text-sm">
         <span className="text-xs text-muted-foreground">
-          {t("コマンドの実行を、すべてエージェントごとのDockerコンテナの中に限ります(無効のときはホストで実行)。")}
+          {t("エージェントの作業を、すべてエージェントごとのDockerコンテナの中に限ります(無効のときは、このアプリが直接処理します)。")}
         </span>
         <Switch checked={on ?? false} disabled={on === null} onCheckedChange={(v) => void change(v)} aria-label={t("サンドボックス")} />
       </label>

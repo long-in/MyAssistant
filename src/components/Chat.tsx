@@ -57,6 +57,7 @@ import {
   loadRouting,
   playBase64Mp3,
   recordingWaveform,
+  getSandboxEnabled,
   reportError,
   saveRouting,
   sendChat,
@@ -73,6 +74,9 @@ import {
   voicePhraseAudio,
   waitForSpeechEnd,
 } from "@/lib/api";
+
+/** サンドボックスで、このアプリにモデルが無いときに送る仮の経路(バックエンドでは使わない)。 */
+const SANDBOX_ROUTE: Route = { provider: "anthropic", model: "sandbox" };
 
 // 録音の待ち時間(エージェントを離したあとの猶予・声が入らず終える時間・話し終わりの無音)は、全体設定で変えられる(`voice_timing`)。
 
@@ -109,6 +113,19 @@ const TOOL_ACTIVITY: Record<string, string> = {
   create_skill: "スキルを作成しています…",
   update_skill: "スキルを更新しています…",
   delete_skill: "スキルを削除しています…",
+  // サンドボックス(コンテナ内の Claude Code)のツール
+  sandbox_prepare: "サンドボックスを準備しています…",
+  Bash: "コマンドを実行しています…",
+  Read: "ファイルを読んでいます…",
+  Write: "ファイルを作成しています…",
+  Edit: "ファイルを編集しています…",
+  NotebookEdit: "ファイルを編集しています…",
+  Glob: "ファイルを検索しています…",
+  Grep: "ファイルを検索しています…",
+  WebFetch: "ページを読んでいます…",
+  WebSearch: "Webを検索しています…",
+  Task: "サブエージェントに任せています…",
+  TodoWrite: "作業を整理しています…",
 };
 
 /** `standby`: 常時待機が起動ワードを聞き取るために録音している。手動の操作が始まれば譲る。 */
@@ -166,6 +183,11 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   const approvalRef = useRef<Approval | null>(null);
   const [listening, setListening] = useState<Listening>("idle");
   const [route, setRoute] = useState<Route | null>(null);
+  /** サンドボックスが有効なら、会話はコンテナ内の Claude Code が受け持つ(このアプリのAPIキーやモデルの選択は使わない)。 */
+  const [sandboxOn, setSandboxOn] = useState(false);
+  useEffect(() => {
+    getSandboxEnabled().then(setSandboxOn).catch(() => {});
+  }, []);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [keyStatus, setKeyStatus] = useState<Partial<KeyStatus>>({});
   const [mic, setMicState] = useState<Mic>("idle");
@@ -453,8 +475,10 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     setTurns((ts) => [...ts, { user: text, userAt }]);
     let result: "spoke" | "replied" | "none" = "none";
     try {
-      if (!route) throw new Error(t("使えるモデルがありません。設定でAPIキーを登録してください。"));
-      const r = await sendChat(sessionId, text, route, null, onTaskEvent);
+      // サンドボックスでは、経路はバックエンドで使われない(接続先はエージェントの Sandbox の設定)
+      const sendRoute = route ?? (sandboxOn ? SANDBOX_ROUTE : null);
+      if (!sendRoute) throw new Error(t("使えるモデルがありません。設定でAPIキーを登録してください。"));
+      const r = await sendChat(sessionId, text, sendRoute, null, onTaskEvent);
       if (aborted()) return "none"; // 待っている間に新しい会話へ切り替わった、または中断された
       const replied = { reply: r.content, replyAt: new Date(), via: r.model };
       result = "replied";
