@@ -4,7 +4,8 @@ import { useRouter } from "next/navigation";
 import { Download, Loader2 } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
-import type { KeyStatus, SttEngine, TtsEngine } from "@/lib/api";
+import { DownloadBar } from "@/components/DownloadBar";
+import type { DownloadProgress, KeyStatus, SttEngine, TtsEngine } from "@/lib/api";
 
 /** 設定の読み込み済みの状況(案内の判定に使う)。 */
 export type SetupState = { tts: TtsEngine; stt: SttEngine; sttKey: boolean };
@@ -17,6 +18,7 @@ export default function ChatNotices({
   voiceReply,
   needModel,
   downloading,
+  progress,
   onDownload,
 }: {
   setup: SetupState | null;
@@ -25,6 +27,7 @@ export default function ChatNotices({
   voiceReply: boolean;
   needModel: boolean;
   downloading: boolean;
+  progress: DownloadProgress | null;
   onDownload: () => void;
 }) {
   const t = useT();
@@ -40,12 +43,15 @@ export default function ChatNotices({
         </div>
       )}
       {needModel && (
-        <div className="hud-panel hud-accent flex items-center justify-between gap-3 px-5 py-3 text-sm">
-          <span>{t("音声入力にはローカル音声認識モデル(約470MB)のダウンロードが必要です。")}</span>
-          <Button size="sm" disabled={downloading} onClick={onDownload}>
-            {downloading ? <Loader2 className="animate-spin" /> : <Download />}
-            {downloading ? t("ダウンロード中…") : t("ダウンロード")}
-          </Button>
+        <div className="hud-panel hud-accent px-5 py-3 text-sm">
+          <div className="flex items-center justify-between gap-3">
+            <span>{t("音声入力にはローカル音声認識モデル(約470MB)のダウンロードが必要です。")}</span>
+            <Button size="sm" disabled={downloading} onClick={onDownload}>
+              {downloading ? <Loader2 className="animate-spin" /> : <Download />}
+              {downloading ? t("ダウンロード中…") : t("ダウンロード")}
+            </Button>
+          </div>
+          {downloading && <DownloadBar progress={progress} className="mt-2" />}
         </div>
       )}
     </>

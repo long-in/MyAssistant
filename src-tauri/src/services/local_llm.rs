@@ -22,6 +22,7 @@ use tokio::io::AsyncWriteExt;
 use super::{
     cancel::CancelToken,
     debug_log,
+    download_progress::{Progress, Slot},
     llm_client::{ChatMessage, SystemPrompt, ToolTurn},
     workspace::WorkspaceCtx,
 };
@@ -158,6 +159,8 @@ struct Engine {
     pid: Mutex<Option<u32>>,
     /// 取得中なら、その中断用のトークン。
     download: Mutex<Option<CancelToken>>,
+    /// 取得中の進み具合。画面が切り替わっても続きを見せるため、チャネルとは別にここへ残す。
+    progress: Slot,
 }
 
 static ENGINE: OnceLock<Engine> = OnceLock::new();
@@ -170,6 +173,7 @@ pub fn init(app_data: &Path) {
         server: tokio::sync::Mutex::new(None),
         pid: Mutex::new(None),
         download: Mutex::new(None),
+        progress: Slot::new(),
     });
 }
 
@@ -185,6 +189,11 @@ pub fn installed() -> bool {
 /// 取得中か。
 pub fn downloading() -> bool {
     ENGINE.get().is_some_and(|e| lock(&e.download).is_some())
+}
+
+/// 取得中の進み具合(取得中でなければ`None`)。
+pub fn download_progress() -> Option<Progress> {
+    ENGINE.get().and_then(|e| e.progress.get())
 }
 
 /// 取得する合計サイズ(バイト)。
@@ -540,13 +549,6 @@ fn parse_turn(body: &Value) -> Option<ToolTurn> {
 
 // ---------- 取得 ----------
 
-/// 取得の進み具合(バイト)。
-#[derive(Debug, Clone, Copy, Serialize)]
-pub struct Progress {
-    pub downloaded: u64,
-    pub total: u64,
-}
-
 /// 進み具合の通知の間隔(バイト)。
 const PROGRESS_STEP: u64 = 8 << 20;
 
@@ -587,7 +589,7 @@ async fn download(
             }
             if done - reported >= PROGRESS_STEP {
                 reported = done;
-                on_progress(Progress { downloaded: offset + done, total });
+                on_progress(Progress::bytes(offset + done, total));
             }
         }
         file.flush().await.map_err(io)?;
@@ -621,8 +623,13 @@ pub async fn install(on_progress: impl Fn(Progress) + Sync) -> Result<(), AppErr
         *slot = Some(token.clone());
         token
     };
-    let result = install_inner(e, &cancel, &on_progress).await;
+    let report = |p: Progress| {
+        e.progress.set(p);
+        on_progress(p);
+    };
+    let result = install_inner(e, &cancel, &report).await;
     *lock(&e.download) = None;
+    e.progress.clear();
     result.map_err(|err| err.with_source(SOURCE))
 }
 
@@ -634,7 +641,7 @@ async fn install_inner(e: &Engine, cancel: &CancelToken, on_progress: &(impl Fn(
     let _ = tokio::fs::remove_file(l.record()).await;
     let total = download_size();
     let mut offset = 0;
-    on_progress(Progress { downloaded: 0, total });
+    on_progress(Progress::bytes(0, total));
 
     // サーバー: アーカイブを検証してから展開し、`bin/`を丸ごと入れ替える
     let work = l.root.join("tmp");
@@ -666,7 +673,7 @@ async fn install_inner(e: &Engine, cancel: &CancelToken, on_progress: &(impl Fn(
             download(&url, &l.part(p), p.size, p.sha256, offset, total, cancel, on_progress).await?;
         }
         offset += p.size;
-        on_progress(Progress { downloaded: offset, total });
+        on_progress(Progress::bytes(offset, total));
     }
     let record = serde_json::to_string(&Record::current()).map_err(|err| AppError::Io(err.to_string()))?;
     tokio::fs::write(l.record(), record).await.map_err(io)

@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import AwsPanel from "@/components/AwsPanel";
 import LocalLlmPanel from "@/components/LocalLlmPanel";
+import { DownloadBar, useDownloadProgress } from "@/components/DownloadBar";
 import SandboxPanel from "@/components/SandboxPanel";
 import ClaudeCodeSettings from "@/components/ClaudeCodeSettings";
 import DeleteAgentModal from "@/components/DeleteAgentModal";
@@ -24,7 +25,7 @@ import { copyTargets, type CopyRequest } from "@/lib/copyTargets";
 import { DEFAULT_TUNING, getTuning, setTuning, LEADER_ID, PERSONAL_ID, getAgentData, saveAgentData, errorMessage, updateAgent, AGENT_NAME_MAX, leaderCopyApiKey, leaderGetPrompt, leaderSetPrompt, leaderGetLimit, leaderSetLimit, LEADER_LIMIT_MAX, type DeleteReport } from "@/lib/api";
 import { bumpSettingsVersion, refreshWorkspace, useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
-import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, setCommandPolicy, type CommandPolicy, getShellAccess, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, loadBatchRoute, loadProofreadRoute, loadSkillsRoute, type Route, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setShellAccess, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
+import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, setCommandPolicy, type CommandPolicy, getShellAccess, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, voicevoxDownloadProgress, sttDownloadProgress, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, loadBatchRoute, loadProofreadRoute, loadSkillsRoute, type Route, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setShellAccess, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
 import AiSettings from "@/components/AiSettings";
 import { Heading, PageHeader, ProxyChoice, StatusPill, TuningPanel, UsedBy, linkCardClass, type TuningField } from "@/components/GlobalPanels";
 
@@ -1017,6 +1018,8 @@ function VoicevoxPanel({ installed, style, onChanged, onStyle }: { installed: bo
   const t = useT();
   const [busy, setBusy] = useState(false);
   const [speakers, setSpeakers] = useState<VoicevoxSpeaker[]>([]);
+  // 別の画面で始めた取得が続いていれば、戻ったときも進み具合を見せる
+  const { progress, active } = useDownloadProgress(voicevoxDownloadProgress, busy, onChanged);
   useEffect(() => {
     if (!installed) return;
     voicevoxSpeakers()
@@ -1054,6 +1057,7 @@ function VoicevoxPanel({ installed, style, onChanged, onStyle }: { installed: bo
           {busy ? t("取得中…") : installed ? t("取得し直す") : t("規約に同意して取得")}
         </Button>
       </div>
+      {active && <DownloadBar progress={progress} className="mt-3" />}
       <p className="mt-2 text-xs text-muted-foreground">
         {t("利用規約(github.com/VOICEVOX/voicevox_vvm)と各音声ライブラリの規約に従ってください。音声を公開・配布するときは「VOICEVOX:ずんだもん」のようにクレジットの表記が必要です。")}
       </p>
@@ -1118,6 +1122,7 @@ function useModelSources(onChanged: () => void) {
 function WhisperSourcePanel({ onChanged }: { onChanged: () => void }) {
   const t = useT();
   const { src, busy, run } = useModelSources(onChanged);
+  const { progress, active } = useDownloadProgress(sttDownloadProgress, busy === "whisper", onChanged);
   const [draft, setDraft] = useState<string | null>(null); // 編集中の値(未編集なら保存済みの値を使う)
   if (!src) return null;
   const revision = draft ?? src.whisper_revision;
@@ -1144,6 +1149,7 @@ function WhisperSourcePanel({ onChanged }: { onChanged: () => void }) {
           {busy === "whisper" ? <Loader2 className="animate-spin" /> : <Download />} {t("Whisperモデルを取得し直す(約550MB)")}
         </Button>
       </div>
+      {active && <DownloadBar progress={progress} className="mt-3" />}
     </details>
   );
 }
@@ -1233,6 +1239,7 @@ export default function Setup() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+  const { progress: sttProgress, active: sttActive } = useDownloadProgress(sttDownloadProgress, busy === "sttmodel", refresh);
 
   // 機能ごとのモデル設定から、プロバイダーごとの使用箇所を集計する(チャットは会話ごとの選択のため含めない)
   useEffect(() => {
@@ -1399,6 +1406,11 @@ export default function Setup() {
             <div className="flex items-center gap-3 border-t py-3">
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">{t("認識する言語")}</div>
+            {sttEngine === "local" && sttActive && (
+              <div className="border-b pb-3">
+                <DownloadBar progress={sttProgress} />
+              </div>
+            )}
                 <div className="text-xs text-muted-foreground">{t("自動は日本語と英語を判定します。どのエンジンにも適用されます。")}</div>
               </div>
               <select

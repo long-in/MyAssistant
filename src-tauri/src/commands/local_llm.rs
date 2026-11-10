@@ -3,7 +3,10 @@ use serde::Serialize;
 use tauri::ipc::Channel;
 
 use crate::{
-    services::local_llm::{self, Progress},
+    services::{
+        download_progress::Progress,
+        local_llm,
+    },
     utils::error::AppError,
 };
 
@@ -14,6 +17,8 @@ pub struct LocalLlmStatus {
     label: &'static str,
     /// 取得する合計サイズ(バイト)。
     size: u64,
+    /// 取得中の進み具合。画面を切り替えて戻ったときに続きを見せるため、状況と一緒に返す。
+    progress: Option<Progress>,
 }
 
 #[tauri::command]
@@ -23,6 +28,7 @@ pub fn local_llm_status() -> LocalLlmStatus {
         downloading: local_llm::downloading(),
         label: local_llm::MODEL_LABEL,
         size: local_llm::download_size(),
+        progress: local_llm::download_progress(),
     }
 }
 

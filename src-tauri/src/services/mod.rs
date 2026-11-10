@@ -12,6 +12,7 @@ pub mod command_policy;
 pub mod legacy_data;
 pub mod compact;
 pub mod debug_log;
+pub mod download_progress;
 pub mod global_settings;
 pub mod graph;
 pub mod skills_migration;
