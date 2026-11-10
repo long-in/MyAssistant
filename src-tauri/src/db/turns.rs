@@ -1,4 +1,6 @@
 //! 会話の再開に使う読み書き。画面に戻す発話・返答の行(`conversation_logs`)と、発話ごとの実行ログ(`turn_events`)。
+use std::collections::HashMap;
+
 use rusqlite::{OptionalExtension, params};
 
 use super::Db;
@@ -44,6 +46,17 @@ impl Db {
                 |r| r.get(0),
             )
             .optional()?)
+    }
+
+    /// セッションの実行ログ(JSON配列)を、発話の行IDごとに返す。
+    pub fn session_turn_events(&self, session_id: &str) -> Result<HashMap<String, String>, AppError> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT e.user_log_id, e.events FROM turn_events e
+             JOIN conversation_logs l ON l.id = e.user_log_id WHERE l.session_id = ?1",
+        )?;
+        let rows = stmt.query_map(params![session_id], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
+        Ok(rows)
     }
 
     /// 発話の実行ログ(JSON配列)を保存する。同じ発話なら置き換える。
