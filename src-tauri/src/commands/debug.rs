@@ -18,6 +18,15 @@ pub fn get_debug_log_dir(ctx: Ctx) -> Result<String, AppError> {
     Ok(log_dir(&ctx)?.to_string_lossy().into_owned())
 }
 
+/// デバッグログの出力先を Finder で開く(無ければ作る)。
+#[tauri::command]
+pub fn open_debug_log_dir(ctx: Ctx) -> Result<(), AppError> {
+    let dir = log_dir(&ctx)?;
+    std::fs::create_dir_all(&dir).map_err(|e| AppError::Io(e.to_string()))?;
+    let status = std::process::Command::new("/usr/bin/open").arg(&dir).status().map_err(|e| AppError::Io(e.to_string()))?;
+    if status.success() { Ok(()) } else { Err(AppError::Io(format!("open failed: {status}"))) }
+}
+
 /// デバッグログの出力先を変更する。`None`でナレッジ配下の既定に戻す。既存のログは移動しない。
 #[tauri::command]
 pub fn set_debug_log_dir(ws: State<'_, Workspaces>, ctx: Ctx, path: Option<String>) -> Result<String, AppError> {
