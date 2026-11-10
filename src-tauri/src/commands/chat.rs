@@ -14,7 +14,7 @@ use crate::{
     services::{
         tool_loop::{self, TaskEvent},
         attention::{self, AttentionKind},
-        batch, compact,
+        batch, compact, turn_history,
         global_settings::SettingsStore,
         graph::{self, GraphCache},
         knowledge, leader,
@@ -402,7 +402,9 @@ async fn send_chat_inner(
         per_turn: related.into_iter().chain(prepared.section).collect(),
         skill: skill.as_ref().map(skills::instruction_block),
     });
-    let rows = window.recent;
+    // 過去の発話で実行したツールの記録を返答に添える(無いと、実行済みのことを「していない」と答えてしまう)
+    let events = ctx.db.session_turn_events(&session_id).unwrap_or_default();
+    let rows = turn_history::attach(window.recent, &events, turn_history::FULL_TURNS);
 
     // 今回の発話は保存済みなので履歴から外し、別に渡す
     let mut prior: Vec<Value> = rows.into_iter().map(|r| json!({ "role": r.role, "content": r.content })).collect();
