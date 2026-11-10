@@ -2,7 +2,7 @@
 import { LANGS, setLang, tr, useLang, useT, type Lang } from "@/lib/i18n";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Archive, AudioLines, Bell, BrainCircuit, Copy, BookOpen, Keyboard, Pencil, Share2, HardDriveDownload, Volume2, Briefcase, ClipboardList, Container, Download, FolderKanban, Globe, Languages, Link2, ListOrdered, Loader2, Mic, Plus, ScrollText, Send, Settings2, ShieldCheck, SlidersHorizontal, Square, Timer, Upload, UserRound, X, type LucideIcon } from "lucide-react";
+import { Archive, AudioLines, Bell, BrainCircuit, Copy, BookOpen, Keyboard, Pencil, Share2, Volume2, Briefcase, ClipboardList, Container, Download, FolderKanban, Globe, Languages, Link2, ListOrdered, Loader2, Mic, Plus, ScrollText, Send, Settings2, ShieldCheck, SlidersHorizontal, Square, Timer, Upload, UserRound, X, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
@@ -44,7 +44,6 @@ const HEADING_ICONS: Record<string, LucideIcon> = {
   "Voice Guide": BookOpen,
   "Voice Output": Volume2,
   "Voice Input": Mic,
-  "Model Sources": HardDriveDownload,
   Sandbox: Container,
   "Sandbox Image": Container,
 };
