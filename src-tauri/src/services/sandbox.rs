@@ -885,15 +885,18 @@ async fn ensure_container(bin: &Path, id: &str, spec: &ImageSpec, mounts: &Mount
     if !o.ok {
         return Err(format!("コンテナを作れませんでした: {}", clip_err(&o.stderr)));
     }
-    // Dockerfileを編集した場合の前提(shとsetsid、agentユーザー)を確かめる
-    let diag = docker(bin, &["exec", &name, "sh", "-c", "command -v setsid >/dev/null && id -u agent >/dev/null"], CLI_TIMEOUT).await?;
+    // Dockerfileを編集した場合の前提(shとsetsid、agentユーザー、Claude Code)を確かめる
+    let diag = docker(bin, &["exec", &name, "sh", "-c", DIAG], CLI_TIMEOUT).await?;
     if !diag.ok {
         let _ = docker(bin, &["rm", "-f", &name], CLI_TIMEOUT).await;
-        return Err("イメージが前提を満たしていません。Dockerfileに、ユーザー agent、sh、setsid(util-linux)が必要です。".into());
+        return Err("イメージが前提を満たしていません。Dockerfileに、ユーザー agent、sh、setsid(util-linux)、claude(Claude Code)が必要です。".into());
     }
     prune_old_images(bin, id, spec).await;
     Ok(name)
 }
+
+/// コンテナを作った直後の診断。Dockerfileを編集しても崩してはいけない前提。
+const DIAG: &str = "command -v setsid >/dev/null && id -u agent >/dev/null && command -v claude >/dev/null";
 
 /// 古いタグのイメージを消す(別のエージェントのコンテナが使用中のものは消えない)。
 /// 専用のイメージを使うときは、このエージェントの古い専用イメージだけ。共通を使うときは、共通の古いタグと、このエージェントの専用イメージ(登録解除後の残り)。
@@ -1208,6 +1211,15 @@ mod tests {
         unregister_agent_dockerfile(ws.path()).unwrap();
         assert!(!agent_registered(ws.path()));
         assert!(resolve_image(app.path(), ID, ws.path()).unwrap().agent.is_none());
+    }
+
+    #[test]
+    fn template_meets_the_container_prerequisites() {
+        // Claude Code は Node.js 22 以上が必要。版は固定し、読み取り専用のファイルシステムでは自動更新を止める
+        assert!(TEMPLATE.contains("FROM node:22"));
+        assert!(TEMPLATE.contains("ARG CLAUDE_CODE_VERSION=") && TEMPLATE.contains("@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"));
+        assert!(TEMPLATE.contains("DISABLE_AUTOUPDATER=1"));
+        assert!(TEMPLATE.contains("/workspace /knowledge") && TEMPLATE.contains("USER agent") && TEMPLATE.contains("util-linux"));
     }
 
     #[test]
