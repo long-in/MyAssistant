@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 /**
  * エージェントごとのサンドボックスの設定。
  * - `/workspace`にマウントするフォルダ(担当システムのソースコードなどを置く、エージェントごとに決まった場所)。読み書きでマウントされる。
- * コンテナ内の Claude Code の接続先・モデル・上限時間・許可ツールは、LLM タブの `ClaudeCodeSettings` で扱う。
+ * コンテナ内の Claude Code のモデル・許可ツールは settings.json(`ClaudeSettingsEditor`)で、1回の指示の上限時間もそこで扱う。
  */
 export default function SandboxAgentSettings() {
   const t = useT();

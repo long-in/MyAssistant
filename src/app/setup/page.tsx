@@ -16,7 +16,6 @@ import AwsPanel from "@/components/AwsPanel";
 import LocalLlmPanel from "@/components/LocalLlmPanel";
 import { DownloadBar, useDownloadProgress } from "@/components/DownloadBar";
 import SandboxPanel from "@/components/SandboxPanel";
-import ClaudeCodeSettings from "@/components/ClaudeCodeSettings";
 import DeleteAgentModal from "@/components/DeleteAgentModal";
 import NotePanel from "@/components/NotePanel";
 import CopySettingsCard from "@/components/CopySettingsCard";
@@ -1307,7 +1306,6 @@ export default function Setup() {
           </TabsList>
 
           <TabsContent value="llm" className="flex flex-col gap-6">
-          {active.id !== LEADER_ID && active.id !== PERSONAL_ID && <ClaudeCodeSettings key={active.id} />}
           <section className="hud-panel hud-accent px-5 py-4">
               <Heading title="AI Link" help={t("AIの接続")} status={<StatusPill on={linked > 0}>{linked} / {PROVIDERS.length}</StatusPill>}>
                 <p>{t("使いたいAIのAPIキーを登録します。全部は不要で、1つ以上あれば使えます。")}</p>

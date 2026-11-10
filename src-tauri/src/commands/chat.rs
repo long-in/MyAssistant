@@ -447,7 +447,7 @@ async fn send_chat_sandbox(
         return Err(AppError::Sandbox(format!("上限時間({}分)を超えたため中断しました。続きは、もう一度指示してください。", cfg.timeout_mins)));
     }
     let content = if r.cancelled { tool_loop::CANCELLED_TEXT.to_owned() } else { r.text };
-    let model = if cfg.model.is_empty() { "default".to_owned() } else { cfg.model.clone() };
+    let model = sandbox_agent::configured_model(&ctx.db).unwrap_or_else(|| "default".to_owned());
     // 実行中に削除されたエージェントへは、応答もキャプチャも書かない
     ctx.ensure_alive()?;
     ctx.db.insert_log(session_id, "assistant", &content, Some(SANDBOX_PROVIDER), Some(&model))?;

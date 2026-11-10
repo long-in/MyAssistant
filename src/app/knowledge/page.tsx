@@ -321,7 +321,7 @@ export default function Knowledge() {
           }
         />
         <div className="hud-panel hud-accent m-3 px-4 py-3">
-          <p className="hud-label mb-2">Organize</p>
+          <p className="hud-heading mb-2">Organize</p>
           <Button size="sm" className="mt-2 w-full" disabled={running} onClick={organize}>
             {running ? <Loader2 className="animate-spin" /> : <Sparkles />}
             {running ? t("整理中…") : t("今すぐ整理")}
@@ -329,7 +329,7 @@ export default function Knowledge() {
         </div>
         {hasMemory && (
         <div className="hud-panel mx-3 mb-3 px-4 py-3">
-          <p className="hud-label mb-2">Memory</p>
+          <p className="hud-heading mb-2">Memory</p>
           <p className="mb-2 text-xs text-muted-foreground">
             {t("覚えておくこと {n}件", { n: memory.pins.length })}
           </p>

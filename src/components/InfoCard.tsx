@@ -40,7 +40,7 @@ export default function InfoCard({ turns, modelLabel, className }: { turns: numb
 
   return (
     <section className={cn("hud-panel hud-accent flex min-h-0 flex-col gap-3 overflow-y-auto px-5 py-4", className)} aria-label={t("情報")}>
-      <p className="hud-label">{"// Info"}</p>
+      <p className="hud-heading">{"// Info"}</p>
       <div>
         <p className="text-xs text-muted-foreground">{t("東京")}</p>
         <p className="text-3xl font-semibold tracking-tight tabular-nums">{now ? now.toLocaleTimeString(locale, { hour12: false, timeZone: "Asia/Tokyo" }) : "--:--:--"}</p>

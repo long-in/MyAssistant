@@ -146,13 +146,81 @@
   color: var(--primary);
 }
 
+/* カード見出し用。hud-label に先頭の四角マーカーと末尾へ伸びる罫線を足す */
+@utility hud-heading {
+  @apply hud-label;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+
+  /* 先頭の四角マーカーと、末尾へ伸びる罫線 */
+  &::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    flex: none;
+    background: currentColor;
+    box-shadow: 0 0 6px currentColor;
+  }
+  &::after {
+    content: "";
+    height: 1px;
+    flex: 1;
+    background: linear-gradient(90deg, color-mix(in oklab, currentColor 50%, transparent), transparent);
+  }
+}
+
+/*
+ * 近未来HUDのカード。斜め切りの輪郭線・四隅のブラケット・目盛りを重ねて端末風にする。
+ * --hud-line を差し替えると色が変わる(警告用は hud-warn)。
+ */
 @utility hud-panel {
+  --hud-line: var(--primary);
   position: relative;
   border: 1px solid var(--border);
-  background: linear-gradient(135deg, oklch(0.2 0.035 205 / 60%), oklch(0.15 0.03 220 / 60%));
+  background:
+    /* 上端のハイライト */
+    linear-gradient(90deg, transparent, color-mix(in oklab, var(--hud-line) 55%, transparent) 30%, color-mix(in oklab, var(--hud-line) 55%, transparent) 70%, transparent) top / 100% 1px no-repeat,
+    /* clip-path で切れる斜め部分の輪郭線(右上・左下) */
+    linear-gradient(to top right, transparent calc(50% - 0.5px), color-mix(in oklab, var(--hud-line) 45%, transparent) calc(50% - 0.5px) calc(50% + 0.5px), transparent calc(50% + 0.5px)) top right / 14px 14px no-repeat,
+    linear-gradient(to top right, transparent calc(50% - 0.5px), color-mix(in oklab, var(--hud-line) 45%, transparent) calc(50% - 0.5px) calc(50% + 0.5px), transparent calc(50% + 0.5px)) bottom left / 14px 14px no-repeat,
+    /* 微細な走査線 */
+    repeating-linear-gradient(0deg, oklch(1 0 0 / 2.5%) 0 1px, transparent 1px 4px),
+    linear-gradient(135deg, oklch(0.2 0.035 205 / 60%), oklch(0.15 0.03 220 / 60%));
   backdrop-filter: blur(8px);
-  box-shadow: inset 0 0 24px oklch(0.85 0.13 180 / 5%);
+  box-shadow: inset 0 0 24px color-mix(in oklab, var(--hud-line) 6%, transparent);
   clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+  transition: border-color 0.2s, box-shadow 0.2s;
+
+  /* 左上・右下のブラケットと、右下の目盛り */
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(var(--hud-line), var(--hud-line)) top left / 12px 2px no-repeat,
+      linear-gradient(var(--hud-line), var(--hud-line)) top left / 2px 12px no-repeat,
+      linear-gradient(var(--hud-line), var(--hud-line)) bottom right / 12px 2px no-repeat,
+      linear-gradient(var(--hud-line), var(--hud-line)) bottom right / 2px 12px no-repeat,
+      repeating-linear-gradient(90deg, color-mix(in oklab, var(--hud-line) 60%, transparent) 0 1px, transparent 1px 4px) right 20px bottom 5px / 28px 3px no-repeat;
+    opacity: 0.8;
+    transition: opacity 0.2s;
+  }
+
+  &:hover {
+    border-color: color-mix(in oklab, var(--hud-line) 40%, transparent);
+    box-shadow: inset 0 0 28px color-mix(in oklab, var(--hud-line) 10%, transparent);
+  }
+  &:hover::after {
+    opacity: 1;
+  }
+}
+
+/* 警告・注意用のカード。サイコパス風の黄色いハザード色にする */
+@utility hud-warn {
+  --hud-line: oklch(0.82 0.17 85);
+  border-color: oklch(0.82 0.17 85 / 35%);
 }
 
 /* 設定カードの左端のアクセント(近未来HUD風の縦線) */
@@ -164,8 +232,12 @@
     top: 14px;
     bottom: 14px;
     width: 2px;
-    background: var(--primary);
-    box-shadow: 0 0 8px oklch(0.85 0.14 180 / 55%);
+    background: var(--hud-line, var(--primary));
+    box-shadow: 0 0 8px color-mix(in oklab, var(--hud-line, var(--primary)) 55%, transparent);
+    transition: box-shadow 0.2s;
+  }
+  &:hover::before {
+    box-shadow: 0 0 14px color-mix(in oklab, var(--hud-line, var(--primary)) 90%, transparent);
   }
 }
 

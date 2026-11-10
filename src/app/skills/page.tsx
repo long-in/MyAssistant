@@ -237,7 +237,7 @@ export default function Skills() {
         />
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="hud-panel hud-accent m-3 px-4 py-3">
-            <p className="hud-label mb-2">Matching</p>
+            <p className="hud-heading mb-2">Matching</p>
             <p className="text-xs text-muted-foreground">
               {skills.length === 0
                 ? t("スキルがないので、選定は行われず、トークンも使いません。")

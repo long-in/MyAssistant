@@ -194,7 +194,7 @@ pub fn open_sandbox_workspace_dir(ctx: Ctx) -> Result<(), AppError> {
     if status.success() { Ok(()) } else { Err(AppError::Io(format!("open failed: {status}"))) }
 }
 
-/// コンテナ内の Claude Code の接続先・モデル・上限時間。
+/// コンテナ内の Claude Code の接続先・1回の指示の上限時間(モデルと許可するツールは settings.json で決める)。
 #[tauri::command]
 pub fn get_sandbox_llm(ctx: Ctx) -> Result<sandbox_agent::LlmConfig, AppError> {
     supported(&ctx)?;
@@ -211,6 +211,8 @@ pub fn set_sandbox_llm(ctx: Ctx, config: sandbox_agent::LlmConfig) -> Result<san
 #[tauri::command]
 pub fn get_sandbox_claude_settings(ctx: Ctx) -> Result<String, AppError> {
     supported(&ctx)?;
+    // 旧設定のモデル・許可するツールは、初めて開いたときに settings.json へ移す
+    sandbox_agent::migrate_legacy_llm(&ctx.db)?;
     sandbox_agent::load_settings(&ctx.db)
 }
 

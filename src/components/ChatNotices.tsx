@@ -60,7 +60,7 @@ export default function ChatNotices({
 
 function Notice({ text, action, onAction }: { text: string; action: string; onAction: () => void }) {
   return (
-    <div className="hud-panel hud-accent flex items-center justify-between gap-3 px-5 py-3 text-sm" role="status">
+    <div className="hud-panel hud-warn hud-accent flex items-center justify-between gap-3 px-5 py-3 text-sm" role="status">
       <span>{text}</span>
       <Button size="sm" variant="outline" onClick={onAction}>
         {action}
