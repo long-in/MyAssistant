@@ -852,4 +852,11 @@ export const EN: Record<string, string> = {
   "{n}往復": "{n} exchanges",
   "情報": "Info",
   "スキル": "Skill",
+  "東京": "Tokyo",
+  "香港": "Hong Kong",
+  "サンフランシスコ": "San Francisco",
+  "ドイツ": "Germany",
+  "世界時計": "World clock",
+  "前日": "Prev day",
+  "翌日": "Next day",
 };
