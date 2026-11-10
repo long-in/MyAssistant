@@ -9,7 +9,6 @@ import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -29,19 +28,15 @@ import {
 } from "@/lib/api";
 
 /** 編集中の内容。呼び出し語は入力欄では「,」区切りの1行で扱う。 */
-type Draft = { name: string; description: string; triggers: string; body: string };
+type Draft = { name: string; description: string; body: string };
 
-const EMPTY: Draft = { name: "", description: "", triggers: "", body: "" };
+const EMPTY: Draft = { name: "", description: "", body: "" };
 
-const toDraft = (s: Skill): Draft => ({ name: s.name, description: s.description, triggers: s.triggers.join(", "), body: s.body });
-
-/** 「,」「、」区切りの入力を呼び出し語の配列にする(空と重複を除く)。 */
-const parseTriggers = (text: string) => [...new Set(text.split(/[,、]/).map((x) => x.trim()).filter(Boolean))];
+const toDraft = (s: Skill): Draft => ({ name: s.name, description: s.description, body: s.body });
 
 const toSkill = (d: Draft): Skill => ({
   name: d.name.trim(),
   description: d.description.trim(),
-  triggers: parseTriggers(d.triggers),
   body: d.body.trim(),
 });
 
@@ -168,14 +163,10 @@ export default function Skills() {
   const skill = toSkill(draft);
   const nameOk = creating ? skill.name.length > 0 && skill.name.length <= SKILL_LIMITS.name && SKILL_NAME_RE.test(skill.name) : true;
   const nameTaken = creating && skills.some((s) => s.name.toLowerCase() === skill.name.toLowerCase());
-  const triggersOk =
-    skill.triggers.length <= SKILL_LIMITS.triggers && skill.triggers.every((x) => [...x].length <= SKILL_LIMITS.trigger);
   const fieldsOk =
     skill.description.length > 0 &&
     [...skill.description].length <= SKILL_LIMITS.description &&
     !/[<>\n]/.test(skill.description) &&
-    !skill.triggers.some((x) => /[<>]/.test(x)) &&
-    triggersOk &&
     skill.body.length > 0 &&
     [...skill.body].length <= SKILL_LIMITS.body;
   const canSave = dirty && nameOk && !nameTaken && fieldsOk && !saving;
@@ -327,7 +318,7 @@ export default function Skills() {
                         <span className="mt-1 block text-xs text-muted-foreground">
                           {nameTaken
                             ? t("同じ名前のスキルがあります。")
-                            : t("英数字・日本語・「_」「-」のみ、{max}文字まで。作成後は変更できません。", { max: SKILL_LIMITS.name })}
+                            : t("小文字の英数字とハイフンのみ、{max}文字まで。作成後は変更できません。", { max: SKILL_LIMITS.name })}
                         </span>
                       </label>
                     )}
@@ -342,22 +333,7 @@ export default function Skills() {
                         onChange={(e) => setDraft({ ...draft, description: e.target.value })}
                       />
                       <span className="mt-1 block text-xs text-muted-foreground">
-                        {t("どんな依頼に使うかを書きます。発話のたびに全スキル分が選定へ送られるので、短くします。「<」「>」は使えません。")}
-                      </span>
-                    </label>
-                    <label className="block">
-                      <span className="hud-label mb-1 block">{t("呼び出し語(任意)")}</span>
-                      <Input
-                        value={draft.triggers}
-                        placeholder={t("朝の報告, 日報")}
-                        aria-invalid={!triggersOk}
-                        onChange={(e) => setDraft({ ...draft, triggers: e.target.value })}
-                      />
-                      <span className="mt-1 block text-xs text-muted-foreground">
-                        {t("依頼でよく使う言い回しを「,」で区切って書きます({n}個まで、1つ{max}文字まで)。選定のヒントになります。", {
-                          n: SKILL_LIMITS.triggers,
-                          max: SKILL_LIMITS.trigger,
-                        })}
+                        {t("どんな依頼に使うかと、呼ばれやすい言い回しを書きます。発話のたびに全スキル分が選定へ送られるので、簡潔にします。「<」「>」は使えません。")}
                       </span>
                     </label>
                     <label className="block">
@@ -379,13 +355,6 @@ export default function Skills() {
                 ) : (
                   <>
                     <p className="text-sm">{draft.description}</p>
-                    {skill.triggers.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {skill.triggers.map((x) => (
-                          <Badge key={x} variant="secondary">{x}</Badge>
-                        ))}
-                      </div>
-                    )}
                     <div className="prose prose-sm max-w-none dark:prose-invert">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{draft.body}</ReactMarkdown>
                     </div>

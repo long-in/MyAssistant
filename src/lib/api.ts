@@ -71,7 +71,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   invalid_backup: "バックアップファイルを使えません。このアプリが書き出した、壊れていない新しすぎないzipを選んでください。",
   // エージェント(ワークスペースの管理)の画面に出る文言。表記は言語設定に従う
   invalid_agent_data: "指示は2,000文字以内で、< > と制御文字を含めずに入力してください。",
-  invalid_skill: "スキルの内容を確認してください。名前は英数字・日本語・「_」「-」のみ40文字以内、説明は100文字以内(「<」「>」不可)、本文は3,000文字以内で、同じ名前は使えません。",
+  invalid_skill: "スキルの内容を確認してください。名前は小文字の英数字とハイフンのみ64文字以内、説明は1,024文字以内(「<」「>」不可)、本文は3,000文字以内で、同じ名前は使えません。",
   invalid_agent: "エージェントの名称(1〜40文字)またはイメージカラーが正しくありません。",
   reserved_name: "その名称は予約されています。別のエージェント名にしてください。",
   name_in_use: "その名称は、ほかのエージェントがすでに使っています。別の名称にしてください。",
@@ -851,12 +851,12 @@ export const knowledgeDir = () => invoke<string>("knowledge_dir");
 /** 保存先を変更する(nullで既定に戻す)。既存ファイルは移動されない。変更後のパスを返す。 */
 export const setKnowledgeDir = (path: string | null) => invoke<string>("set_knowledge_dir", { path });
 /** スキル(決まった依頼への対応手順)。ナレッジ配下の`.my-assistant/skills/<name>.md`に、エージェントごとに保存される。 */
-export type Skill = { name: string; description: string; triggers: string[]; body: string };
+export type Skill = { name: string; description: string; body: string };
 /** スキルの一覧と、選定で毎回送る前置き(指示 + 全スキルの名前・説明)の概算トークン数。 */
 export type SkillsOverview = { skills: Skill[]; index_tokens: number };
-export const SKILL_LIMITS = { name: 40, description: 100, body: 3000, triggers: 10, trigger: 20 } as const;
+export const SKILL_LIMITS = { name: 64, description: 1024, body: 3000 } as const;
 /** 名前に使える文字(英数字・日本語・`_`・`-`)。ファイル名になるため`.`や区切り文字は不可。 */
-export const SKILL_NAME_RE = /^[\p{L}\p{N}_-]+$/u;
+export const SKILL_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 export const listSkills = () => invoke<SkillsOverview>("list_skills");
 export const createSkill = (skill: Skill) => invoke<Skill>("create_skill", { skill });
