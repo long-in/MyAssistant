@@ -16,7 +16,7 @@ import HelpDrawer from "@/components/HelpDrawer";
 import BackupPasswordModal from "@/components/BackupPasswordModal";
 import { ensureOsPermission, osNotificationsEnabled, setOsNotificationsEnabled, syncOsNotifications } from "@/lib/osNotify";
 import NotePanel from "@/components/NotePanel";
-import { getSandboxEnabled, setSandboxEnabled, getSharedData, saveSharedData, LEADER_COLOR, LEADER_ID, createLeader, errorMessage, leaderExists, setWorkEnabled, workEnabled, setGlobalLanguage, getProxySettings, setProxySettings, type ProxySettings, backupCreate, restorePrepare, restoreApply, restoreDiscard, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, getBatchInterval, setBatchInterval, type WakeConfig, reportError, type AppError, saveBaseInstructions, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
+import { getSandboxEnabled, setSandboxEnabled, getSharedData, saveSharedData, LEADER_COLOR, LEADER_ID, createLeader, errorMessage, leaderExists, setWorkEnabled, workEnabled, setGlobalLanguage, getProxies, saveProxy, deleteProxy, setDefaultProxy, getProxyChoice, setProxyChoice, type ProxyList, type ProxyEntry, backupCreate, restorePrepare, restoreApply, restoreDiscard, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, getBatchInterval, setBatchInterval, type WakeConfig, reportError, type AppError, saveBaseInstructions, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
 
 /** 見出しの左に出すアイコン(英字の見出しごと)。無いものは歯車。 */
 const HEADING_ICONS: Record<string, LucideIcon> = {
@@ -400,92 +400,219 @@ export function SandboxSwitch() {
   );
 }
 
-/** 通信のプロキシ。無効にしても設定は残り、再び有効にすると保持した設定で使える。端末ごとの設定で、バックアップには含めない。 */
+/** 通信のプロキシ。複数を登録でき、既定を1つ決める。各エージェントは、設定で使うプロキシを選ぶ。端末ごとの設定で、パスワードはバックアップ(設定の書き出し・コピー)に含めない。 */
 export function ProxyPanel() {
   const t = useT();
-  const [saved, setSaved] = useState<ProxySettings | null>(null);
+  const [list, setList] = useState<ProxyList | null>(null);
+  /** 編集中の件。`"new"`は追加。 */
+  const [editing, setEditing] = useState<null | "new" | string>(null);
+  const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
-  const apply = (s: ProxySettings) => {
-    setSaved(s);
-    setUrl(s.url);
-    setUsername(s.username);
+  useEffect(() => {
+    getProxies().then(setList).catch((e) => toast.error(reportError(e)));
+  }, []);
+  const open = (p: ProxyEntry | null) => {
+    setEditing(p ? p.id : "new");
+    setName(p?.name ?? "");
+    setUrl(p?.url ?? "");
+    setUsername(p?.username ?? "");
     setPassword("");
   };
-  useEffect(() => {
-    getProxySettings().then(apply).catch((e) => toast.error(reportError(e)));
-  }, []);
-  const persist = async (enabled: boolean, pw?: string) => {
-    const trimmed = url.trim();
-    if (trimmed && !/^https?:\/\/[^\s/@]+(\/)?$/i.test(trimmed)) {
-      toast.error(t("プロキシのURLは http://ホスト:ポート の形式で入力してください(ユーザー名・パスワードは別の欄に入力します)。"));
-      return;
-    }
-    if (enabled && !trimmed) {
-      toast.error(t("有効にするには、プロキシのURLを入力してください。"));
-      return;
-    }
+  /** 保存・削除・既定の変更を共通に扱う。 */
+  const run = async (job: () => Promise<ProxyList>, done: string) => {
     setBusy(true);
     try {
-      apply(await setProxySettings(enabled, trimmed, username.trim(), pw ?? (password || undefined)));
-      toast.success(enabled ? t("プロキシを有効にしました。") : t("プロキシ設定を保存しました。"));
+      setList(await job());
+      toast.success(done);
+      return true;
     } catch (e) {
       toast.error(reportError(e));
+      return false;
     } finally {
       setBusy(false);
     }
   };
-  const on = saved?.enabled ?? false;
-  const dirty = !!saved && (url.trim() !== saved.url || username.trim() !== saved.username || password !== "");
+  const persist = async (pw?: string) => {
+    const trimmed = url.trim();
+    if (!name.trim()) {
+      toast.error(t("プロキシの名前を入力してください。"));
+      return;
+    }
+    if (!/^https?:\/\/[^\s/@]+(\/)?$/i.test(trimmed)) {
+      toast.error(t("プロキシのURLは http://ホスト:ポート の形式で入力してください(ユーザー名・パスワードは別の欄に入力します)。"));
+      return;
+    }
+    const id = editing === "new" ? null : editing;
+    if (await run(() => saveProxy(id, name.trim(), trimmed, username.trim(), pw ?? (password || undefined)), t("プロキシを保存しました。"))) setEditing(null);
+  };
+  const remove = async (p: ProxyEntry) => {
+    if (!(await ask(t("プロキシ「{name}」を削除します。パスワードも消えます。続けますか?", { name: p.name }), { title: t("プロキシを削除"), kind: "warning" }))) return;
+    if (editing === p.id) setEditing(null);
+    await run(() => deleteProxy(p.id), t("プロキシを削除しました。"));
+  };
+  const saved = list?.proxies.find((p) => p.id === editing);
+  const defaultName = list?.proxies.find((p) => p.id === list.default_id)?.name;
+  const NONE = "__none__";
+  const defaultItems = [{ value: NONE, label: t("使わない") }, ...(list?.proxies ?? []).map((p) => ({ value: p.id, label: p.name }))];
   return (
     <section className="hud-panel hud-accent px-5 py-4">
-      <Heading title="Proxy" help={t("プロキシ")} status={<StatusPill on={on}>{on ? t("オン") : t("オフ")}</StatusPill>}>
-        <p>{t("このアプリの外向きの通信(AI・音声・モデルの取得・AWS)を、プロキシ経由にします。")}</p>
+      <Heading title="Proxy" help={t("プロキシ")} status={<StatusPill on={!!defaultName}>{defaultName ?? t("オフ")}</StatusPill>}>
+        <p>{t("このアプリの外向きの通信(AI・音声・モデルの取得・AWS)を、プロキシ経由にします。複数を登録でき、使うものを選べます。")}</p>
         <ul>
-          <li>{t("無効にするとプロキシは使いませんが、URL・ユーザー名・パスワードは保持します。再び有効にすると、保持した設定で使えます。")}</li>
+          <li>{t("既定のプロキシは、エージェントが「既定を使う」にしているときと、モデルの取得・キーの確認など、エージェントに紐づかない通信に使います。")}</li>
+          <li>{t("エージェントごとの選択は、各エージェントの設定の「その他」で行います。")}</li>
+          <li>{t("プロキシを削除すると、それを選んでいたエージェントは既定を使います。")}</li>
           <li>{t("保存すると、次の通信から反映されます(再起動は不要です)。")}</li>
           <li>{t("localhost宛て(VOICEVOXやローカルLLM)は、常にプロキシを通しません。")}</li>
-          <li>{t("パスワードは端末内に保存し、画面には表示しません。設定のバックアップにも含まれません。")}</li>
+          <li>{t("パスワードは端末内に保存し、画面には表示しません。設定の書き出し・コピーには含まれません(アプリ全体のバックアップには含まれます)。")}</li>
         </ul>
       </Heading>
       <label className="flex items-center justify-between gap-4 text-sm">
-        <span className="text-xs text-muted-foreground">{t("通信をプロキシ経由にする")}</span>
-        <Switch checked={on} disabled={!saved || busy} onCheckedChange={(v) => void persist(v)} />
+        <span className="text-xs text-muted-foreground">{t("既定のプロキシ")}</span>
+        <Select
+          items={defaultItems}
+          value={list?.default_id || NONE}
+          disabled={!list || busy}
+          onValueChange={(v) => v && void run(() => setDefaultProxy(v === NONE ? "" : v), t("既定のプロキシを変更しました。"))}
+        >
+          <SelectTrigger className="w-48" aria-label={t("既定のプロキシ")}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {defaultItems.map((i) => (
+              <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </label>
-      <div className="mt-3 flex flex-col gap-3">
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          {t("プロキシのURL")}
-          <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://proxy.example.com:8080" autoComplete="off" spellCheck={false} />
-        </label>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-            {t("ユーザー名(任意)")}
-            <Input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" spellCheck={false} />
-          </label>
-          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-            {t("パスワード(任意)")}
-            <Input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={saved?.has_password ? t("登録済み(変更するときだけ入力)") : ""}
-              autoComplete="new-password"
-            />
-          </label>
-        </div>
-        <div className="flex items-center justify-end gap-2">
-          {saved?.has_password && (
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => void persist(on, "")}>
-              {t("パスワードを削除")}
-            </Button>
-          )}
-          <Button size="sm" disabled={busy || !dirty} onClick={() => void persist(on)}>
-            {t("保存")}
-          </Button>
-        </div>
+      <div className="mt-3 flex flex-col gap-2">
+        {list?.proxies.map((p) => (
+          <div key={p.id} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm">
+            <div className="min-w-0">
+              <p className="truncate font-medium">{p.name}</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {p.url}
+                {p.username && ` · ${p.username}${p.has_password ? " ·····" : ""}`}
+              </p>
+            </div>
+            <div className="flex shrink-0 gap-1">
+              <Button variant="ghost" size="icon-sm" aria-label={t("編集")} disabled={busy} onClick={() => open(p)}>
+                <Pencil />
+              </Button>
+              <Button variant="ghost" size="icon-sm" aria-label={t("削除")} disabled={busy} onClick={() => void remove(p)}>
+                <X />
+              </Button>
+            </div>
+          </div>
+        ))}
+        {list && list.proxies.length === 0 && editing === null && <p className="text-xs text-muted-foreground">{t("プロキシは登録されていません。")}</p>}
       </div>
+      {editing === null ? (
+        <Button variant="outline" size="sm" className="mt-3" disabled={!list || busy} onClick={() => open(null)}>
+          <Plus /> {t("プロキシを追加")}
+        </Button>
+      ) : (
+        <div className="mt-3 flex flex-col gap-3 rounded-md border border-dashed p-3">
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            {t("名前")}
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Office" maxLength={60} autoComplete="off" />
+          </label>
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            {t("プロキシのURL")}
+            <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://proxy.example.com:8080" autoComplete="off" spellCheck={false} />
+          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+              {t("ユーザー名(任意)")}
+              <Input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" spellCheck={false} />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+              {t("パスワード(任意)")}
+              <Input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={saved?.has_password ? t("登録済み(変更するときだけ入力)") : ""}
+                autoComplete="new-password"
+              />
+            </label>
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            {saved?.has_password && (
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => void persist("")}>
+                {t("パスワードを削除")}
+              </Button>
+            )}
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => setEditing(null)}>
+              {t("キャンセル")}
+            </Button>
+            <Button size="sm" disabled={busy} onClick={() => void persist()}>
+              {t("保存")}
+            </Button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** このエージェントが使うプロキシ。登録は全体設定で行い、ここでは選ぶだけ。 */
+export function ProxyChoice() {
+  const t = useT();
+  const [list, setList] = useState<ProxyList | null>(null);
+  const [choice, setChoice] = useState("");
+  useEffect(() => {
+    Promise.all([getProxies(), getProxyChoice()])
+      .then(([l, c]) => {
+        setList(l);
+        setChoice(c);
+      })
+      .catch((e) => toast.error(reportError(e)));
+  }, []);
+  const DEFAULT = "__default__";
+  const defaultName = list?.proxies.find((p) => p.id === list.default_id)?.name;
+  const items = [
+    { value: DEFAULT, label: t("既定を使う({name})", { name: defaultName ?? t("使わない") }) },
+    { value: "none", label: t("使わない") },
+    ...(list?.proxies ?? []).map((p) => ({ value: p.id, label: p.name })),
+  ];
+  // 削除されたIDを選んでいたときは、既定として扱われる
+  const current = choice === "none" || list?.proxies.some((p) => p.id === choice) ? choice : DEFAULT;
+  const change = async (v: string) => {
+    const next = v === DEFAULT ? "" : v;
+    try {
+      await setProxyChoice(next);
+      setChoice(next);
+    } catch (e) {
+      toast.error(reportError(e));
+    }
+  };
+  return (
+    <section className="hud-panel hud-accent flex items-center justify-between gap-4 px-5 py-4">
+      <div>
+        <Heading title="Proxy" help={t("このエージェントのプロキシ")}>
+          <p>{t("このエージェントのAI・音声・AWSの通信に使うプロキシを選びます。")}</p>
+          <ul>
+            <li>{t("プロキシの登録と既定は、全体設定の「その他」で行います。")}</li>
+            <li>{t("モデルの取得・キーの確認など、エージェントに紐づかない通信は、常に既定のプロキシを使います。")}</li>
+            <li>{t("選んだプロキシが削除されたときは、既定を使います。")}</li>
+          </ul>
+        </Heading>
+        <p className="text-xs text-muted-foreground">{t("このエージェントの通信に使うプロキシ")}</p>
+      </div>
+      <Select items={items} value={current} disabled={!list} onValueChange={(v) => v && void change(v)}>
+        <SelectTrigger className="w-48" aria-label={t("このエージェントのプロキシ")}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {items.map((i) => (
+            <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </section>
   );
 }

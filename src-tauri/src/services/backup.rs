@@ -1,7 +1,7 @@
 //! アプリ全体のバックアップとリストア。
 //!
 //! - バックアップは1つのzipにまとめる。パスワードを指定すると、すべてのファイル(manifestを含む)をAES-256で暗号化する(ファイル名は見える)。中身は`manifest.json`(ファイルごとのSHA-256つき)と、次の3種類。
-//!   - `shared/`: エージェント一覧・全体設定・削除済みエージェントから残したナレッジ
+//!   - `shared/`: エージェント一覧・全体設定・通信のプロキシのパスワード(平文のまま)・削除済みエージェントから残したナレッジ
 //!   - `ws/<id>/timeline.db`: `VACUUM INTO`で取った一貫したスナップショット(稼働中のDBを生コピーしない)
 //!   - `ws/<id>/`のそのほか: `secrets.json`(APIキー。平文のまま)・`sandbox.env`(サンドボックスの環境変数。平文のまま)・`sandbox/`(共通のDockerfile)・`agent-sandbox/`(エージェント専用のDockerfile)・読み上げ辞書・ナレッジ(保存先がアプリデータの外でも含める)
 //! - Whisper・VOICEVOX・固定音声などの再取得できるものは含めない。
@@ -42,6 +42,9 @@ const SANDBOX_ENV_FILE: &str = sandbox_env::FILE_NAME;
 const SANDBOX_DIR: &str = "sandbox";
 const AGENT_SANDBOX_DIR: &str = "agent-sandbox";
 const GLOBAL_FILE: &str = "global_settings.json";
+/// 通信のプロキシのパスワードの保管庫(`<アプリデータ>/proxy/secrets.json`)の置き場所と、アーカイブ内の名前。
+const PROXY_DIR: &str = "proxy";
+const PROXY_SECRETS_FILE: &str = "proxy-secrets.json";
 const KNOWLEDGE_DIR: &str = "knowledge";
 /// 展開先。リストアの確認が済むまで、ここから外へは何も出さない。
 pub const STAGING_DIR: &str = "restore-staging";
@@ -138,7 +141,7 @@ fn entry_allowed(name: &str, ids: &[String]) -> bool {
         }
     }
     match parts.as_slice() {
-        ["shared", f] => *f == REGISTRY_FILE || *f == GLOBAL_FILE,
+        ["shared", f] => *f == REGISTRY_FILE || *f == GLOBAL_FILE || *f == PROXY_SECRETS_FILE,
         ["shared", k, _, ..] => *k == KEPT_DIR_NAME,
         ["ws", id, f] => ids.iter().any(|i| i == id) && [DB_FILE, SECRETS_FILE, DICTIONARY_FILE, SANDBOX_ENV_FILE].contains(f),
         ["ws", id, k, _, ..] => ids.iter().any(|i| i == id) && (*k == KNOWLEDGE_DIR || *k == SANDBOX_DIR || *k == AGENT_SANDBOX_DIR),
@@ -267,6 +270,11 @@ fn create_inner(root: &Path, dest: &Path, part: &Path, work: &Path, now: String,
         }
     }
     p.add_tree(&format!("shared/{KEPT_DIR_NAME}"), &shared.join(KEPT_DIR_NAME))?;
+    // 通信のプロキシのパスワード(APIキーと同じく平文のまま)
+    let proxy_secrets = root.join(PROXY_DIR).join(SECRETS_FILE);
+    if proxy_secrets.is_file() {
+        p.add_file(&format!("shared/{PROXY_SECRETS_FILE}"), &proxy_secrets)?;
+    }
 
     let root_canon = root.canonicalize().map_err(io)?;
     let mut workspaces = Vec::new();
@@ -511,6 +519,10 @@ fn swap(
             .map(|e| e.path()),
     );
     retire.push(root.join(WORKSPACES_DIR_NAME));
+    // プロキシのパスワードは、バックアップに含まれているときだけ差し替える(古いバックアップなら、いまのものを残す)
+    if exists(&stage.join("shared").join(PROXY_SECRETS_FILE)) {
+        retire.push(root.join(PROXY_DIR));
+    }
     for from in retire.into_iter().filter(|p| exists(p)) {
         let to = backup.join(from.file_name().unwrap_or_default());
         move_to(&from, &to)?;
@@ -526,6 +538,10 @@ fn swap(
         if exists(&from) {
             move_to(&from, &shared.join(name))?;
         }
+    }
+    let from = stage.join("shared").join(PROXY_SECRETS_FILE);
+    if exists(&from) {
+        move_to(&from, &root.join(PROXY_DIR).join(SECRETS_FILE))?;
     }
     for w in &manifest.workspaces {
         let from_dir = stage.join("ws").join(&w.id);
@@ -561,6 +577,11 @@ fn rollback(root: &Path, moved: &[(PathBuf, PathBuf)], installing: bool) {
             if p.is_dir() { let _ = std::fs::remove_dir_all(&p); } else { let _ = std::fs::remove_file(&p); }
         }
         let _ = std::fs::remove_dir_all(root.join(WORKSPACES_DIR_NAME));
+        // プロキシのパスワードは、差し替えるために退避したときだけ、置いたものを消す
+        let proxy = root.join(PROXY_DIR);
+        if moved.iter().any(|(from, _)| *from == proxy) {
+            let _ = std::fs::remove_dir_all(&proxy);
+        }
     }
     for (from, to) in moved.iter().rev() {
         if let Err(e) = std::fs::rename(to, from) {
@@ -583,6 +604,8 @@ mod tests {
         db.set_setting("marker", marker).unwrap();
         drop(db);
         std::fs::write(root.join(SECRETS_FILE), format!("{{\"k\":\"{marker}\"}}")).unwrap();
+        std::fs::create_dir_all(root.join(PROXY_DIR)).unwrap();
+        std::fs::write(root.join(PROXY_DIR).join(SECRETS_FILE), format!("{{\"proxy_password:p\":\"{marker}\"}}")).unwrap();
         let agent = root.join(WORKSPACES_DIR_NAME).join("agent-a");
         std::fs::create_dir_all(agent.join(KNOWLEDGE_DIR)).unwrap();
         std::fs::write(agent.join(KNOWLEDGE_DIR).join("a.md"), marker).unwrap();
@@ -630,6 +653,8 @@ mod tests {
         assert_eq!(db.get_setting(KNOWLEDGE_DIR_KEY).unwrap(), None);
         assert_eq!(std::fs::read_to_string(dst.join(SECRETS_FILE)).unwrap(), "{\"k\":\"new\"}");
         assert_eq!(std::fs::read_to_string(dst.join("workspaces/agent-a/knowledge/a.md")).unwrap(), "new");
+        // プロキシのパスワードも戻り、古いものは退避に残る
+        assert_eq!(std::fs::read_to_string(dst.join(PROXY_DIR).join(SECRETS_FILE)).unwrap(), "{\"proxy_password:p\":\"new\"}");
         // サンドボックスの環境変数とDockerfileも戻る
         assert_eq!(std::fs::read_to_string(dst.join("workspaces/agent-a/sandbox.env")).unwrap(), "TOKEN=new\n");
         assert_eq!(std::fs::read_to_string(dst.join("workspaces/agent-a/sandbox/Dockerfile")).unwrap(), "FROM new\n");
@@ -641,6 +666,7 @@ mod tests {
         let old = std::fs::read_dir(&dst).unwrap().flatten().find(|e| e.file_name().to_string_lossy().starts_with("restore-backup-")).unwrap();
         assert_eq!(std::fs::read_to_string(old.path().join(SECRETS_FILE)).unwrap(), "{\"k\":\"old\"}");
         assert!(old.path().join("workspaces/agent-a/timeline.db").is_file());
+        assert_eq!(std::fs::read_to_string(old.path().join(PROXY_DIR).join(SECRETS_FILE)).unwrap(), "{\"proxy_password:p\":\"old\"}");
         // 取り込まれたのはモデル以外
         let names: Vec<_> = ZipArchive::new(File::open(&zip).unwrap()).unwrap().file_names().map(str::to_owned).collect();
         assert!(names.iter().all(|n| !n.contains("models")));

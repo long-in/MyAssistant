@@ -112,6 +112,7 @@ export default function GlobalSettings() {
             <BaseInstructions />
             <SharedData />
             <PersonalData />
+            <BatchInterval />
           </TabsContent>
 
           <TabsContent value="voice" className="flex flex-col gap-6">
@@ -143,7 +144,6 @@ export default function GlobalSettings() {
           <TabsContent value="general" className="flex flex-col gap-6">
             <LanguageSetting />
             <OsNotifications />
-            <BatchInterval />
             <WorkEnable />
             <ProxyPanel />
             <AppBackup />

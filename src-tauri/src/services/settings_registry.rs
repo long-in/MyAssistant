@@ -78,6 +78,8 @@ pub const ALL: &[Setting] = &[
     agent(debug_log::ENABLED_KEY, Some(Kind::Flag)),
     // サンドボックスの接続先・モデル・上限時間(秘密は含まない)
     agent(sandbox_agent::LLM_KEY, Some(Kind::Json)),
+    // 使うプロキシの選択(空は既定、`none`は使わない、それ以外は登録済みのID)。IDは全体設定の一覧のもの
+    agent(proxy::CHOICE_KEY, Some(Kind::Text)),
     // ---- エージェントごと(対象外: 端末ごとに異なるもの、エージェント固有のもの) ----
     agent(batch::KNOWLEDGE_DIR_KEY, None),
     // アプリの会話とコンテナ内の Claude Code のセッションの対応。端末の履歴(DB)と対なので対象外
@@ -104,10 +106,13 @@ pub const ALL: &[Setting] = &[
     global(profile::KEY, Some(Kind::Profile)),
     global(batch::BATCH_INTERVAL_KEY, Some(Kind::Interval)),
     global(workspace::WORK_ENABLED_KEY, None),
-    // 通信のプロキシ。端末ごとの設定(認証情報を含みうる)なので、バックアップの対象外
-    global(proxy::ENABLED_KEY, None),
-    global(proxy::URL_KEY, None),
-    global(proxy::USERNAME_KEY, None),
+    // 通信のプロキシの一覧(ID・名前・URL・ユーザー名)と既定。パスワードは含まない
+    global(proxy::LIST_KEY, Some(Kind::Json)),
+    global(proxy::DEFAULT_KEY, Some(Kind::Text)),
+    // プロキシが1つだった頃のキー。起動時に一覧へ移すためだけに残す
+    global(proxy::LEGACY_ENABLED_KEY, None),
+    global(proxy::LEGACY_URL_KEY, None),
+    global(proxy::LEGACY_USERNAME_KEY, None),
 ];
 
 /// キーの定義。一覧に無ければ`None`。
@@ -167,7 +172,7 @@ mod tests {
     #[test]
     fn global_backup_covers_all_global_keys_except_device_local_ones() {
         let exported: Vec<_> = transferable(Scope::Global).map(|(k, _)| k).collect();
-        let expected: Vec<_> = keys(Scope::Global).filter(|k| !matches!(*k, workspace::WORK_ENABLED_KEY | proxy::ENABLED_KEY | proxy::URL_KEY | proxy::USERNAME_KEY)).collect();
+        let expected: Vec<_> = keys(Scope::Global).filter(|k| !matches!(*k, workspace::WORK_ENABLED_KEY | proxy::LEGACY_ENABLED_KEY | proxy::LEGACY_URL_KEY | proxy::LEGACY_USERNAME_KEY)).collect();
         assert_eq!(exported, expected);
     }
 }

@@ -412,12 +412,12 @@ mod tests {
         command_policy::add_allow(custom.path(), &["mytool".to_owned()]).unwrap();
         a.db.set_setting(chat::SHELL_ACCESS_KEY, "0").unwrap(); // 書き込む設定がないと、失敗が起きない
         a.secrets.set_tts_key("tts-a").unwrap();
-        b.secrets.set_proxy_password("pw-b").unwrap();
+        b.secrets.set_proxy_password("p1", "pw-b").unwrap();
         // 設定の書き込みを失敗させる(設定テーブルを壊す)
         b.db.break_settings_for_test();
         assert!(copy(&a, &b, CopyOptions { include_keys: true, ..Default::default() }).is_err());
         assert!(!b.secrets.has_tts_key().unwrap(), "コピーしたキーは戻る");
-        assert!(b.secrets.has_proxy_password().unwrap(), "元からあったキーは残る");
+        assert!(b.secrets.has_proxy_password("p1").unwrap(), "元からあったキーは残る");
         let policy = command_policy::load(&batch::knowledge_root(&b).unwrap());
         assert!(!policy.allow.contains(&"mytool".to_owned()), "コマンド権限も戻る");
     }
