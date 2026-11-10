@@ -1,7 +1,7 @@
 "use client";
 
 import { useT } from "@/lib/i18n";
-import { Box, Ear, Loader2, MessageSquarePlus, Mic, Send, Square, Volume2, VolumeX } from "lucide-react";
+import { Ear, Loader2, MessageSquarePlus, Mic, Send, Square, Volume2, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import ModelPicker from "./ModelPicker";
@@ -19,8 +19,6 @@ type Props = {
   speak: { on: boolean; ready: boolean; onToggle: () => void };
   /** 新しい会話を始める。 */
   onNewConversation: () => void;
-  /** サンドボックスのコンテナの起動・停止(ワークのみ。無ければ出さない)。 */
-  container?: { running: boolean; busy: boolean; disabled: boolean; onToggle: () => void };
   draft: string;
   onDraft: (text: string) => void;
   onSubmit: () => void;
@@ -38,27 +36,12 @@ type Props = {
 };
 
 /** 下部の入力カード。待機・マイク・ミュートの操作と、メッセージ入力欄(モデルの切り替えと送信/停止つき)。 */
-export default function ChatComposer({ standby, mic, onNewConversation, container, speak, draft, onDraft, onSubmit, placeholder, inputDisabled, sendDisabled, busy, onStop, model }: Props) {
+export default function ChatComposer({ standby, mic, onNewConversation, speak, draft, onDraft, onSubmit, placeholder, inputDisabled, sendDisabled, busy, onStop, model }: Props) {
   const t = useT();
   const recording = mic.state === "recording";
   return (
     <div className="hud-panel hud-accent shrink-0 px-4 py-3">
       <div className="mx-auto flex max-w-4xl items-center gap-4">
-        {container && (
-          <Button
-            type="button"
-            variant="outline"
-            size="icon-lg"
-            aria-pressed={container.running}
-            aria-label={container.running ? t("コンテナを停止") : t("コンテナを起動")}
-            title={container.running ? t("コンテナが起動中です。押すと停止します") : container.disabled ? t("イメージのビルドが必要です。Sandbox 設定を確認してください") : t("コンテナを起動")}
-            disabled={container.busy || container.disabled}
-            className={cn("size-11 shrink-0 rounded-full [&_svg]:size-5", container.running && "border-primary text-primary")}
-            onClick={container.onToggle}
-          >
-            {container.busy ? <Loader2 className="animate-spin" /> : <Box />}
-          </Button>
-        )}
         <Button
           type="button"
           variant="outline"

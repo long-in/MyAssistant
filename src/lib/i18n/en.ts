@@ -27,6 +27,8 @@ export const EN: Record<string, string> = {
   "Docker が使えます。": "Docker is available.",
   "コンテナを起動": "Start container",
   "コンテナを停止": "Stop container",
+  "コンテナ": "Container",
+  "稼働中": "Running",
   "Sandbox 設定のモデル": "Model in Sandbox settings",
   "Claude Code の settings.json に availableModels を書くと、ここで選べます": "Add availableModels to Claude Code's settings.json to choose here.",
   "コンテナが起動中です。押すと停止します": "The container is running. Press to stop it.",

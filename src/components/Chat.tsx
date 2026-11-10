@@ -1121,7 +1121,10 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
           ) : (
             <InfoCard
               turns={turns.length}
-              modelLabel={models.find((m) => m.provider === route?.provider && m.id === route?.model)?.label}
+              modelLabel={sandboxOn ? (sandboxModels?.selected ?? sandboxModels?.models[0]) : models.find((m) => m.provider === route?.provider && m.id === route?.model)?.label}
+              container={
+                sandboxOn ? { running: !!sandboxReady, busy: containerBusy, disabled: !sandboxReady && !containerStartable, onToggle: () => void toggleContainer() } : undefined
+              }
               className={cn("hidden flex-1 md:flex", `${SMALL}:hidden`)}
             />
           )}
@@ -1141,11 +1144,6 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
       {/* 下部: 操作ボタンと入力欄のカード */}
       <ChatComposer
         onNewConversation={() => startNewConversation(true)}
-        container={
-          sandboxOn && workspaceId !== LEADER_ID
-            ? { running: !!sandboxReady, busy: containerBusy, disabled: !sandboxReady && !containerStartable, onToggle: () => void toggleContainer() }
-            : undefined
-        }
         standby={{ on: standbyOn, available: wake.words.length > 0, onToggle: toggleStandby }}
         mic={{
           state: mic,

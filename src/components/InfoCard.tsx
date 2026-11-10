@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useLang, useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-import { Moon, Sun } from "lucide-react";
+import { Loader2, Moon, Play, Square, Sun } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 /** 大時計(東京)の下に並べる都市。タイムゾーンは IANA 名で、サマータイムは Intl が反映する。 */
 const WORLD_CLOCKS = [
@@ -21,7 +22,18 @@ function zoned(now: Date, zone: string) {
 }
 
 /** 一般的な情報を並べるカード。表示する項目は、行を足すだけで増やせる。 */
-export default function InfoCard({ turns, modelLabel, className }: { turns: number; modelLabel?: string; className?: string }) {
+export default function InfoCard({
+  turns,
+  modelLabel,
+  container,
+  className,
+}: {
+  turns: number;
+  modelLabel?: string;
+  /** サンドボックスのコンテナの状態と操作(ワークのみ)。 */
+  container?: { running: boolean; busy: boolean; disabled: boolean; onToggle: () => void };
+  className?: string;
+}) {
   const t = useT();
   const locale = useLang() === "ja" ? "ja-JP" : "en-US";
   // 時計は秒ごとに更新する。サーバー描画との差を避けるため、表示は読み込み後
@@ -70,6 +82,30 @@ export default function InfoCard({ turns, modelLabel, className }: { turns: numb
           </div>
         ))}
       </dl>
+      {container && (
+        <div className="mt-auto flex flex-col gap-2 rounded-md border border-border/60 bg-background/40 p-3">
+          <div className="flex items-center gap-2">
+            <span
+              aria-hidden
+              className={cn("size-2 shrink-0 rounded-full", container.busy ? "animate-pulse bg-amber-500" : container.running ? "bg-emerald-500 shadow-[0_0_6px] shadow-emerald-500/70" : "bg-muted-foreground/50")}
+            />
+            <span className="hud-label flex-1 text-xs">{t("コンテナ")}</span>
+            <span className="text-xs text-muted-foreground">{container.busy ? t("処理中…") : container.running ? t("稼働中") : t("停止中")}</span>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={container.busy || container.disabled}
+            title={container.disabled && !container.running ? t("イメージのビルドが必要です。Sandbox 設定を確認してください") : undefined}
+            className={cn("w-full", container.running ? "border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive" : "border-primary/50 text-primary hover:bg-primary/10")}
+            onClick={container.onToggle}
+          >
+            {container.busy ? <Loader2 className="animate-spin" /> : container.running ? <Square /> : <Play />}
+            {container.running ? t("コンテナを停止") : t("コンテナを起動")}
+          </Button>
+        </div>
+      )}
     </section>
   );
 }
