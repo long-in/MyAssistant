@@ -304,6 +304,13 @@ export type DockerfileState = "missing" | "template" | "edited";
 export const getSandboxDockerfile = () => invoke<{ content: string; state: DockerfileState }>("get_sandbox_dockerfile");
 export const setSandboxDockerfile = (content: string) => invoke<DockerfileState>("set_sandbox_dockerfile", { content });
 
+/** sandbox.env の名前と検証結果(値が空の名前は含まない)。 */
+export type SandboxEnvSummary = { names: string[]; error: { line: number | null; message: string } | null };
+/** sandbox.env の内容(値を含む)。無ければ既定の内容で作る。 */
+export const getSandboxEnv = () => invoke<{ content: string; summary: SandboxEnvSummary }>("get_sandbox_env");
+/** sandbox.env を保存する。書式に誤りがあれば保存せずエラー。 */
+export const setSandboxEnv = (content: string) => invoke<SandboxEnvSummary>("set_sandbox_env", { content });
+
 export type SandboxFiles = {
   /** 環境変数ファイルの名前と検証結果。値は含まれない。 */
   env: { names: string[]; error: { line: number | null; message: string } | null };
