@@ -1,6 +1,6 @@
 //! エージェントデータと共通データ。どちらもユーザーが書いた自由記述の指示で、システムプロンプトへ渡す。
 //! - エージェントデータ: エージェントごと。そのエージェントのDBの設定(`agent_data`)に保存する。パーソナルデータの代わり。
-//! - 共通データ: 全エージェントで1つ。アプリデータの`workspaces/shared_data.json`に保存する。パーソナルには渡さない。
+//! - 共通データ: 全エージェントで1つ。アプリデータの`work/shared_data.json`に保存する。パーソナルには渡さない。
 //!
 //! 会話の内容ではなくユーザー自身の設定なので、参考データとは違い、指示として従わせる。
 use std::path::{Path, PathBuf};
@@ -11,7 +11,6 @@ use crate::{db::Db, utils::error::AppError};
 
 pub const KEY: &str = "agent_data";
 const SHARED_FILE: &str = "shared_data.json";
-const SHARED_DIR: &str = "workspaces";
 
 /// 本文の上限(文字数)。
 pub const MAX_CHARS: usize = 2000;
@@ -73,7 +72,7 @@ pub fn save(db: &Db, note: &Note) -> Result<Note, AppError> {
 }
 
 fn shared_path(root: &Path) -> PathBuf {
-    root.join(SHARED_DIR).join(SHARED_FILE)
+    root.join(super::workspace::DIR_NAME).join(SHARED_FILE)
 }
 
 /// 共通データ。未保存・読めない場合は初期値。
@@ -86,7 +85,7 @@ pub fn save_shared(root: &Path, note: &Note) -> Result<Note, AppError> {
     let io = |e: std::io::Error| AppError::Io(e.to_string());
     let note = note.normalized()?;
     let path = shared_path(root);
-    std::fs::create_dir_all(root.join(SHARED_DIR)).map_err(io)?;
+    std::fs::create_dir_all(root.join(super::workspace::DIR_NAME)).map_err(io)?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, serde_json::to_string_pretty(&note).map_err(|e| AppError::Io(e.to_string()))?).map_err(io)?;
     std::fs::rename(&tmp, &path).map_err(io)?;

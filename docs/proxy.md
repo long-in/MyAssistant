@@ -9,7 +9,7 @@
 
 | 項目 | 保存先 | 内容 |
 | --- | --- | --- |
-| `proxy_list` | `workspaces/global_settings.json` | 登録したプロキシのJSON配列。各件は `id`(英数字・`-`・`_`、64文字まで。`none` は不可)・`name`(60文字まで)・`url`・`username` |
+| `proxy_list` | `work/global_settings.json` | 登録したプロキシのJSON配列。各件は `id`(英数字・`-`・`_`、64文字まで。`none` は不可)・`name`(60文字まで)・`url`・`username` |
 | `proxy_default` | 同上 | 既定のプロキシのID。空なら既定なし |
 | パスワード | `<アプリデータ>/proxy/secrets.json` | IDごとに `proxy_password:<id>`。権限 0600。`services/secrets.rs` の外へ出さず、画面へは登録の有無(bool)だけ返す |
 | `proxy_choice` | エージェントのDB(`app_settings`) | そのエージェントの選択。空は「既定を使う」、`none` は「使わない」、それ以外は登録済みのID |

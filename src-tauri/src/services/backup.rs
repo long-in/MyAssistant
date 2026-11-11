@@ -27,7 +27,7 @@ use crate::{
         knowledge,
         pronunciation::DICTIONARY_FILE,
         sandbox_env,
-        workspace::{DB_FILE, DIR_NAME as WORKSPACES_DIR_NAME, KEPT_DIR_NAME, PERSONAL_ID, REGISTRY_FILE},
+        workspace::{DB_FILE, DIR_NAME as WORK_DIR_NAME, KEPT_DIR_NAME, PERSONAL_ID, REGISTRY_FILE},
     },
     utils::error::AppError,
 };
@@ -109,13 +109,13 @@ fn valid_id(id: &str) -> bool {
 
 /// ワークスペースのフォルダ。パーソナルだけはアプリデータ直下。
 fn workspace_dir(root: &Path, id: &str) -> PathBuf {
-    if id == PERSONAL_ID { root.to_owned() } else { root.join(WORKSPACES_DIR_NAME).join(id) }
+    if id == PERSONAL_ID { root.to_owned() } else { root.join(WORK_DIR_NAME).join(id) }
 }
 
 /// ディスク上のワークスペースのID(DBを持つもの)。パーソナルが先頭。
 fn discover(root: &Path) -> Vec<String> {
     let mut ids = vec![PERSONAL_ID.to_owned()];
-    let mut agents: Vec<String> = std::fs::read_dir(root.join(WORKSPACES_DIR_NAME))
+    let mut agents: Vec<String> = std::fs::read_dir(root.join(WORK_DIR_NAME))
         .into_iter()
         .flatten()
         .flatten()
@@ -266,7 +266,7 @@ fn create_inner(root: &Path, dest: &Path, part: &Path, work: &Path, now: String,
         password,
         exclude: vec![part.to_owned(), dest.to_owned()],
     };
-    let shared = root.join(WORKSPACES_DIR_NAME);
+    let shared = root.join(WORK_DIR_NAME);
     for name in [REGISTRY_FILE, GLOBAL_FILE] {
         if shared.join(name).is_file() {
             p.add_file(&format!("shared/{name}"), &shared.join(name))?;
@@ -529,7 +529,7 @@ fn swap(
             .filter(|e| e.file_name().to_string_lossy().starts_with("timeline.db.bak-"))
             .map(|e| e.path()),
     );
-    retire.push(root.join(WORKSPACES_DIR_NAME));
+    retire.push(root.join(WORK_DIR_NAME));
     // プロキシのパスワードは、バックアップに含まれているときだけ差し替える(古いバックアップなら、いまのものを残す)
     if exists(&stage.join("shared").join(PROXY_SECRETS_FILE)) {
         retire.push(root.join(PROXY_DIR));
@@ -542,7 +542,7 @@ fn swap(
 
     // 2. 展開済みの内容を置く
     *installing = true;
-    let shared = root.join(WORKSPACES_DIR_NAME);
+    let shared = root.join(WORK_DIR_NAME);
     std::fs::create_dir_all(&shared).map_err(io)?;
     for name in [REGISTRY_FILE, GLOBAL_FILE, KEPT_DIR_NAME] {
         let from = stage.join("shared").join(name);
@@ -587,7 +587,7 @@ fn rollback(root: &Path, moved: &[(PathBuf, PathBuf)], installing: bool) {
             let p = root.join(name);
             if p.is_dir() { let _ = std::fs::remove_dir_all(&p); } else { let _ = std::fs::remove_file(&p); }
         }
-        let _ = std::fs::remove_dir_all(root.join(WORKSPACES_DIR_NAME));
+        let _ = std::fs::remove_dir_all(root.join(WORK_DIR_NAME));
         // プロキシのパスワードは、差し替えるために退避したときだけ、置いたものを消す
         let proxy = root.join(PROXY_DIR);
         if moved.iter().any(|(from, _)| *from == proxy) {
@@ -617,7 +617,7 @@ mod tests {
         std::fs::write(root.join(SECRETS_FILE), format!("{{\"k\":\"{marker}\"}}")).unwrap();
         std::fs::create_dir_all(root.join(PROXY_DIR)).unwrap();
         std::fs::write(root.join(PROXY_DIR).join(SECRETS_FILE), format!("{{\"proxy_password:p\":\"{marker}\"}}")).unwrap();
-        let agent = root.join(WORKSPACES_DIR_NAME).join("agent-a");
+        let agent = root.join(WORK_DIR_NAME).join("agent-a");
         std::fs::create_dir_all(agent.join(KNOWLEDGE_DIR)).unwrap();
         std::fs::write(agent.join(KNOWLEDGE_DIR).join("a.md"), marker).unwrap();
         // 担当システムのフォルダ(ソースコードなど)はバックアップに含めない
@@ -631,7 +631,7 @@ mod tests {
         let sdb = Db::open(&agent.join(DB_FILE)).unwrap();
         sdb.set_setting("marker", marker).unwrap();
         drop(sdb);
-        std::fs::write(root.join(WORKSPACES_DIR_NAME).join(REGISTRY_FILE), format!("[\"{marker}\"]")).unwrap();
+        std::fs::write(root.join(WORK_DIR_NAME).join(REGISTRY_FILE), format!("[\"{marker}\"]")).unwrap();
     }
 
     fn marker_of(root: &Path, id: &str) -> Option<String> {
@@ -657,7 +657,7 @@ mod tests {
         std::fs::write(dst.join("models/keep.bin"), "k").unwrap();
         let p = prepare(&dst, &zip, None).unwrap();
         assert_eq!(p.workspaces, 2);
-        assert_eq!(std::fs::read_to_string(dst.join(WORKSPACES_DIR_NAME).join(REGISTRY_FILE)).unwrap(), "[\"old\"]");
+        assert_eq!(std::fs::read_to_string(dst.join(WORK_DIR_NAME).join(REGISTRY_FILE)).unwrap(), "[\"old\"]");
         schedule(&dst).unwrap();
         assert!(apply_pending(&dst).unwrap());
 
@@ -668,20 +668,20 @@ mod tests {
         let db = Db::open(&dst.join(DB_FILE)).unwrap();
         assert_eq!(db.get_setting(KNOWLEDGE_DIR_KEY).unwrap(), None);
         assert_eq!(std::fs::read_to_string(dst.join(SECRETS_FILE)).unwrap(), "{\"k\":\"new\"}");
-        assert_eq!(std::fs::read_to_string(dst.join("workspaces/agent-a/knowledge/a.md")).unwrap(), "new");
+        assert_eq!(std::fs::read_to_string(dst.join("work/agent-a/knowledge/a.md")).unwrap(), "new");
         // プロキシのパスワードも戻り、古いものは退避に残る
         assert_eq!(std::fs::read_to_string(dst.join(PROXY_DIR).join(SECRETS_FILE)).unwrap(), "{\"proxy_password:p\":\"new\"}");
         // サンドボックスの環境変数とDockerfileも戻る
-        assert_eq!(std::fs::read_to_string(dst.join("workspaces/agent-a/sandbox.env")).unwrap(), "TOKEN=new\n");
-        assert_eq!(std::fs::read_to_string(dst.join("workspaces/agent-a/sandbox/Dockerfile")).unwrap(), "FROM new\n");
-        assert_eq!(std::fs::read_to_string(dst.join(WORKSPACES_DIR_NAME).join(REGISTRY_FILE)).unwrap(), "[\"new\"]");
+        assert_eq!(std::fs::read_to_string(dst.join("work/agent-a/sandbox.env")).unwrap(), "TOKEN=new\n");
+        assert_eq!(std::fs::read_to_string(dst.join("work/agent-a/sandbox/Dockerfile")).unwrap(), "FROM new\n");
+        assert_eq!(std::fs::read_to_string(dst.join(WORK_DIR_NAME).join(REGISTRY_FILE)).unwrap(), "[\"new\"]");
         // モデルは触らない。展開先と予約は片付く
         assert!(dst.join("models/keep.bin").is_file());
         assert!(!dst.join(STAGING_DIR).exists() && !dst.join(MARKER).exists());
         // 古いデータは退避に残る
         let old = std::fs::read_dir(&dst).unwrap().flatten().find(|e| e.file_name().to_string_lossy().starts_with("restore-backup-")).unwrap();
         assert_eq!(std::fs::read_to_string(old.path().join(SECRETS_FILE)).unwrap(), "{\"k\":\"old\"}");
-        assert!(old.path().join("workspaces/agent-a/timeline.db").is_file());
+        assert!(old.path().join("work/agent-a/timeline.db").is_file());
         assert_eq!(std::fs::read_to_string(old.path().join(PROXY_DIR).join(SECRETS_FILE)).unwrap(), "{\"proxy_password:p\":\"old\"}");
         // 取り込まれたのはモデル以外
         let names: Vec<_> = ZipArchive::new(File::open(&zip).unwrap()).unwrap().file_names().map(str::to_owned).collect();
@@ -693,7 +693,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(&zip).unwrap().permissions().mode() & 0o777, 0o600);
             assert_eq!(std::fs::metadata(dst.join(SECRETS_FILE)).unwrap().permissions().mode() & 0o777, 0o600);
-            assert_eq!(std::fs::metadata(dst.join("workspaces/agent-a/sandbox.env")).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(std::fs::metadata(dst.join("work/agent-a/sandbox.env")).unwrap().permissions().mode() & 0o777, 0o600);
         }
     }
 

@@ -906,6 +906,6 @@ mod tests {
         let ctx = ws.get(&p.id).unwrap(); // 裏のバッチが持っている
         ws.delete(&p.id, true).unwrap();
         assert!(matches!(run_guarded(&ctx).await, Err(AppError::AgentNotFound)));
-        assert!(!d.path().join("workspaces").join(&p.id).exists(), "削除後に作り直されない");
+        assert!(!d.path().join("work").join(&p.id).exists(), "削除後に作り直されない");
     }
 }
