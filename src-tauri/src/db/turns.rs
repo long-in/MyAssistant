@@ -6,6 +6,17 @@ use rusqlite::{OptionalExtension, params};
 use super::Db;
 use crate::utils::error::AppError;
 
+/// 会話の一覧の1件。
+#[derive(Debug, Clone)]
+pub struct SessionRow {
+    pub session_id: String,
+    pub last_at: String,
+    /// 最初の発話。
+    pub title: String,
+    /// 発話の数。
+    pub turns: u32,
+}
+
 /// 画面に戻す1行(ユーザー発話またはAIの返答)。`events`は発話の行にだけ付く実行ログ(JSON配列)。
 #[derive(Debug, Clone)]
 pub struct TurnRow {
@@ -32,6 +43,23 @@ impl Db {
             .query_map(params![session_id, limit], |r| {
                 Ok(TurnRow { role: r.get(0)?, content: r.get(1)?, model: r.get(2)?, created_at: r.get(3)?, events: r.get(4)? })
             })?
+            .collect::<Result<_, _>>()?;
+        Ok(rows)
+    }
+
+    /// 発話のある会話を、最後のやり取りが新しい順に直近`limit`件返す。
+    pub fn session_rows(&self, limit: u32) -> Result<Vec<SessionRow>, AppError> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT l.session_id, MAX(l.created_at) AS last_at, SUM(l.role = 'user') AS turns,
+                    (SELECT f.content FROM conversation_logs f WHERE f.session_id = l.session_id AND f.role = 'user'
+                     ORDER BY f.created_at ASC, f.rowid ASC LIMIT 1) AS title
+             FROM conversation_logs l WHERE l.role IN ('user', 'assistant')
+             GROUP BY l.session_id HAVING turns > 0
+             ORDER BY last_at DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![limit], |r| Ok(SessionRow { session_id: r.get(0)?, last_at: r.get(1)?, turns: r.get(2)?, title: r.get(3)? }))?
             .collect::<Result<_, _>>()?;
         Ok(rows)
     }
@@ -70,6 +98,20 @@ impl Db {
 mod tests {
     use super::*;
     use crate::db::Role;
+
+    #[test]
+    fn session_rows_are_newest_first_and_skip_empty_sessions() {
+        let db = Db::open_in_memory(Role::Agent);
+        db.insert_log("a", "user", "古い会話", None, None).unwrap();
+        db.insert_log("a", "assistant", "返答", None, None).unwrap();
+        db.insert_log("b", "user", "新しい会話", None, None).unwrap();
+        db.insert_log("b", "user", "二つ目", None, None).unwrap();
+        db.insert_log("c", "assistant", "発話のない会話", None, None).unwrap();
+        let rows = db.session_rows(10).unwrap();
+        assert_eq!(rows.iter().map(|r| r.session_id.as_str()).collect::<Vec<_>>(), ["b", "a"]);
+        assert_eq!((rows[0].title.as_str(), rows[0].turns), ("新しい会話", 2));
+        assert_eq!(db.session_rows(1).unwrap().len(), 1);
+    }
 
     #[test]
     fn rows_are_in_order_with_events_on_the_user_row() {

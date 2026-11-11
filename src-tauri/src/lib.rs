@@ -119,6 +119,8 @@ pub fn run() {
       commands::chat::get_base_instructions,
       commands::chat_session::chat_session_load,
       commands::chat_session::chat_session_new,
+      commands::chat_session::chat_session_list,
+      commands::chat_session::chat_session_resume,
       commands::prompts::list_prompts,
       commands::prompts::save_prompt,
       commands::prompts::reset_prompt,

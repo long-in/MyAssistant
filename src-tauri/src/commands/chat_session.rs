@@ -1,7 +1,7 @@
 //! 会話の継続のコマンド。保存先は選択中のエージェントのDB。
 use crate::{
     services::{
-        chat_session::{self, SessionView},
+        chat_session::{self, SessionSummary, SessionView},
         workspace::Ctx,
     },
     utils::error::AppError,
@@ -17,4 +17,16 @@ pub fn chat_session_load(ctx: Ctx) -> Result<SessionView, AppError> {
 #[tauri::command]
 pub fn chat_session_new(ctx: Ctx, session_id: String) -> Result<(), AppError> {
     chat_session::set(&ctx.db, &session_id)
+}
+
+/// 履歴(直近10件の会話)。
+#[tauri::command]
+pub fn chat_session_list(ctx: Ctx) -> Result<Vec<SessionSummary>, AppError> {
+    chat_session::list(&ctx.db)
+}
+
+/// 履歴の会話へ切り替え、その会話のやり取りを返す。
+#[tauri::command]
+pub fn chat_session_resume(ctx: Ctx, session_id: String) -> Result<SessionView, AppError> {
+    chat_session::resume(&ctx.db, &session_id)
 }
