@@ -1132,3 +1132,10 @@ export type ChatSessionView = { session_id: string; turns: SessionTurn[] };
 export const chatSessionLoad = () => invoke<ChatSessionView>("chat_session_load");
 /** 新しい会話のIDを保存する。次回の起動から、その会話を再開する。 */
 export const chatSessionNew = (sessionId: string) => invoke<void>("chat_session_new", { sessionId });
+
+/** 履歴の1件(会話)。 */
+export type ChatSessionSummary = { session_id: string; last_at: string; title: string; turns: number };
+/** 履歴(現在の会話を含む直近10件、新しい順)。 */
+export const chatSessionList = () => invoke<ChatSessionSummary[]>("chat_session_list");
+/** 履歴の会話へ切り替える。その会話のやり取りを返す。 */
+export const chatSessionResume = (sessionId: string) => invoke<ChatSessionView>("chat_session_resume", { sessionId });

@@ -6,6 +6,7 @@ import { ArrowUp, Ear, Loader2, MessageSquarePlus, Mic, Play, Square, Volume2, V
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import ModelPicker from "./ModelPicker";
+import ChatHistory from "./ChatHistory";
 import { VoiceOrb } from "./Waveforms";
 import { PHASE_HUE, PHASE_LABELS, type Phase } from "./OrbReadout";
 import { cn } from "@/lib/utils";
@@ -26,6 +27,8 @@ type Props = {
   speak: { on: boolean; ready: boolean; onToggle: () => void };
   /** 新しい会話を始める。 */
   onNewConversation: () => void;
+  /** 履歴から過去の会話へ切り替える。`currentId`は今の会話のID。 */
+  history: { currentId: () => string; onResume: (id: string) => void };
   draft: string;
   onDraft: (text: string) => void;
   onSubmit: () => void;
@@ -78,6 +81,7 @@ export default function ChatComposer({
   standby,
   mic,
   onNewConversation,
+  history,
   speak,
   draft,
   onDraft,
@@ -254,6 +258,7 @@ export default function ChatComposer({
                 >
                   <MessageSquarePlus />
                 </Button>
+                <ChatHistory currentId={history.currentId} onResume={history.onResume} />
                 <div className="min-w-0 max-w-64">
                   {model.kind === "app" ? (
                     <ModelPicker compact disabled={busy} route={model.route} models={model.models} keyStatus={model.keyStatus} onChange={model.onChange} />

@@ -38,6 +38,7 @@ import {
   type SessionTurn,
   chatSessionLoad,
   chatSessionNew,
+  chatSessionResume,
   DEFAULT_VOICE_TIMING,
   type VoiceTiming,
   type WakeConfig,
@@ -144,6 +145,17 @@ type Capture = "spoke" | "silent" | "lost";
 type Heard = { text: string } | "retry" | "stop";
 
 /** `active`は対話画面を表示中かどうか。他の画面へ移動しても`Chat`は`AppShell`に残り、進行中の処理や待機を続ける。 */
+/** 保存済みのやり取りを、画面の1往復へ戻す。 */
+const toTurn = (x: SessionTurn): Turn => ({
+  user: x.user,
+  userAt: new Date(x.user_at),
+  reply: x.reply ?? undefined,
+  replyAt: x.reply_at ? new Date(x.reply_at) : undefined,
+  via: x.via ?? undefined,
+  log: x.events.reduce(applyTaskEvent, emptyLog),
+  restored: true,
+});
+
 export default function Chat({ workspaceId, active }: { workspaceId: string; active: boolean }) {
   const t = useT();
   const activeRef = useRef(active);
@@ -405,15 +417,6 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   // このワークスペースを開いたとき、前回までの会話を戻し、実行中だった依頼の続きを受け取る。離れるときは、依頼を止めずに接続だけ外す
   useEffect(() => {
     let live = true;
-    const toTurn = (x: SessionTurn): Turn => ({
-      user: x.user,
-      userAt: new Date(x.user_at),
-      reply: x.reply ?? undefined,
-      replyAt: x.reply_at ? new Date(x.reply_at) : undefined,
-      via: x.via ?? undefined,
-      log: x.events.reduce(applyTaskEvent, emptyLog),
-      restored: true,
-    });
     chatSessionLoad()
       .then((view) => {
         if (!live) return;
@@ -475,6 +478,21 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     setTurns([]);
     setDispatchDraft(null);
     toast.success(t("新しい会話を始めました。"));
+  };
+
+  /** 履歴の会話へ切り替える。実行中の処理と読み上げは止め、その会話のやり取りを画面に戻す。 */
+  const resumeConversation = (id: string) => {
+    resetEpoch.current++;
+    stopSpeech();
+    if (gate.current.busy || approvalRef.current) cancelTask();
+    chatSessionResume(id)
+      .then((view) => {
+        session.current = { id: view.session_id };
+        setTurns(view.turns.map(toTurn));
+        setDispatchDraft(null);
+        toast.success(t("過去の会話に切り替えました。"));
+      })
+      .catch(fail);
   };
 
   /**
@@ -1143,6 +1161,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
       <ChatComposer
         phase={phase}
         onNewConversation={() => startNewConversation(true)}
+        history={{ currentId: () => session.current.id, onResume: resumeConversation }}
         standby={{ on: standbyOn, available: wake.words.length > 0, onToggle: toggleStandby }}
         mic={{
           state: mic,
