@@ -17,7 +17,7 @@
 | [skills.md](skills.md) | スキル(決まった依頼への対応手順)、軽量モデルによる選定、会話からの管理 |
 | [global-settings.md](global-settings.md) | 全エージェント共通の全体設定 |
 | [user-profile.md](user-profile.md) | パーソナルデータ |
-| [agent-file-tools.md](agent-file-tools.md) | ファイル操作・インターネット検索のツール |
+| [agent-file-tools.md](agent-file-tools.md) | ファイル操作・設計書の参照・インターネット検索のツール |
 | [agent-command-tasks.md](agent-command-tasks.md) | 作業依頼(計画の承認とコマンド実行) |
 | [command-policy.md](command-policy.md) | コマンドの許可・拒否の判定とポリシーファイル |
 | [sandbox.md](sandbox.md) | Docker サンドボックス(全エージェント共通のイメージと Dockerfile・環境変数・分離・後始末) |

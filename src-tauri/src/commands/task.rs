@@ -83,7 +83,9 @@ pub async fn run_with_tools(
         leader::tool_definitions()
     } else {
         system.push_str(&format!("\n\n{}", tool_loop::TOOL_GUIDE));
-        tool_loop::tool_definitions(shell_access)
+        let mut tools = tool_loop::tool_definitions(shell_access);
+        tools.extend(tool_loop::docs_tool_definitions());
+        tools
     };
     let (shell_access, web_access) = if leader { (false, None) } else { (shell_access, web_access) };
     let sandbox = sandbox && shell_access && !leader && sandbox::is_supported(&ctx.id);

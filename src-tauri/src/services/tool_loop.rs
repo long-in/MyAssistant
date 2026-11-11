@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use super::{
     cancel::CancelToken,
     command_policy::{self, Verdict},
+    docs,
     llm_client::{ToolCall, ToolTurn},
     memory::{self, Forgot, Remembered},
     sandbox,
@@ -57,6 +58,7 @@ const WRITE_EXTENSIONS: [&str; 2] = ["md", "txt"];
 /// ツール結果の扱い(参考データ・読み上げ)はここで一度だけ書き、`shell_guide`・`WEB_GUIDE`では繰り返さない。
 pub const TOOL_GUIDE: &str = "\
 ツール\n\
+- このアプリの機能・仕様・使い方を聞かれたら、推測せず先に設計書ツールで確かめて答える。設計書に書かれていないことは、その旨を伝える。\n\
 - ファイルやメモの確認・検索・作成を求められたときだけファイル操作ツール(ナレッジディレクトリが対象)を使い、内容は推測せずツールで確かめる。\n\
 - <related_knowledge>は発話からつながりを辿って選んだノートの要約。答えに本文が必要なときだけ、そのパスをread_fileで読む。\n\
 - 会話は自動でナレッジに記録される。記録のためにファイルを作らず、作成はユーザーが明示的に求めたときだけ。\n\
@@ -283,6 +285,38 @@ fn file_tool_definitions() -> Vec<Value> {
     ]
 }
 
+/// アプリの設計書を読むツール。読み取り専用で承認は不要。リーダー以外の全エージェントへ常に渡す。
+pub fn docs_tool_definitions() -> Vec<Value> {
+    vec![
+        json!({
+            "name": "list_docs",
+            "description": "このアプリの設計書(機能・仕様・構成を書いた文書)の一覧を、ファイル名と見出しで返す。",
+            "input_schema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "search_docs",
+            "description": "設計書全体から文字列(大文字小文字を区別しない)を検索し、ファイル名:行番号:該当行を返す。",
+            "input_schema": {
+                "type": "object",
+                "properties": { "query": { "type": "string", "description": "検索する文字列" } },
+                "required": ["query"]
+            }
+        }),
+        json!({
+            "name": "read_doc",
+            "description": "設計書を1つ読む。長い場合は先頭から返し、続きはoffsetで指定する。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "list_docsで得たファイル名(例: chat-flow.md)" },
+                    "offset": { "type": "integer", "description": "読み始める文字位置。省略時は先頭" }
+                },
+                "required": ["name"]
+            }
+        }),
+    ]
+}
+
 fn str_arg<'a>(input: &'a Value, key: &str) -> Option<&'a str> {
     input.get(key)?.as_str()
 }
@@ -476,6 +510,12 @@ pub fn execute_tool(root: &Path, name: &str, input: &Value) -> Result<String, St
         "create_file" => create_file(root, input),
         "remember" => remember(root, input),
         "forget" => forget(root, input),
+        "list_docs" => Ok(docs::list()),
+        "search_docs" => docs::search(str_arg(input, "query").ok_or("queryが必要です。")?),
+        "read_doc" => {
+            let offset = input.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
+            docs::read(str_arg(input, "name").ok_or("nameが必要です。")?, offset)
+        }
         other => Err(format!("未知のツールです: {other}")),
     }
 }
@@ -1100,6 +1140,24 @@ mod tests {
         let hits = execute_tool(&root, "search_files", &json!({ "query": "TAURI" })).unwrap();
         assert!(hits.contains("Dev/rust.md:2:") && hits.contains("Tauriの設計メモ"));
         assert_eq!(execute_tool(&root, "search_files", &json!({ "query": "zzz" })).unwrap(), "該当なし");
+    }
+
+    #[test]
+    fn docs_tools_read_embedded_docs() {
+        let (_d, root) = knowledge();
+        assert!(execute_tool(&root, "list_docs", &json!({})).unwrap().contains("chat-flow.md"));
+        let body = execute_tool(&root, "read_doc", &json!({ "name": "chat-flow.md" })).unwrap();
+        assert!(body.starts_with("# 対話の処理"));
+        assert!(execute_tool(&root, "read_doc", &json!({ "name": "../secret.txt" })).is_err());
+        assert!(execute_tool(&root, "read_doc", &json!({})).is_err());
+        assert!(execute_tool(&root, "search_docs", &json!({ "query": "send_chat" })).unwrap().contains("chat-flow.md:"));
+        assert!(execute_tool(&root, "search_docs", &json!({})).is_err());
+    }
+
+    #[test]
+    fn docs_tool_definitions_are_read_only_names() {
+        let names: Vec<_> = docs_tool_definitions().iter().map(|t| t["name"].as_str().unwrap().to_owned()).collect();
+        assert_eq!(names, ["list_docs", "search_docs", "read_doc"]);
     }
 
     #[test]

@@ -1,4 +1,5 @@
 pub mod tool_loop;
+pub mod docs;
 pub mod turn_history;
 pub mod task_run;
 pub mod attention;
