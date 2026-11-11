@@ -33,6 +33,20 @@ pub struct SessionView {
     pub turns: Vec<TurnView>,
 }
 
+/// 履歴に出す会話の数。
+const HISTORY_LIMIT: u32 = 10;
+/// 履歴の題名(最初の発話)の最大文字数。
+const TITLE_CHARS: usize = 40;
+
+/// 履歴の1件。
+#[derive(Debug, Serialize, PartialEq)]
+pub struct SessionSummary {
+    pub session_id: String,
+    pub last_at: String,
+    pub title: String,
+    pub turns: u32,
+}
+
 fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -87,6 +101,28 @@ pub fn load(db: &Db) -> Result<SessionView, AppError> {
     Ok(SessionView { session_id, turns })
 }
 
+/// 直近の会話(現在の会話を含む)を新しい順に返す。
+pub fn list(db: &Db) -> Result<Vec<SessionSummary>, AppError> {
+    Ok(db
+        .session_rows(HISTORY_LIMIT)?
+        .into_iter()
+        .map(|r| {
+            let flat = r.title.split_whitespace().collect::<Vec<_>>().join(" ");
+            let title = if flat.chars().count() > TITLE_CHARS { format!("{}…", flat.chars().take(TITLE_CHARS).collect::<String>()) } else { flat };
+            SessionSummary { session_id: r.session_id, last_at: r.last_at, title, turns: r.turns }
+        })
+        .collect())
+}
+
+/// 履歴の会話へ切り替え、画面に戻すやり取りを返す。履歴に無いIDは受け付けない。
+pub fn resume(db: &Db, id: &str) -> Result<SessionView, AppError> {
+    if !db.session_rows(HISTORY_LIMIT)?.iter().any(|r| r.session_id == id) {
+        return Err(AppError::Db("session not in history".into()));
+    }
+    set(db, id)?;
+    load(db)
+}
+
 /// 実行ログに残すイベントだけをJSONにする。承認・説明テキスト・完了の通知は画面に出さないので残さない。
 fn events_json(events: &[TaskEvent]) -> Option<String> {
     let mut kept: Vec<Value> = Vec::new();
@@ -138,6 +174,31 @@ mod tests {
         let next = start_new(&db).unwrap();
         assert_ne!(next, first);
         assert_eq!(current(&db).unwrap(), next);
+    }
+
+    #[test]
+    fn resume_switches_only_to_sessions_in_history() {
+        let db = Db::open_in_memory(Role::Agent);
+        db.insert_log("old", "user", "前の\n話題", None, None).unwrap();
+        db.insert_log("old", "assistant", "返答", None, None).unwrap();
+        let cur = current(&db).unwrap();
+        let list = list(&db).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].title, "前の 話題");
+        assert!(resume(&db, "nope").is_err());
+        assert_eq!(current(&db).unwrap(), cur, "拒否したら変わらない");
+        let view = resume(&db, "old").unwrap();
+        assert_eq!((view.session_id.as_str(), view.turns.len()), ("old", 1));
+        assert_eq!(current(&db).unwrap(), "old");
+    }
+
+    #[test]
+    fn history_is_limited_to_ten() {
+        let db = Db::open_in_memory(Role::Agent);
+        for i in 0..12 {
+            db.insert_log(&format!("s{i}"), "user", "x", None, None).unwrap();
+        }
+        assert_eq!(list(&db).unwrap().len(), 10);
     }
 
     #[test]
