@@ -57,7 +57,7 @@ const FEATURES: (Feature & { only?: "leader" | "agent" })[] = [
   { id: "suggest", title: "宛先の提案", description: "指示の配布先を、過去の履歴から提案する指示です。軽量なモデルを自動で選びます。", only: "leader" },
 ];
 
-/** Bedrock 方式(ワークは常に)で、モデルを選べる機能。コンテナ内の Claude Code か、端末内のモデル(校正だけ)から選ぶ。 */
+/** Bedrock 方式(ワークは常に)で、モデルを選べる機能。コンテナ内の Claude Code のモデルから選ぶ(校正はオフも選べる)。 */
 const CONTAINER_ROUTES: PromptId[] = ["proofread", "organize", "skills"];
 
 /** Bedrock 方式で、校正をコンテナ内の Claude Code で行うことを示す `Route.provider`(Rust 側の `SANDBOX_PROVIDER`)。 */
@@ -94,7 +94,7 @@ function SandboxModelSelect({ models, value, onChange, label }: { models: string
 /**
  * エージェントの「AI設定」。
  * ワークのエージェント(`work`)は、会話・整理・校正をコンテナ内の Claude Code が受け持つ。
- * モデルは Sandbox タブの settings.json で許可したものから機能ごとに選ぶ(校正だけ、コンテナ / 端末内のQwen / オフの選択)。
+ * モデルは Sandbox タブの settings.json で許可したものから機能ごとに選ぶ(校正だけ、コンテナ / オフの選択)。端末内のモデルは使わない。
  *LLMを使う機能ごとに、使うモデルと渡すプロンプトを1か所で扱う。
  * プロンプトは全文を編集でき、「全体設定を利用」で個別の上書きを外す(以後は全体設定の変更に自動で追従する)。変更は次の呼び出しから反映される。
  */
@@ -155,7 +155,6 @@ export default function AiSettings({ keyStatus, leader, work = false, bedrock = 
         {features.map((f) => {
           const api = bedrock && !CONTAINER_ROUTES.includes(f.id) ? undefined : ROUTES[f.id];
           const route = routes[f.id] ?? null;
-          const localModel = models.find((m) => m.provider === "local");
           const list = modelsFor(f.id);
           const keys = keysFor(list);
           const usable = list.filter((m) => keys[m.provider]);
@@ -189,10 +188,8 @@ export default function AiSettings({ keyStatus, leader, work = false, bedrock = 
               {api && bedrock && f.id === "proofread" && (
                 <div className="flex flex-col gap-2">
                   <Select
-                    value={route?.provider === SANDBOX_ROUTE.provider ? "sandbox" : route?.provider === "local" ? "local" : "off"}
-                    onValueChange={(v) =>
-                      changeRoute(f.id, v === "sandbox" ? SANDBOX_ROUTE : v === "local" && localModel ? { provider: localModel.provider, model: localModel.id } : null)
-                    }
+                    value={route?.provider === SANDBOX_ROUTE.provider ? "sandbox" : "off"}
+                    onValueChange={(v) => changeRoute(f.id, v === "sandbox" ? SANDBOX_ROUTE : null)}
                   >
                     <SelectTrigger size="sm" aria-label={t(f.title)}>
                       <SelectValue />
@@ -200,7 +197,6 @@ export default function AiSettings({ keyStatus, leader, work = false, bedrock = 
                     <SelectContent>
                       <SelectItem value="off">{t("オフ")}</SelectItem>
                       <SelectItem value="sandbox">{t("コンテナ内の Claude Code")}</SelectItem>
-                      <SelectItem value="local" disabled={!localModel}>{t("端末内のモデル(Qwen 2.5)")}</SelectItem>
                     </SelectContent>
                   </Select>
                   {route?.provider === SANDBOX_ROUTE.provider && (
@@ -212,7 +208,7 @@ export default function AiSettings({ keyStatus, leader, work = false, bedrock = 
                     />
                   )}
                   <p className="text-xs text-muted-foreground">
-                    {t("コンテナ内の Claude Code は、発話のたびに起動するため数秒かかります。軽量なモデルを選ぶか、端末内のモデル(AI Link で取得)を選ぶと速くなります。")}
+                    {t("コンテナ内の Claude Code は、発話のたびに起動するため数秒かかります。軽量なモデルを選ぶと速くなります。")}
                   </p>
                 </div>
               )}
