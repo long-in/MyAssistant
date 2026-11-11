@@ -302,7 +302,9 @@ pub async fn send_chat(
         return Err(AppError::EmptyMessage);
     }
     // 進捗・承認待ち・結果は、ワークスペースごとの記録にも残す。切り替えても依頼は止まらず、戻ったときに続きから再開できる
-    ctx.shared.task.begin(&session_id, text, on_event);
+    if !ctx.shared.task.try_begin(&session_id, text, on_event) {
+        return Err(AppError::Busy);
+    }
     run_recorded(&app, &ctx.0, &contexts, &graphs, session_id, text, route, skill).await
 }
 
@@ -514,7 +516,7 @@ async fn send_chat_inner(
         return send_chat_sandbox(app, ctx, contexts, &session_id, text).await;
     }
     let available = batch::available_providers(&ctx.secrets);
-    let target = llm_router::resolve(&ctx, &route, &available)?;
+    let target = llm_router::resolve(ctx, &route, &available)?;
 
     // 訂正履歴はセッションの最初の発話で1回だけ読む
     let corrections = contexts
@@ -522,22 +524,22 @@ async fn send_chat_inner(
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .entry((ctx.id.clone(), session_id.clone()))
-        .or_insert_with(|| restore_corrections(&ctx))
+        .or_insert_with(|| restore_corrections(ctx))
         .clone();
     let tuning = tuning::load(&ctx.db)?;
     let base = prompts::load_chat(&ctx.db, &*ctx.global)?;
     ctx.db.insert_log(&session_id, "user", text, None, None)?;
     // 往復数が上限を超えていれば古い分を要約し、LLMへは「要約 + 直近の会話」だけを渡す
-    let window = compact::prepare(&ctx, &session_id, tuning.history_exchanges, target.provider, &target.model).await?;
+    let window = compact::prepare(ctx, &session_id, tuning.history_exchanges, target.provider, &target.model).await?;
     // 関連ナレッジは話題に合わせて発話ごとに想起する。「それ」などに備えて直前のユーザー発話も手がかりにする
     let previous = window.recent.iter().rev().filter(|r| r.role == "user").nth(1).map_or("", |r| r.content.as_str());
-    let related = batch::knowledge_root(&ctx)
+    let related = batch::knowledge_root(ctx)
         .ok()
-        .and_then(|root| related_context(&root, &graphs, &format!("{text}\n{previous}")));
+        .and_then(|root| related_context(&root, graphs, &format!("{text}\n{previous}")));
     // スキルは全件を載せず、軽量モデルが選んだ候補(名前と説明だけ)を添える。スキルが無ければ何も呼ばず、トークンも使わない。リーダーは会話からの管理をしない
-    let root = batch::knowledge_root(&ctx)?;
+    let root = batch::knowledge_root(ctx)?;
     // 旧形式のスキル・ハーネスと日本語名のスキルが残っていれば、読む前に標準形式へ移す
-    skills_migration::migrate_with_names(&ctx, &root).await;
+    skills_migration::migrate_with_names(ctx, &root).await;
     // 「はい」などの返事でも管理ツールを渡し続けるため、直近の会話(今回の発話を除く4件)でスキルに触れていたかも見る
     let recent_mention = window.recent.iter().rev().skip(1).take(4).any(|r| skills::mentions_skills(&r.content));
     let may_manage = ctx.id != workspace::LEADER_ID;
@@ -551,7 +553,7 @@ async fn send_chat_inner(
             ctx.shared.task.emit(TaskEvent::ToolResult { id, ok: true, preview: format!("スキル「{}」で進めます", s.name) });
             (Some(s), skills::prepare_explicit(&root, text, may_manage, recent_mention))
         }
-        None => (None, skills::prepare(&ctx, &root, text, previous, may_manage, recent_mention).await),
+        None => (None, skills::prepare(ctx, &root, text, previous, may_manage, recent_mention).await),
     };
     let (personal, instructions, pinned) = instruction_blocks(app, ctx)?;
     let system = assemble_system(SystemParts {
@@ -609,7 +611,7 @@ async fn send_chat_inner(
     ctx.db.insert_log(&session_id, "assistant", &content, Some(target.provider.as_str()), Some(&target.model))?;
     // 会話内容は確認なしでキャプチャ(チャプター)として書き出す。整理は画面の「今すぐ整理」で行う
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    match batch::knowledge_root(&ctx).and_then(|root| knowledge::append_capture(&root, &session_id, text, &content, &now)) {
+    match batch::knowledge_root(ctx).and_then(|root| knowledge::append_capture(&root, &session_id, text, &content, &now)) {
         Ok(()) => {
             let _ = app.emit(batch::KNOWLEDGE_UPDATED_EVENT, ());
         }

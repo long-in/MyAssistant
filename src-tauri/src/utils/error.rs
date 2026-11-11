@@ -32,6 +32,8 @@ pub enum AppError {
     InvalidModel(String),
     #[error("message is empty")]
     EmptyMessage,
+    #[error("another request is still running in this workspace")]
+    Busy,
     #[error("unexpected response from provider")]
     BadResponse,
     #[error("audio error: {0}")]
@@ -177,6 +179,7 @@ impl AppError {
             Self::KeyMissing(_) => "key_missing",
             Self::InvalidModel(_) => "invalid_model",
             Self::EmptyMessage => "empty_message",
+            Self::Busy => "busy",
             Self::BadResponse => "bad_response",
             Self::Audio(_) => "audio_error",
             Self::AlreadyRecording => "already_recording",

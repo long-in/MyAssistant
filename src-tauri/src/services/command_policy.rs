@@ -44,7 +44,33 @@ const DEFAULT_DENY: [&str; 22] = [
 const OUTSIDE_REASON: &str = "読み取り系以外のコマンドは、ナレッジのディレクトリの中でしか実行できません。作業ディレクトリとパスをナレッジの中にしてください。";
 
 /// 引数にこの文字列を含むコマンドは拒否する(APIキー等を含むアプリのデータ)。
-const DEFAULT_PROTECTED: [&str; 3] = ["secrets.json", "timeline.db", "sandbox.env"];
+const DEFAULT_PROTECTED: [&str; 7] =
+    ["secrets.json", "timeline.db", "sandbox.env", ".aws/credentials", ".ssh/id_", ".netrc", ".gnupg/"];
+
+/// 許可リストに一致しても、承認なしでは実行しないオプション(ファイルへの書き出し・別のコマンドの起動)。
+/// `git log --output=<path>`、`find -fprint <path>`、`rg --pre <cmd>`、`git diff --ext-diff`など。
+/// 語そのもの、または`<オプション>=<値>`の形で一致する(`--pretty`や`--output-indicator-new`には一致しない)。
+const UNSAFE_READ_FLAGS: [&str; 10] = [
+    "--output", "-fprint", "-fprint0", "-fprintf", "-fls", "--pre", "--ext-diff", "--textconv", "--hostname-bin",
+    "--open-files-in-pager",
+];
+
+/// 許可リストに一致しても承認なしでは実行しないオプションを含むか。`tree -o <path>`は`tree`のときだけ見る。
+fn has_unsafe_flag(prog: &str, args: &[String]) -> bool {
+    args.iter().any(|a| {
+        let name = a.split_once('=').map_or(a.as_str(), |(k, _)| k);
+        UNSAFE_READ_FLAGS.contains(&name) || (prog == "tree" && a == "-o")
+    })
+}
+
+/// 変数の参照(`$VAR`、`${VAR}`)を含むか。正規表現の行末の`$`は含めない。
+fn has_variable(word: &str) -> bool {
+    let b = word.as_bytes();
+    b.iter().enumerate().any(|(i, c)| *c == b'$' && b.get(i + 1).is_some_and(|n| n.is_ascii_alphanumeric() || matches!(n, b'_' | b'{')))
+}
+
+const PRIVATE_REASON: &str = "アプリのデータ(APIキー・会話の記録など)の場所を扱うコマンドは実行できません。";
+const PRIVATE_SEARCH_REASON: &str = "アプリのデータを含む範囲を再帰的に読むコマンドは実行できません。対象のフォルダを絞ってください。";
 
 /// システム領域とみなすパスの接頭辞。ここへの書き込み・リダイレクトを拒否する。
 const DEFAULT_SYSTEM_PATHS: [&str; 8] = ["/System", "/usr", "/bin", "/sbin", "/etc", "/Library", "/private/etc", "/dev"];
@@ -71,7 +97,7 @@ const DEFAULT_ASK: [&str; 22] = [
 ];
 
 /// ポリシーファイルの現在の版。この版より古いファイルは、初期値の拒否・askを足して読み込む。
-const POLICY_VERSION: u32 = 4;
+const POLICY_VERSION: u32 = 5;
 
 fn legacy_version() -> u32 {
     1
@@ -169,11 +195,65 @@ pub struct Scope {
     pub root: PathBuf,
     /// コマンドの作業ディレクトリ(正規化済み)。
     pub cwd: PathBuf,
+    /// アプリデータのフォルダ(正規化済み)。この中(ナレッジを除く)は、読み取り系でも触れさせない。
+    private: Option<PathBuf>,
 }
 
 impl Scope {
     pub fn new(root: &Path, cwd: &Path) -> Self {
-        Self { root: root.canonicalize().unwrap_or_else(|_| root.to_path_buf()), cwd: cwd.to_path_buf() }
+        Self { root: root.canonicalize().unwrap_or_else(|_| root.to_path_buf()), cwd: cwd.to_path_buf(), private: None }
+    }
+
+    /// アプリデータのフォルダを保護の対象にする(APIキー・DB・ほかのワークスペースのデータ)。
+    pub fn with_private(mut self, app_data: Option<&Path>) -> Self {
+        self.private = app_data.map(|p| p.canonicalize().unwrap_or_else(|_| p.to_path_buf()));
+        self
+    }
+
+    /// 語が指すパス。`--out=/x`は値の部分、`~`はホーム、相対パスは作業ディレクトリから解決する。
+    /// ワイルドカードを含む語は、その手前のフォルダまで。変数を含む語は行き先が分からないので`None`。
+    fn word_path(&self, word: &str) -> Option<PathBuf> {
+        let w = word.split_once('=').filter(|(k, _)| !k.contains('/')).map_or(word, |(_, v)| v);
+        if w.is_empty() || has_variable(w) {
+            return None;
+        }
+        let w = match w.find(['*', '?', '[']) {
+            Some(i) => w[..i].rsplit_once('/').map_or("", |(dir, _)| if dir.is_empty() { "/" } else { dir }),
+            None => w,
+        };
+        let path = if let Some(rest) = w.strip_prefix('~') {
+            let home = std::env::var_os("HOME").map(PathBuf::from)?;
+            match rest.strip_prefix('/') {
+                Some(r) => home.join(r),
+                None if rest.is_empty() => home,
+                None => return None,
+            }
+        } else if w.starts_with('/') {
+            PathBuf::from(w)
+        } else {
+            self.cwd.join(w)
+        };
+        Some(Self::resolve(&Self::normalize(&path)))
+    }
+
+    /// 解決済みのパスが、アプリデータの中(ナレッジを除く)か。
+    fn is_private(&self, path: &Path) -> bool {
+        self.private.as_ref().is_some_and(|app| path.starts_with(app) && !path.starts_with(&self.root))
+    }
+
+    /// 語が、アプリデータの中(ナレッジを除く)を指すか。
+    fn touches_private(&self, word: &str) -> bool {
+        self.private.is_some() && self.word_path(word).is_some_and(|p| self.is_private(&p))
+    }
+
+    /// 作業ディレクトリが、アプリデータの中(ナレッジを除く)か。
+    fn cwd_private(&self) -> bool {
+        self.is_private(&Self::resolve(&Self::normalize(&self.cwd)))
+    }
+
+    /// 解決済みのパスが、アプリデータを含む(祖先か、同じ場所)か。
+    fn encloses_private(&self, path: &Path) -> bool {
+        self.private.as_ref().is_some_and(|app| app.starts_with(path))
     }
 
     /// `.`と`..`を字面で畳む。
@@ -732,7 +812,13 @@ fn classify_segment(seg: &Segment, policy: &Policy, scope: Option<&Scope>, depth
         i += 1;
     }
 
+    if scope.is_some_and(Scope::cwd_private) {
+        return deny(PRIVATE_REASON);
+    }
     for w in &words {
+        if scope.is_some_and(|s| s.touches_private(w)) {
+            return deny(PRIVATE_REASON);
+        }
         if policy.protected.iter().any(|p| w.contains(p.as_str())) {
             return deny("アプリの機密データ(APIキー等)を扱うコマンドは実行できません。");
         }
@@ -745,9 +831,23 @@ fn classify_segment(seg: &Segment, policy: &Policy, scope: Option<&Scope>, depth
         }
     }
 
-    let Some(p) = program_index(&words) else { return verdict };
+    // 変数への代入だけの区切りは、後のコマンドの引数を実行時に変えうるので、承認なしでは通さない
+    let Some(p) = program_index(&words) else {
+        return if words.is_empty() { verdict } else { verdict.max(Verdict::Plan) };
+    };
     let prog = basename(&words[p]);
     let args = &words[p + 1..];
+    // 環境変数の前置き(`GIT_EXTERNAL_DIFF=… git diff`)と`xargs`は、読み取り系のコマンドにも別の動作をさせられる
+    let indirect = words[..p].iter().any(|w| is_assignment(w) || basename(w) == "xargs");
+    // 実行時に決まる引数(変数)は、行き先を確認できない
+    let dynamic = args.iter().any(|a| has_variable(a));
+    let unsafe_flag = has_unsafe_flag(prog, args);
+    if let Some(scope) = scope
+        && reads_recursively(prog, args)
+        && search_roots(scope, prog, args).iter().any(|r| scope.encloses_private(r))
+    {
+        return deny(PRIVATE_SEARCH_REASON);
+    }
 
     let writes_system = if WRITES_ANY_ARG.contains(&prog) || (prog == "sed" && args.iter().any(|a| a.starts_with("-i"))) {
         args.iter().any(|a| is_system_path(a, policy))
@@ -771,12 +871,11 @@ fn classify_segment(seg: &Segment, policy: &Policy, scope: Option<&Scope>, depth
         verdict = verdict.max(classify_depth(script, policy, scope, depth + 1));
     } else if prog == "eval" {
         verdict = verdict.max(classify_depth(&args.join(" "), policy, scope, depth + 1));
-    } else if prog == "find" {
-        if let Some(n) = args.iter().position(|a| matches!(a.as_str(), "-exec" | "-execdir" | "-ok" | "-okdir")) {
+    } else if prog == "find"
+        && let Some(n) = args.iter().position(|a| matches!(a.as_str(), "-exec" | "-execdir" | "-ok" | "-okdir")) {
             let inner: Vec<String> = args[n + 1..].iter().take_while(|a| *a != ";" && *a != "+").cloned().collect();
             verdict = verdict.max(classify_segment(&Segment { words: inner, after_pipe: false }, policy, scope, depth + 1));
         }
-    }
 
     if policy.confirm_pipe_to_shell && seg.after_pipe && INTERPRETERS.contains(&prog) {
         verdict = verdict.max(Verdict::Ask("パイプで受け取った内容をコードとして実行します。".into()));
@@ -785,7 +884,9 @@ fn classify_segment(seg: &Segment, policy: &Policy, scope: Option<&Scope>, depth
         verdict = verdict.max(Verdict::Ask(format!("コマンド権限の「{a}」に一致するため、個別の承認が必要です。")));
     }
 
-    if verdict == Verdict::Auto && !policy.allow.iter().any(|a| matches_pattern(&words, p, a, false)) {
+    if verdict == Verdict::Auto
+        && (indirect || dynamic || unsafe_flag || !policy.allow.iter().any(|a| matches_pattern(&words, p, a, false)))
+    {
         verdict = Verdict::Plan;
     }
     if matches!(verdict, Verdict::Deny(_) | Verdict::Unlisted(_)) {
@@ -809,6 +910,31 @@ fn classify_segment(seg: &Segment, policy: &Policy, scope: Option<&Scope>, depth
     verdict
 }
 
+/// 配下のファイルの中身を再帰的に読むコマンドか(`rg`、`grep -r`、`find -exec`)。
+fn reads_recursively(prog: &str, args: &[String]) -> bool {
+    match prog {
+        "rg" => true,
+        "grep" | "egrep" | "fgrep" => args.iter().any(|a| {
+            matches!(a.as_str(), "--recursive" | "--dereference-recursive")
+                || (a.starts_with('-') && !a.starts_with("--") && a.contains(['r', 'R']))
+        }),
+        "find" => args.iter().any(|a| matches!(a.as_str(), "-exec" | "-execdir" | "-ok" | "-okdir")),
+        _ => false,
+    }
+}
+
+/// 再帰的に読むコマンドの起点(解決済み)。パスの指定が無さそうなら、作業ディレクトリも起点とみなす。
+fn search_roots(scope: &Scope, prog: &str, args: &[String]) -> Vec<PathBuf> {
+    let plain: Vec<&String> = args.iter().take_while(|a| !matches!(a.as_str(), "-exec" | "-execdir" | "-ok" | "-okdir")).filter(|a| !a.starts_with('-')).collect();
+    let mut roots: Vec<PathBuf> = plain.iter().filter_map(|a| scope.word_path(a)).collect();
+    // `grep`・`rg`は最初の語が検索語なので、語が2つ以上あるときだけパスの指定がある
+    let needed = if prog == "find" { 1 } else { 2 };
+    if plain.len() < needed {
+        roots.push(Scope::resolve(&Scope::normalize(&scope.cwd)));
+    }
+    roots
+}
+
 fn classify_depth(cmd: &str, policy: &Policy, scope: Option<&Scope>, depth: usize) -> Verdict {
     if depth > MAX_DEPTH {
         return Verdict::Ask("コマンドの入れ子が深く、内容を確認できません。".into());
@@ -820,6 +946,10 @@ fn classify_depth(cmd: &str, policy: &Policy, scope: Option<&Scope>, depth: usiz
     }
     for sub in &parsed.subs {
         verdict = verdict.max(classify_depth(sub, policy, scope, depth + 1));
+    }
+    // コマンド置換の結果は引数になり、行き先を確認できないので、承認なしでは通さない
+    if !parsed.subs.is_empty() {
+        verdict = verdict.max(Verdict::Plan);
     }
     verdict
 }
@@ -863,7 +993,6 @@ mod tests {
             "git status",
             "git log --oneline -n 5",
             "ls | grep foo | wc -l",
-            "cd_not_a_command_but_ok=1 ls",
             "cat a.txt 2>&1",
             "echo hi > /dev/null",
             "grep -r 'a;b' src",
@@ -871,6 +1000,89 @@ mod tests {
         ] {
             assert_eq!(v(c), Verdict::Auto, "{c}");
         }
+    }
+
+    #[test]
+    fn read_commands_that_can_run_or_write_something_else_need_approval() {
+        for c in [
+            // 環境変数の前置きは、読み取り系のコマンドに別のコマンドを起動させられる
+            "GIT_EXTERNAL_DIFF='sh -c \"touch x\"' git diff",
+            "FOO=1 ls",
+            "a=secrets; cat $a.json",
+            "cat $HOME/x",
+            "cat ${HOME}/x",
+            "echo $(ls)",
+            "ls | xargs cat",
+            "rg --pre ./tool pattern",
+            "rg --pre=./tool pattern",
+            "git diff --ext-diff",
+            "git log --output=out.txt",
+            "git show --output out.txt",
+            "find . -fprint out.txt",
+            "tree -o out.txt",
+        ] {
+            assert_eq!(v(c), Verdict::Plan, "{c}");
+        }
+        // 似た名前のオプションと、正規表現の行末は巻き込まない
+        for c in ["git log --pretty=oneline", "git diff --output-indicator-new=+", "grep 'a$' x.txt", "ls -O"] {
+            assert_eq!(v(c), Verdict::Auto, "{c}");
+        }
+    }
+
+    #[test]
+    fn app_data_is_out_of_reach_even_for_read_commands() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("app");
+        let root = app.join("knowledge");
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::create_dir_all(app.join("workspaces/abc")).unwrap();
+        fs::write(app.join("secrets.json"), "{}").unwrap();
+        let app = app.canonicalize().unwrap();
+        let root = root.canonicalize().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        let p = Policy::defaults();
+        let at = |cwd: &Path| Scope::new(&root, cwd).with_private(Some(&app));
+        let denied = |cmd: &str, cwd: &Path| matches!(classify_in(cmd, &p, Some(&at(cwd))), Verdict::Deny(_));
+
+        // 作業ディレクトリをアプリデータにして、ワイルドカードで名前を伏せても読めない
+        assert!(denied("cat secrets.jso?", &app));
+        assert!(denied("ls", &app.join("workspaces/abc")));
+        // パスで指しても、ナレッジから`..`で出ても読めない
+        assert!(denied(&format!("ls {}", app.display()), &home));
+        assert!(denied(&format!("cat {}/sec*", app.display()), &home));
+        assert!(denied("cat ../secrets.jso?", &root));
+        assert!(denied(&format!("find {} -name 'sec*' -exec cat {{}} +", app.display()), &home));
+        // アプリデータを含む範囲を、再帰的に読むこともできない
+        assert!(denied("rg sk-ant", &home));
+        assert!(denied("grep -r sk-ant .", &home));
+        assert!(denied(&format!("grep -rn key {}", home.display()), &root));
+        assert!(denied("find . -name 'sec*' -exec cat {} +", &home));
+        // ナレッジの中と、アプリデータに関係しない場所は、今までどおり読める
+        assert_eq!(classify_in("ls sub", &p, Some(&at(&root))), Verdict::Auto);
+        assert_eq!(classify_in("rg foo", &p, Some(&at(&root))), Verdict::Auto);
+        assert_eq!(classify_in("ls", &p, Some(&at(&home))), Verdict::Auto);
+        assert_eq!(classify_in("find . -name x", &p, Some(&at(&home))), Verdict::Auto);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn app_data_is_not_reachable_through_a_symlink_in_the_knowledge() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("app");
+        let root = app.join("knowledge");
+        fs::create_dir_all(&root).unwrap();
+        let (app, root) = (app.canonicalize().unwrap(), root.canonicalize().unwrap());
+        std::os::unix::fs::symlink(&app, root.join("up")).unwrap();
+        let scope = Scope::new(&root, &root).with_private(Some(&app));
+        assert!(matches!(classify_in("cat up/secrets.jso?", &Policy::defaults(), Some(&scope)), Verdict::Deny(_)));
+    }
+
+    #[test]
+    fn credential_files_are_protected_by_default() {
+        for c in ["cat ~/.aws/credentials", "cat ~/.ssh/id_ed25519", "head ~/.netrc", "ls ~/.gnupg/"] {
+            assert!(is_deny(c), "{c}");
+        }
+        assert_eq!(v("cat ~/.ssh/config"), Verdict::Auto);
     }
 
     #[test]
@@ -1141,7 +1353,7 @@ mod tests {
         assert!(p.ask.contains(&"git push".to_owned()));
         assert!(matches!(classify("rm x", &p), Verdict::Deny(_)));
         // 移行した内容が書き戻されている
-        assert!(fs::read_to_string(&file).unwrap().contains("\"version\": 4"));
+        assert!(fs::read_to_string(&file).unwrap().contains("\"version\": 5"));
     }
 
     #[test]
@@ -1176,7 +1388,7 @@ mod tests {
         let file = root.join(POLICY_DIR).join(POLICY_FILE);
         assert!(file.is_file());
         // ユーザーが編集した内容が次回から使われる(空のリストも空のまま)
-        fs::write(&file, r#"{ "version": 4, "allow": ["make"], "deny": ["curl"], "ask": [] }"#).unwrap();
+        fs::write(&file, r#"{ "version": 5, "allow": ["make"], "deny": ["curl"], "ask": [] }"#).unwrap();
         let p = load(&root);
         assert_eq!((p.allow, p.deny, p.ask), (vec!["make".to_owned()], vec!["curl".to_owned()], vec![]));
         // 壊れていれば許可リストは空。拒否などは初期値のまま

@@ -4,7 +4,7 @@
 //! そのワークスペースへ戻ったとき(`snapshot_and_attach`)に、画面が受け取って続きから再開する。
 //! 記録はメモリ上のみで、アプリを再起動すると消える(会話の本文はDBに残る)。
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Mutex, MutexGuard},
 };
 
@@ -80,6 +80,8 @@ pub struct RunSnapshot {
 pub struct TaskState {
     /// 承認要求の`id`ごとに、画面からの応答を待つ。
     approvals: Mutex<HashMap<String, oneshot::Sender<bool>>>,
+    /// 「今回だけ」と答えた承認の`id`(許可リストへ加えない)。実行側が確かめたら消える。
+    once: Mutex<HashSet<String>>,
     /// 実行中の依頼。同時には1つだけ。
     cancel: Mutex<Option<CancelToken>>,
     inner: Mutex<Inner>,
@@ -105,6 +107,34 @@ impl TaskState {
             let _ = tx.send(approved);
         }
         self.clear_pending(id);
+    }
+
+    /// 承認する。許可リストにないコマンドを、許可へ加えずに今回だけ実行する。
+    pub fn answer_once(&self, id: &str) {
+        lock(&self.once).insert(id.to_owned());
+        self.answer(id, true);
+    }
+
+    /// 承認が「今回だけ」だったか。確かめたら記録は消える。
+    pub fn take_once(&self, id: &str) -> bool {
+        lock(&self.once).remove(id)
+    }
+
+    /// 依頼を始める。実行中なら始めずに`false`を返す(確認と開始は同じロックの中)。
+    /// 同じワークスペースで依頼が重なると、中断の対象と記録が入れ替わってしまうため、後から来た方を断る。
+    pub fn try_begin(&self, session_id: &str, user_text: &str, channel: Channel<TaskEvent>) -> bool {
+        let mut inner = lock(&self.inner);
+        if inner.running {
+            return false;
+        }
+        *inner = Inner {
+            running: true,
+            session_id: session_id.to_owned(),
+            user_text: user_text.to_owned(),
+            sink: Some(Sink { channel, resumed: false }),
+            ..Inner::default()
+        };
+        true
     }
 
     /// 承認待ちを終える(応答・時間切れ・中断のどれでも)。
@@ -146,7 +176,8 @@ impl TaskState {
 
     // ---- 記録 ----
 
-    /// 依頼の開始。前回の記録は捨て、`channel`(始めた画面)へ進捗を流す。
+    /// 依頼の開始。前回の記録は捨て、`channel`(始めた画面)へ進捗を流す(実行中かは確かめない。テスト用)。
+    #[cfg(test)]
     pub fn begin(&self, session_id: &str, user_text: &str, channel: Channel<TaskEvent>) {
         *lock(&self.inner) = Inner {
             running: true,
