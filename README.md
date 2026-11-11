@@ -293,7 +293,7 @@ npm run tauri build
 | --- | --- |
 | `timeline.db` | SQLite。会話ログ・要約・使用量・アプリ設定(起動時に自動でマイグレーションし、その前に `timeline.db.bak-v<版>` を残す) |
 | `secrets.json` | API キー。**平文 JSON**(権限 0600)。OS のキーチェーンは使っていません |
-| `workspaces/` | ワークのエージェント。`registry.json`(一覧)と、エージェントごとの `<UUID>/`(`timeline.db`・`secrets.json`・`knowledge/` などをパーソナルと同じ構成で持つ。サンドボックスを使うと `sandbox.env`(**平文**、権限 0600)と `sandbox/Dockerfile` も置く) |
+| `work/` | ワークのエージェント。`registry.json`(一覧)と、エージェントごとの `<UUID>/`(`timeline.db`・`secrets.json`・`knowledge/` などをパーソナルと同じ構成で持つ。サンドボックスを使うと `sandbox.env`(**平文**、権限 0600)と `sandbox/Dockerfile` も置く) |
 | `models/` | Whisper モデル |
 | `voicevox/` | VOICEVOX CORE・辞書・音声モデル(任意) |
 | `llm/` | ローカル LLM の llama-server と Qwen のモデル(任意) |

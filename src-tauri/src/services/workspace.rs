@@ -1,8 +1,8 @@
 //! ワークスペース(パーソナル / ワークのエージェント)ごとの実行コンテキストと、エージェントの管理。
 //!
 //! DB・APIキー・AWS の一時状態をワークスペースごとに分け、混線させない。
-//! パーソナルは従来どおりアプリデータ直下、エージェントは`<アプリデータ>/workspaces/<id>/`に置く。
-//! エージェント一覧(名称・イメージカラー)は`workspaces/registry.json`に保持する。
+//! パーソナルは従来どおりアプリデータ直下、エージェントは`<アプリデータ>/work/<id>/`に置く。
+//! エージェント一覧(名称・イメージカラー)は`work/registry.json`に保持する。
 use std::{
     collections::HashMap,
     ops::Deref,
@@ -50,7 +50,8 @@ pub const PALETTE: [&str; MAX_AGENTS] = [
 /// ワークスペースが切り替わったことを画面へ知らせるイベント名。
 pub const WORKSPACE_CHANGED_EVENT: &str = "workspace-changed";
 
-pub(crate) const DIR_NAME: &str = "workspaces";
+/// ワークのフォルダ(アプリデータ直下)。リーダー・エージェント・全体設定・共通データを置く。
+pub(crate) const DIR_NAME: &str = "work";
 /// 削除時に残したナレッジを置くフォルダ(アプリデータ直下)。
 pub(crate) const KEPT_DIR_NAME: &str = "kept-knowledge";
 pub(crate) const REGISTRY_FILE: &str = "registry.json";
@@ -320,7 +321,7 @@ impl Workspaces {
         Ok(leader)
     }
 
-    /// リーダーを作る(1つだけ)。専用の`timeline.db`と`secrets.json`を`workspaces/leader/`に持つ。
+    /// リーダーを作る(1つだけ)。専用の`timeline.db`と`secrets.json`を`work/leader/`に持つ。
     pub fn create_leader(&self) -> Result<Arc<WorkspaceCtx>, AppError> {
         let _op = self.op();
         let mut slot = self.leader.write().unwrap_or_else(|p| p.into_inner());
@@ -455,7 +456,7 @@ impl Workspaces {
     }
 
     /// `candidate`(ナレッジやデバッグログの保存先にしたい場所)が使えることを確かめる。`op`を持った状態で呼ぶ。
-    /// - アプリのデータ(アプリデータ全体・`workspaces/`・ほかのワークスペースのDBやキー)に触れる場所は、自分の既定のナレッジの中を除いて拒否する。
+    /// - アプリのデータ(アプリデータ全体・`work/`・ほかのワークスペースのDBやキー)に触れる場所は、自分の既定のナレッジの中を除いて拒否する。
     /// - `id`以外のワークスペースの保存先(現在の場所と既定の場所の両方で、ナレッジとデバッグログ)と、同じ場所・親子関係で重なる場所は拒否する。
     fn check_paths_free(&self, id: &str, candidate: &Path) -> Result<(), AppError> {
         let candidate = canonical_lenient(candidate);
@@ -564,7 +565,7 @@ impl Workspaces {
     /// エージェントを一覧とディスクから削除する。選択中ならパーソナルへ戻す。元に戻せない。
     /// `delete_knowledge`が偽なら、既定の場所のナレッジ(とデバッグログ)を、削除前に`kept-knowledge/`へ移して残す。
     /// 選択中を切り戻したかと、残した場所を返す。裏で動いている処理には削除の印(`ensure_alive`)が付き、書き込む前に止まる。
-    /// アプリが管理するフォルダ(`workspaces/<id>/`)だけを消す。利用者が指定したナレッジの保存先は消さない。
+    /// アプリが管理するフォルダ(`work/<id>/`)だけを消す。利用者が指定したナレッジの保存先は消さない。
     pub fn delete(&self, id: &str, delete_knowledge: bool) -> Result<Deleted, AppError> {
         let _op = self.op();
         let mut agents = self.agents();
@@ -599,7 +600,7 @@ impl Workspaces {
         self.loaded.write().unwrap_or_else(|p| p.into_inner()).remove(id);
         // サンドボックスのコンテナ・ボリューム・ネットワーク・イメージを消す(失敗しても削除は続ける)
         super::sandbox::remove_agent(id);
-        // `id`は一覧にあったもの(生成したUUID)だけなので、`workspaces/`配下の1フォルダに限られる
+        // `id`は一覧にあったもの(生成したUUID)だけなので、`work/`配下の1フォルダに限られる
         if let Err(e) = std::fs::remove_dir_all(self.agent_dir(id))
             && e.kind() != std::io::ErrorKind::NotFound
         {

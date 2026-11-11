@@ -1,6 +1,6 @@
 //! 全体設定。すべてのエージェント(パーソナルを含む)で共通の設定を1か所に持つ。
 //!
-//! - 保存先はアプリデータの`workspaces/global_settings.json`(キーと文字列値の対応)。エージェントを削除しても残る。
+//! - 保存先はアプリデータの`work/global_settings.json`(キーと文字列値の対応)。エージェントを削除しても残る。
 //! - 項目は`settings_registry`で保存先が全体設定(`Scope::Global`)のキー。エージェントごとのキーは書き込みで拒否する。
 //! - 初回(ファイルが無いとき)だけ、パーソナルのDBの現在値を初期値として取り込む(`migrate_from`)。
 //! - 取り込んだあと(ファイルがあるとき)は、各エージェントのDBに残る同名の古い値を消す(`purge_legacy`)。ファイルが無いうちは消さない。
@@ -18,7 +18,6 @@ use super::settings_registry::{self, Scope};
 use crate::{db::Db, utils::error::AppError};
 
 const FILE: &str = "global_settings.json";
-const DIR: &str = "workspaces";
 
 /// 表示言語(`ja` / `en`)。画面が最初に決めた値を保存する。未保存ならnull扱い。
 pub const LANGUAGE_KEY: &str = "language";
@@ -51,7 +50,7 @@ pub struct GlobalStore {
 impl GlobalStore {
     /// `root`(アプリデータ)の全体設定を指す。ファイルは書き込むときまで作らない。
     pub fn open(root: &Path) -> Self {
-        Self { path: root.join(DIR).join(FILE), lock: Mutex::new(()) }
+        Self { path: root.join(super::workspace::DIR_NAME).join(FILE), lock: Mutex::new(()) }
     }
 
     /// 読めなければ(無い・壊れている)空。
@@ -229,10 +228,10 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let g = GlobalStore::open(d.path());
         g.set_setting("a", "1").unwrap();
-        std::fs::write(d.path().join("workspaces").join(FILE), "{broken").unwrap();
+        std::fs::write(d.path().join("work").join(FILE), "{broken").unwrap();
         assert_eq!(g.get_setting("a").unwrap(), None);
         g.set_setting("b", "2").unwrap();
-        assert!(d.path().join("workspaces").join("global_settings.json.corrupt").exists());
+        assert!(d.path().join("work").join("global_settings.json.corrupt").exists());
         assert_eq!(g.get_setting("b").unwrap().as_deref(), Some("2"));
     }
 

@@ -17,7 +17,7 @@ use super::{
 pub enum Scope {
     /// ワークスペース(パーソナル・エージェント・リーダー)ごとのDB(`app_settings`)。
     Agent,
-    /// 全エージェント共通の全体設定(`workspaces/global_settings.json`)。
+    /// 全エージェント共通の全体設定(`work/global_settings.json`)。
     Global,
 }
 

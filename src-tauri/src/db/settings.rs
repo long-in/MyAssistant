@@ -1,6 +1,6 @@
 //! キー・値の設定(`app_settings`)。値は文字列で、構造のあるものはJSON。
 //!
-//! 全体設定のキーは書き込みで拒否する(`settings_registry::check_db_write`)。全体設定は`workspaces/global_settings.json`にある。
+//! 全体設定のキーは書き込みで拒否する(`settings_registry::check_db_write`)。全体設定は`work/global_settings.json`にある。
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::{Db, schema::NOW_SQL};

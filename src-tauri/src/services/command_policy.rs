@@ -1035,7 +1035,7 @@ mod tests {
         let app = dir.path().join("app");
         let root = app.join("knowledge");
         fs::create_dir_all(root.join("sub")).unwrap();
-        fs::create_dir_all(app.join("workspaces/abc")).unwrap();
+        fs::create_dir_all(app.join("work/abc")).unwrap();
         fs::write(app.join("secrets.json"), "{}").unwrap();
         let app = app.canonicalize().unwrap();
         let root = root.canonicalize().unwrap();
@@ -1046,7 +1046,7 @@ mod tests {
 
         // 作業ディレクトリをアプリデータにして、ワイルドカードで名前を伏せても読めない
         assert!(denied("cat secrets.jso?", &app));
-        assert!(denied("ls", &app.join("workspaces/abc")));
+        assert!(denied("ls", &app.join("work/abc")));
         // パスで指しても、ナレッジから`..`で出ても読めない
         assert!(denied(&format!("ls {}", app.display()), &home));
         assert!(denied(&format!("cat {}/sec*", app.display()), &home));
@@ -1158,7 +1158,7 @@ mod tests {
         for c in [
             "cat ~/Library/Application\\ Support/app/secrets.json",
             "cat '/x/timeline.db'",
-            "cat /x/workspaces/abc/sandbox.env",
+            "cat /x/work/abc/sandbox.env",
             // WALのファイルと、マイグレーション前の複製も同じ名前で始まるので守られる
             "cp /x/timeline.db-wal /tmp/",
             "sqlite3 /x/timeline.db.bak-v0 .dump",

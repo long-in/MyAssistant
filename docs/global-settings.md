@@ -7,7 +7,7 @@
 - 全体設定の内容は、すべてのエージェントに反映される。
 - **各エージェントから上書きできない。** エージェントのDBに同名の設定が残っていても読まない。全体設定のファイルができたあと(初回の取り込みのあと)は、DBを開いたときに古い値を消す(`purge_legacy`)。ファイルが無いうちは、取り込みの元になるので消さない。
 - 保存先の取り違えを防ぐため、DBへの全体設定のキーの書き込みと、全体設定へのエージェントごとのキーの書き込みは拒否する(キーの一覧は `services/settings_registry.rs`)。
-- 保存先はアプリデータの `workspaces/global_settings.json`(キーと文字列値の対応)。共通データと同じく、エージェントを削除しても残る。書き込みは一時ファイルからのリネームで、壊れていたら `.corrupt` へ退避して空から始める。
+- 保存先はアプリデータの `work/global_settings.json`(キーと文字列値の対応)。共通データと同じく、エージェントを削除しても残る。書き込みは一時ファイルからのリネームで、壊れていたら `.corrupt` へ退避して空から始める。
 
 ## 画面の構成(タブ)
 
@@ -25,7 +25,7 @@
 | 表示言語 | Language | `language` | `ja` / `en`。音声認識の言語(`stt_language`)はエージェントごとのまま |
 | 音声入力の待ち時間 | Voice Timing | `voice_timing` | `voice_idle_secs` / `utterance_silence_secs` / `release_tail_secs`。Limits(検索回数など)はエージェントごと |
 | 起動ワード | Wake Words | `wake_enabled` / `wake_words` | |
-| 共通データ | Shared Data | (`workspaces/shared_data.json`) | 全エージェントで1つ。**渡す先はエージェントのみ**。パーソナルには渡さない([workspace.md](workspace.md)) |
+| 共通データ | Shared Data | (`work/shared_data.json`) | 全エージェントで1つ。**渡す先はエージェントのみ**。パーソナルには渡さない([workspace.md](workspace.md)) |
 | パーソナルデータ | Personal Data | `user_profile` | **渡す先は従来どおりパーソナルのみ**。エージェントには渡さない([user-profile.md](user-profile.md)) |
 
 ## 初回の取り込み
