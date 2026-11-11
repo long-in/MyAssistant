@@ -37,6 +37,8 @@ pub fn run() {
       commands::aws::test_aws_connection,
       commands::aws::submit_aws_mfa,
       commands::aws::cancel_aws_mfa,
+      commands::aws::open_aws_sso,
+      commands::aws::cancel_aws_sso,
       commands::command_policy::get_command_policy,
       commands::command_policy::get_default_command_policy,
       commands::command_policy::set_command_policy,
