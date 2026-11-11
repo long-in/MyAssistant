@@ -114,7 +114,7 @@ impl WorkspaceCtx {
     }
 
     /// ナレッジのフォルダ構成を整える(失敗しても開くのは止めず、ログだけ残す)。
-    /// フォルダ名を小文字にそろえ、アプリが使うフォルダ(`inbox`・`memory`・`skills`・`captures`・`preferences`・`data`)を(無ければ)作る。
+    /// フォルダ名を小文字にそろえ、アプリが使うフォルダ(`data`・`inbox`・`memory`・`skills`・`captures`・`preferences`)を(無ければ)作る。
     fn prepare_knowledge(&self) {
         let Ok(root) = super::batch::knowledge_root(self) else { return };
         if root.is_dir() {
@@ -126,9 +126,6 @@ impl WorkspaceCtx {
         // 画面から見えるよう、アプリが使うフォルダを(無ければ)作る。記憶はリーダーには無い
         if let Err(e) = super::knowledge::ensure_system_dirs(&root, self.id != LEADER_ID) {
             log::warn!("system folders not prepared for {}: {e}", self.id);
-        }
-        if let Err(e) = super::sandbox::ensure_data_dir(self, &root) {
-            log::warn!("data folder not prepared for {}: {e}", self.id);
         }
     }
 

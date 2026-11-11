@@ -787,10 +787,10 @@ pub fn lowercase_dirs(root: &Path) -> usize {
     walk(root, 0)
 }
 
-/// ナレッジ直下に、アプリが使うフォルダ(`inbox`・`skills`・`captures`・`preferences`、`with_memory`なら`memory`)を、無ければ作る。
-/// `data/`は担当システムのフォルダとして別に作る(`sandbox::ensure_data_dir`)。小文字化の後に呼ぶ(大文字の同名フォルダと並べて作らないため)。
+/// ナレッジ直下に、アプリが使うフォルダ(`data`・`inbox`・`skills`・`captures`・`preferences`、`with_memory`なら`memory`)を、無ければ作る。
+/// 小文字化の後に呼ぶ(大文字の同名フォルダと並べて作らないため)。
 pub fn ensure_system_dirs(root: &Path, with_memory: bool) -> Result<(), AppError> {
-    let mut names = vec![INBOX_DIR, super::skills::DIR, CAPTURE_CATEGORY, CORRECTIONS_DIR];
+    let mut names = vec![DATA_DIR, INBOX_DIR, super::skills::DIR, CAPTURE_CATEGORY, CORRECTIONS_DIR];
     if with_memory {
         names.push(super::memory::MEMORY_CATEGORY);
     }

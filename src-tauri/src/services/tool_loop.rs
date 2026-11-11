@@ -1036,7 +1036,7 @@ where
         return Err(format!("コマンドが長すぎます(上限{COMMAND_MAX_CHARS}文字)。"));
     }
     // サンドボックスでは作業ディレクトリをナレッジ配下に限り、コンテナ内のパスへ変換する
-    let mounts = env.sandbox.map(|ctx| sandbox::mounts_for(ctx, env.root)).transpose()?;
+    let mounts = env.sandbox.map(|_| sandbox::mounts_for(env.root)).transpose()?;
     let (cwd, inner_cwd) = if let Some(m) = &mounts {
         let (host, inner) = sandbox::map_cwd(m, str_arg(input, "cwd"))?;
         (host, Some(inner))

@@ -599,7 +599,7 @@ pub async fn run_turn(
     migrate_legacy_llm(&turn.ctx.db).map_err(|e| e.to_string())?;
     migrate_default_deny(&turn.ctx.db, &*turn.ctx.global).map_err(|e| e.to_string())?;
     let cfg = load(&turn.ctx.db).map_err(|e| e.to_string())?;
-    let mounts = sandbox::mounts_for(turn.ctx, turn.knowledge_root)?;
+    let mounts = sandbox::mounts_for(turn.knowledge_root)?;
     let mut vars = merge_env(sandbox::env_for(turn.ctx).await?);
     check_credentials(&vars)?;
     // ツールなしの単発の呼び出しは、標準のツールをすべて拒否する(拒否は settings.json の許可より優先される)

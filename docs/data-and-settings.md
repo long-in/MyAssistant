@@ -21,7 +21,6 @@
 | `workspaces/<UUID>/` | エージェントのデータ。`timeline.db`・`secrets.json`・`knowledge/`・`tts_dictionary.json` をパーソナルと同じ名前で持つ |
 | `workspaces/<UUID>/sandbox.env` | サンドボックスの環境変数(dotenv 形式。**平文**、権限 0600)。パーソナルはアプリデータ直下の `sandbox.env`([sandbox.md](sandbox.md)) |
 | `sandbox/` | 全エージェント共通の `Dockerfile` と `.dockerignore`(Docker のビルドの文脈)。アプリデータ直下 |
-| `workspaces/<UUID>/workspace/` | サンドボックスの `/workspace` にマウントするフォルダ(担当システムのソースコードなど)。パーソナルはアプリデータ直下の `workspace/`。エージェントの削除で一緒に消え、バックアップには含めない([sandbox.md](sandbox.md)) |
 | `workspaces/<UUID>/agent-sandbox/` | そのエージェント専用の `Dockerfile`(登録したときだけ。共通より優先)。パーソナルはアプリデータ直下の `agent-sandbox/` |
 
 旧名(識別子 `dev.longin.tachicoma-agent`)のフォルダがあり新しいフォルダが無ければ、起動時に丸ごと改名して引き継ぐ(`services/legacy_data.rs`)。ナレッジ内の旧 `.tachicoma/` もコマンド権限の読み書き時に `.my-assistant/` へ改名する。旧名の設定ファイルも取り込める。

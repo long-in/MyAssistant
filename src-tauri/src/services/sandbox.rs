@@ -62,8 +62,6 @@ const DOCKERIGNORE: &str = "# ビルドの文脈に含めないものを書き�
 pub const KNOWLEDGE_MOUNT: &str = "/knowledge";
 /// コンテナ内の担当システムのフォルダ(ソースコードなどを置く、ナレッジ直下の`data/`)の場所。作業ディレクトリの既定。
 pub const DATA_MOUNT: &str = "/knowledge/data";
-/// 以前`/workspace`にマウントしていたフォルダの名前(ワークスペースのフォルダ直下)。見つかれば`data/`へ移す。
-const LEGACY_WORKSPACE_DIR: &str = "workspace";
 const REAP_INTERVAL: Duration = Duration::from_secs(60);
 /// docker CLIの短い操作(inspect・rm・startなど)の待ち時間。
 const CLI_TIMEOUT: Duration = Duration::from_secs(60);
@@ -368,38 +366,14 @@ pub fn map_cwd(mounts: &Mounts, arg: Option<&str>) -> Result<(PathBuf, String), 
     Ok((host, inner))
 }
 
-/// 担当システムのフォルダ(`/knowledge/data`)を、無ければ作って返す。以前の場所(`<ワークスペースのフォルダ>/workspace`)にあれば移す。
-pub fn ensure_data_dir(ctx: &WorkspaceCtx, knowledge: &Path) -> Result<PathBuf, String> {
-    migrate_legacy_workspace(&ctx.dir, knowledge)?;
-    std::fs::create_dir_all(knowledge).map_err(|e| format!("ナレッジのフォルダを作れません: {e}"))?;
-    let link = knowledge.join(DATA_DIR);
-    if link.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
-        return Err(format!("{} をシンボリックリンクにはできません(コンテナから辿れません)。フォルダにしてください。", link.display()));
-    }
+/// 担当システムのフォルダ(`/knowledge/data`)を、無ければ作って返す。
+pub fn ensure_data_dir(knowledge: &Path) -> Result<PathBuf, String> {
     crate::utils::path::ensure_dir(knowledge, &[DATA_DIR.to_owned()]).map_err(|e| format!("{DATA_MOUNT} のフォルダを作れません: {e}"))
 }
 
-/// 以前`/workspace`にマウントしていたフォルダを、ナレッジの`data/`へ移す。空なら消すだけ。
-/// 移動先がすでにある、または移せない(別のボリュームなど)ときは何も変えずにエラーにし、手動で移してもらう。
-fn migrate_legacy_workspace(ws_dir: &Path, knowledge: &Path) -> Result<(), String> {
-    let old = ws_dir.join(LEGACY_WORKSPACE_DIR);
-    if old.symlink_metadata().is_err() || std::fs::remove_dir(&old).is_ok() {
-        return Ok(());
-    }
-    let manual = "中身を手動で移してから、以前のフォルダを削除してください。";
-    std::fs::create_dir_all(knowledge).map_err(|e| format!("ナレッジのフォルダを作れません: {e}"))?;
-    let new = knowledge.canonicalize().map_err(|e| format!("ナレッジのフォルダが見つかりません: {e}"))?.join(DATA_DIR);
-    if new.symlink_metadata().is_ok() {
-        return Err(format!("以前の /workspace のフォルダ({})を {} へ移せません(移動先がすでにあります)。{manual}", old.display(), new.display()));
-    }
-    std::fs::rename(&old, &new).map_err(|e| format!("以前の /workspace のフォルダ({})を {} へ移せません: {e}。{manual}", old.display(), new.display()))?;
-    log::info!("moved legacy sandbox workspace into knowledge: {}", new.display());
-    Ok(())
-}
-
 /// コンテナにマウントするフォルダ。
-pub fn mounts_for(ctx: &WorkspaceCtx, knowledge: &Path) -> Result<Mounts, String> {
-    ensure_data_dir(ctx, knowledge)?;
+pub fn mounts_for(knowledge: &Path) -> Result<Mounts, String> {
+    ensure_data_dir(knowledge)?;
     Ok(Mounts { knowledge: knowledge.to_owned(), data: true })
 }
 
@@ -1187,7 +1161,7 @@ pub async fn restore_running(app: &AppHandle) {
     for id in ids {
         let Some(ctx) = app.state::<super::workspace::Workspaces>().get(&id) else { continue };
         let Ok(root) = super::batch::knowledge_root(&ctx) else { continue };
-        let Ok(mounts) = mounts_for(&ctx, &root) else { continue };
+        let Ok(mounts) = mounts_for(&root) else { continue };
         if let Err(e) = start_container(&ctx, &mounts).await {
             log::warn!("sandbox restore failed ({id}): {e}");
         }
@@ -1432,46 +1406,13 @@ mod tests {
     #[test]
     fn data_dir_is_a_fixed_folder_inside_the_knowledge() {
         let dir = tempfile::tempdir().unwrap();
-        let ctx = WorkspaceCtx::open("0b9c3f5e-1d2a-4c6b-8e7f-123456789abc", dir.path()).unwrap();
         let knowledge = dir.path().join("knowledge");
-        let m = mounts_for(&ctx, &knowledge).unwrap();
+        let m = mounts_for(&knowledge).unwrap();
         // マウントするのはナレッジだけ(ワークスペースのフォルダにあるキーやDBは見えない)
         assert_eq!(m.knowledge, knowledge);
         assert!(knowledge.join("data").is_dir());
         assert_eq!(m.default_dir(), DATA_MOUNT);
         assert!(!dir.path().join("workspace").exists());
-    }
-
-    #[test]
-    fn legacy_workspace_is_moved_into_the_knowledge() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join("workspace/app")).unwrap();
-        std::fs::write(dir.path().join("workspace/app/main.rs"), "fn main() {}").unwrap();
-        // 開いたときに、以前のフォルダを`data/`へ移す
-        let ctx = WorkspaceCtx::open("0b9c3f5e-1d2a-4c6b-8e7f-123456789abc", dir.path()).unwrap();
-        let knowledge = dir.path().join("knowledge");
-        let data = ensure_data_dir(&ctx, &knowledge).unwrap();
-        assert_eq!(std::fs::read_to_string(data.join("app/main.rs")).unwrap(), "fn main() {}");
-        assert!(!dir.path().join("workspace").exists());
-        // 空の以前のフォルダは、消すだけ
-        std::fs::create_dir_all(dir.path().join("workspace")).unwrap();
-        ensure_data_dir(&ctx, &knowledge).unwrap();
-        assert!(!dir.path().join("workspace").exists());
-    }
-
-    #[test]
-    fn legacy_workspace_is_left_alone_when_data_already_exists() {
-        let dir = tempfile::tempdir().unwrap();
-        let ctx = WorkspaceCtx::open("0b9c3f5e-1d2a-4c6b-8e7f-123456789abc", dir.path()).unwrap();
-        let knowledge = dir.path().join("knowledge");
-        std::fs::create_dir_all(knowledge.join("data")).unwrap();
-        std::fs::write(knowledge.join("data/a.txt"), "new").unwrap();
-        std::fs::create_dir_all(dir.path().join("workspace")).unwrap();
-        std::fs::write(dir.path().join("workspace/a.txt"), "old").unwrap();
-        let err = ensure_data_dir(&ctx, &knowledge).unwrap_err();
-        assert!(err.contains("手動"), "{err}");
-        assert_eq!(std::fs::read_to_string(dir.path().join("workspace/a.txt")).unwrap(), "old");
-        assert_eq!(std::fs::read_to_string(knowledge.join("data/a.txt")).unwrap(), "new");
     }
 
     #[test]

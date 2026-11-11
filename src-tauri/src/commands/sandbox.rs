@@ -182,7 +182,7 @@ pub async fn build_agent_sandbox_image(ctx: Ctx, force: bool) -> Result<(), AppE
 pub async fn start_agent_sandbox(ctx: Ctx) -> Result<(), AppError> {
     supported(&ctx)?;
     let root = crate::services::batch::knowledge_root(&ctx)?;
-    let mounts = sandbox::mounts_for(&ctx, &root).map_err(AppError::Sandbox)?;
+    let mounts = sandbox::mounts_for(&root).map_err(AppError::Sandbox)?;
     sandbox::start_container(&ctx, &mounts).await.map(|_| ()).map_err(AppError::Sandbox)
 }
 
@@ -199,7 +199,7 @@ pub async fn stop_agent_sandbox(ctx: Ctx) -> Result<(), AppError> {
 pub fn get_sandbox_data_dir(ctx: Ctx) -> Result<String, AppError> {
     supported(&ctx)?;
     let root = crate::services::batch::knowledge_root(&ctx)?;
-    let dir = sandbox::ensure_data_dir(&ctx, &root).map_err(AppError::Sandbox)?;
+    let dir = sandbox::ensure_data_dir(&root).map_err(AppError::Sandbox)?;
     Ok(dir.to_string_lossy().into_owned())
 }
 
@@ -208,7 +208,7 @@ pub fn get_sandbox_data_dir(ctx: Ctx) -> Result<String, AppError> {
 pub fn open_sandbox_data_dir(ctx: Ctx) -> Result<(), AppError> {
     supported(&ctx)?;
     let root = crate::services::batch::knowledge_root(&ctx)?;
-    let dir = sandbox::ensure_data_dir(&ctx, &root).map_err(AppError::Sandbox)?;
+    let dir = sandbox::ensure_data_dir(&root).map_err(AppError::Sandbox)?;
     let status = std::process::Command::new("/usr/bin/open").arg(&dir).status().map_err(|e| AppError::Io(e.to_string()))?;
     if status.success() { Ok(()) } else { Err(AppError::Io(format!("open failed: {status}"))) }
 }
