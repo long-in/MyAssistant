@@ -7,7 +7,6 @@ import {
   BaseInstructions,
   SharedPrompts,
   SharedClaudeSettings,
-  BatchInterval,
   PageHeader,
   StatusPill,
   AppBackup,
@@ -23,7 +22,6 @@ import {
 } from "@/components/GlobalPanels";
 import {
   DEFAULT_VOICE_TIMING,
-  getBatchInterval,
   getWakeConfig,
   leaderExists,
   workEnabled,
@@ -50,16 +48,14 @@ export default function GlobalSettings() {
   const [hasLeader, setHasLeader] = useState(false);
   const [workOn, setWorkOn] = useState(false);
   const [wakeOn, setWakeOn] = useState(false);
-  const [interval, setInterval] = useState<number | null>(null);
 
   // ページ上部の状態バッジ用
   useEffect(() => {
-    Promise.all([leaderExists(), workEnabled(), getWakeConfig(), getBatchInterval()])
-      .then(([e, on, wake, min]) => {
+    Promise.all([leaderExists(), workEnabled(), getWakeConfig()])
+      .then(([e, on, wake]) => {
         setHasLeader(e);
         setWorkOn(e && on);
         setWakeOn(wake.enabled);
-        setInterval(min);
       })
       .catch(() => {});
   }, []);
@@ -96,7 +92,6 @@ export default function GlobalSettings() {
             <>
               <StatusPill on={workOn}>{t("ワーク")}: {!hasLeader ? t("未作成") : workOn ? t("有効") : t("無効")}</StatusPill>
               <StatusPill on={wakeOn}>{t("起動ワード")}: {wakeOn ? t("待機中") : t("オフ")}</StatusPill>
-              <StatusPill on={interval !== null}>{t("ナレッジ整理")}: {interval !== null ? t("{n}分ごと", { n: interval }) : "-"}</StatusPill>
             </>
           }
         />
@@ -114,7 +109,6 @@ export default function GlobalSettings() {
             <SharedPrompts />
             <SharedData />
             <PersonalData />
-            <BatchInterval />
           </TabsContent>
 
           <TabsContent value="voice" className="flex flex-col gap-6">

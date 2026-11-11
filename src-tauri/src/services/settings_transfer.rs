@@ -51,7 +51,6 @@ fn valid(kind: Kind, value: &str) -> bool {
         Kind::OneOf(allowed) => allowed.contains(&value),
         Kind::Text => value.chars().count() <= MAX_TEXT_CHARS,
         Kind::Profile => profile::valid_json(value, chrono::Local::now().date_naive()),
-        Kind::Interval => value.parse::<u32>().is_ok_and(|m| batch::INTERVAL_RANGE.contains(&m)),
     }
 }
 
@@ -266,7 +265,7 @@ mod tests {
     #[test]
     fn agent_export_excludes_global_items() {
         let (_da, a) = mem();
-        for key in [profile::KEY, chat::BASE_INSTRUCTIONS_KEY, wake::WORDS_KEY, batch::BATCH_INTERVAL_KEY] {
+        for key in [profile::KEY, chat::BASE_INSTRUCTIONS_KEY, wake::WORDS_KEY] {
             a.set_legacy_setting(key, "x"); // 全体設定へ移す前の古い値
         }
         a.set_setting(chat::SHELL_ACCESS_KEY, "1").unwrap();

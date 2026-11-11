@@ -27,7 +27,6 @@
 | 起動ワード | Wake Words | `wake_enabled` / `wake_words` | |
 | 共通データ | Shared Data | (`workspaces/shared_data.json`) | 全エージェントで1つ。**渡す先はエージェントのみ**。パーソナルには渡さない([workspace.md](workspace.md)) |
 | パーソナルデータ | Personal Data | `user_profile` | **渡す先は従来どおりパーソナルのみ**。エージェントには渡さない([user-profile.md](user-profile.md)) |
-| ナレッジ整理の間隔 | Knowledge Interval | `batch_interval_minutes` | 定期バッチは、全エージェント同じ間隔で動く |
 
 ## 初回の取り込み
 

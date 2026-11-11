@@ -1,8 +1,8 @@
 "use client";
-import { LANGS, setLang, tr, useLang, useT, type Lang } from "@/lib/i18n";
+import { LANGS, setLang, useLang, useT, type Lang } from "@/lib/i18n";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Archive, AudioLines, Bell, BrainCircuit, Copy, BookOpen, Keyboard, Pencil, Share2, Volume2, Briefcase, ClipboardList, Container, Download, FolderKanban, Globe, Languages, Link2, ListOrdered, Loader2, Mic, Plus, ScrollText, Send, Settings2, ShieldCheck, SlidersHorizontal, Square, Timer, Upload, UserRound, X, type LucideIcon } from "lucide-react";
+import { Archive, AudioLines, Bell, BrainCircuit, Copy, BookOpen, Keyboard, Pencil, Share2, Volume2, Briefcase, ClipboardList, Container, Download, FolderKanban, Globe, Languages, Link2, ListOrdered, Loader2, Mic, Plus, ScrollText, Send, Settings2, ShieldCheck, SlidersHorizontal, Square, Upload, UserRound, X, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
@@ -16,13 +16,12 @@ import HelpDrawer from "@/components/HelpDrawer";
 import BackupPasswordModal from "@/components/BackupPasswordModal";
 import { ensureOsPermission, osNotificationsEnabled, setOsNotificationsEnabled, syncOsNotifications } from "@/lib/osNotify";
 import NotePanel from "@/components/NotePanel";
-import { getSharedData, saveSharedData, LEADER_COLOR, LEADER_ID, createLeader, errorMessage, leaderExists, setWorkEnabled, workEnabled, setGlobalLanguage, getProxies, saveProxy, deleteProxy, setDefaultProxy, getProxyChoice, setProxyChoice, type ProxyList, type ProxyEntry, backupCreate, restorePrepare, restoreApply, restoreDiscard, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, getBatchInterval, setBatchInterval, type WakeConfig, reportError, type AppError, saveBaseInstructions, listGlobalPrompts, saveGlobalPrompt, resetGlobalPrompt, getSharedClaudeSettings, setSharedClaudeSettings, PROMPT_MAX_CHARS, type PromptId, type PromptInfo, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
+import { getSharedData, saveSharedData, LEADER_COLOR, LEADER_ID, createLeader, errorMessage, leaderExists, setWorkEnabled, workEnabled, setGlobalLanguage, getProxies, saveProxy, deleteProxy, setDefaultProxy, getProxyChoice, setProxyChoice, type ProxyList, type ProxyEntry, backupCreate, restorePrepare, restoreApply, restoreDiscard, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, type WakeConfig, reportError, type AppError, saveBaseInstructions, listGlobalPrompts, saveGlobalPrompt, resetGlobalPrompt, getSharedClaudeSettings, setSharedClaudeSettings, PROMPT_MAX_CHARS, type PromptId, type PromptInfo, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
 
 /** 見出しの左に出すアイコン(英字の見出しごと)。無いものは歯車。 */
 const HEADING_ICONS: Record<string, LucideIcon> = {
   "Base Prompt": ScrollText,
   "Personal Data": UserRound,
-  "Knowledge Interval": Timer,
   Language: Languages,
   "AI Settings": BrainCircuit,
   "Wake Words": Mic,
@@ -239,62 +238,6 @@ export const VOICE_FIELDS: TuningField<VoiceTiming>[] = [
   { key: "utterance_silence_secs", label: "話し終わりの無音", hint: "会話の続きの待ち受けで、この無音が続くと話し終えたとみなす。", unit: "秒", min: 0.5, max: 5, step: 0.1 },
   { key: "release_tail_secs", label: "エージェントを離したあとの保持", hint: "キーを離してから録音を止めるまで。語尾が切れるなら長くする。", unit: "秒", min: 0, max: 3, step: 0.5 },
 ];
-
-const BATCH_INTERVALS = [5, 15, 30, 60, 180, 360, 720, 1440];
-const intervalLabel = (m: number) => (m < 60 ? tr("{m}分", { m }) : tr("{m}時間", { m: m / 60 }));
-
-/** ログ整理(ナレッジ化)を自動実行する間隔。 */
-export function BatchInterval() {
-  const t = useT();
-  const [minutes, setMinutes] = useState<number | null>(null);
-  useEffect(() => {
-    getBatchInterval()
-      .then(setMinutes)
-      .catch((e) => toast.error(reportError(e)));
-  }, []);
-
-  const change = async (next: number) => {
-    const prev = minutes;
-    setMinutes(next);
-    try {
-      await setBatchInterval(next);
-    } catch (e) {
-      setMinutes(prev);
-      toast.error(reportError(e));
-    }
-  };
-
-  const options = minutes !== null && !BATCH_INTERVALS.includes(minutes) ? [...BATCH_INTERVALS, minutes].sort((a, b) => a - b) : BATCH_INTERVALS;
-
-  return (
-    <section className="hud-panel hud-accent flex items-center justify-between gap-4 px-5 py-4">
-      <div>
-        <Heading title="Knowledge Interval" help={t("ログ整理の間隔")}>
-          <p>{t("会話ログをトピック別のナレッジへ整理する間隔です。")}</p>
-          <ul>
-            <li>{t("整理が終わった会話のキャプチャは削除されます。")}</li>
-            <li>{t("アプリの終了時と、ナレッジ画面の「今すぐ整理」でも整理します。")}</li>
-            <li>{t("変更は次の待ち時間から反映されます。")}</li>
-          </ul>
-        </Heading>
-        <p className="text-xs text-muted-foreground">{t("この間隔でログをナレッジへ整理します。")}</p>
-      </div>
-      <select
-        aria-label={t("ログ整理の間隔")}
-        className="h-9 rounded-md border bg-background px-2 text-sm"
-        value={minutes ?? ""}
-        disabled={minutes === null}
-        onChange={(e) => change(Number(e.target.value))}
-      >
-        {options.map((m) => (
-          <option key={m} value={m}>
-            {intervalLabel(m)}
-          </option>
-        ))}
-      </select>
-    </section>
-  );
-}
 
 /** 表示言語。全体設定として保存され、全エージェントに反映される(この端末にも写しを残す)。 */
 export function LanguageSetting() {

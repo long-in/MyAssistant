@@ -92,7 +92,8 @@ pub async fn proofread(ctx: &WorkspaceCtx, route: &Route, session_id: Option<&st
                 return text.to_owned();
             }
         };
-        sandbox_agent::complete(ctx, &root, Some(&system), &content, Some(SANDBOX_TIMEOUT), &CancelToken::default()).await.map_err(|e| e.to_string())
+        let model = sandbox_agent::route_model(&ctx.db, &*ctx.global, &route.model);
+        sandbox_agent::complete(ctx, &root, Some(&system), &content, model.as_deref(), Some(SANDBOX_TIMEOUT), &CancelToken::default()).await.map_err(|e| e.to_string())
     } else {
         let target = match llm_router::resolve(ctx, route, &super::batch::available_providers(&ctx.secrets)) {
             Ok(t) => t,

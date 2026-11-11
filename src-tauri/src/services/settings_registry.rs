@@ -34,8 +34,6 @@ pub enum Kind {
     Text,
     /// 検証を通る基本情報のJSON(空文字は未設定を表す)。
     Profile,
-    /// 整理バッチの間隔(分)。
-    Interval,
 }
 
 /// 設定キー1つ分の定義。
@@ -111,7 +109,6 @@ pub const ALL: &[Setting] = &[
     global(wake::ENABLED_KEY, Some(Kind::Flag)),
     global(wake::WORDS_KEY, Some(Kind::Json)),
     global(profile::KEY, Some(Kind::Profile)),
-    global(batch::BATCH_INTERVAL_KEY, Some(Kind::Interval)),
     global(workspace::WORK_ENABLED_KEY, None),
     // 通信のプロキシの一覧(ID・名前・URL・ユーザー名)と既定。パスワードは含まない
     global(proxy::LIST_KEY, Some(Kind::Json)),

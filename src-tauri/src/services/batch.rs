@@ -212,20 +212,14 @@ pub const KNOWLEDGE_DIR_KEY: &str = "knowledge_dir";
 /// 整理バッチに使うモデル指定(`Route`のJSON)のキー。未設定・使用不可なら`llm_router::effective`の既定。
 pub const BATCH_ROUTE_KEY: &str = "batch_route";
 
-/// 整理バッチの実行間隔(分)のキー。
-pub const BATCH_INTERVAL_KEY: &str = "batch_interval_minutes";
-/// 間隔の既定値(分)。
-pub const DEFAULT_INTERVAL_MINUTES: u32 = 30;
-/// 設定できる間隔(分)の範囲。
-pub const INTERVAL_RANGE: std::ops::RangeInclusive<u32> = 5..=1440;
+/// 保存されている整理のモデル指定(使えるかは確かめない)。
+pub fn saved_route(ctx: &WorkspaceCtx) -> Result<Option<Route>, AppError> {
+    Ok(ctx.db.get_setting(BATCH_ROUTE_KEY)?.and_then(|v| serde_json::from_str(&v).ok()))
+}
 
-/// 保存済みの間隔(分)。未設定・範囲外なら既定値。
-pub fn interval_minutes(db: &impl SettingsStore) -> Result<u32, AppError> {
-    Ok(db
-        .get_setting(BATCH_INTERVAL_KEY)?
-        .and_then(|v| v.parse().ok())
-        .filter(|m| INTERVAL_RANGE.contains(m))
-        .unwrap_or(DEFAULT_INTERVAL_MINUTES))
+/// 保存されている整理のモデル指定(使えるかは確かめない)。
+pub fn saved_route(ctx: &WorkspaceCtx) -> Result<Option<Route>, AppError> {
+    Ok(ctx.db.get_setting(BATCH_ROUTE_KEY)?.and_then(|v| serde_json::from_str(&v).ok()))
 }
 
 /// 保存済みの指定、使えなければ既定を返す。
@@ -268,6 +262,10 @@ pub async fn run_guarded(ctx: &WorkspaceCtx) -> Result<Option<BatchReport>, AppE
         // 個人・リーダーは、整理のモデルにコンテナ内の Claude Code を選んだときだけコンテナで行う
         let in_sandbox = sandbox::runs_in_sandbox(&ctx.id);
         let route = if in_sandbox { None } else { effective_route(ctx, &available)? };
+        // コンテナで整理するときの`--model`。ワークは保存済みの指定、個人・リーダーは選んだ経路のモデル
+        let sandbox_model = if in_sandbox { saved_route(ctx)? } else { route.clone() }
+            .filter(llm_router::is_sandbox)
+            .and_then(|r| sandbox_agent::route_model(db, &*ctx.global, &r.model));
         let in_sandbox = in_sandbox || route.as_ref().is_some_and(llm_router::is_sandbox);
         let mut ran = false;
         let mut report = BatchReport::default();
@@ -280,7 +278,7 @@ pub async fn run_guarded(ctx: &WorkspaceCtx) -> Result<Option<BatchReport>, AppE
             let cancel = CancelToken::default();
             report = run(db, &*ctx.global, &root, |prompt| {
                 let target = target.as_ref();
-                let (root, cancel) = (&root, &cancel);
+                let (root, cancel, sandbox_model) = (&root, &cancel, sandbox_model.as_deref());
                 async move {
                     // LLMの呼び出しの前後で削除を確かめ、削除されたエージェントへ整理結果を書かせない
                     ctx.ensure_alive()?;
@@ -289,7 +287,7 @@ pub async fn run_guarded(ctx: &WorkspaceCtx) -> Result<Option<BatchReport>, AppE
                             let msg = [ChatMessage { role: "user".into(), content: prompt }];
                             llm_client::complete(ctx, t.provider, &t.model, None, &msg).await?.text
                         }
-                        None => sandbox_agent::complete(ctx, root, None, &prompt, None, cancel).await.map_err(AppError::Sandbox)?,
+                        None => sandbox_agent::complete(ctx, root, None, &prompt, sandbox_model, None, cancel).await.map_err(AppError::Sandbox)?,
                     };
                     ctx.ensure_alive()?;
                     Ok(text)

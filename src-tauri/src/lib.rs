@@ -11,8 +11,6 @@ use std::{
 
 use tauri::{Manager, RunEvent};
 
-/// 終了時バッチの待ち時間上限。
-const EXIT_BATCH_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -62,8 +60,6 @@ pub fn run() {
       commands::agent_data::save_agent_data,
       commands::agent_data::get_shared_data,
       commands::agent_data::save_shared_data,
-      commands::knowledge::get_batch_interval,
-      commands::knowledge::set_batch_interval,
       commands::settings::get_debug_mode,
       commands::settings::set_debug_mode,
       commands::settings_transfer::export_settings,
@@ -276,9 +272,6 @@ pub fn run() {
       // メニューバーは状態の登録前に作られるため、エージェント一覧を含めて作り直す
       tray::refresh(app.handle());
 
-      // 整理バッチは、ワークスペースごとの間隔で独立して動かす
-      services::scheduler::spawn(app.handle().clone());
-
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()
@@ -298,7 +291,7 @@ pub fn run() {
     if let RunEvent::Exit = event {
       handle.state::<services::stt::SttEngine>().unload();
       handle.state::<services::vad::VadEngine>().unload();
-      // 終了時の整理バッチが済んでから(Exitは最後に来る)、端末内のLLMのサーバーを止める
+      // 端末内のLLMのサーバーを止める
       services::local_llm::shutdown();
     }
     if let RunEvent::ExitRequested { api, .. } = event
@@ -307,14 +300,6 @@ pub fn run() {
       api.prevent_exit();
       let handle = handle.clone();
       tauri::async_runtime::spawn(async move {
-        let run = async {
-          for ctx in handle.state::<services::workspace::Workspaces>().all() {
-            if let Err(e) = services::batch::run_guarded(&ctx).await {
-              log::warn!("exit batch failed ({}): {e}", ctx.id);
-            }
-          }
-        };
-        let _ = tokio::time::timeout(EXIT_BATCH_TIMEOUT, run).await;
         // 動いているサンドボックスのコンテナを止める
         let _ = tokio::time::timeout(Duration::from_secs(20), services::sandbox::stop_all_remembering()).await;
         handle.exit(0);

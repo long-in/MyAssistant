@@ -91,7 +91,7 @@ Next.js 16(App Router、`output: "export"`)の静的サイト。Tauri の WebVie
 
 | タブ | 節 |
 | --- | --- |
-| AIへの指示 | Base Prompt、Shared Data、Personal Data、Knowledge Interval |
+| AIへの指示 | Base Prompt、Shared Data、Personal Data |
 | 音声 | Wake Words、Voice Timing |
 | Sandbox | 共通の Dockerfile(Sandbox Image) |
 | その他 | Language、OS Notifications、Work(ワークの有効化)、Proxy、App Backup |

@@ -13,6 +13,7 @@ import { Heading } from "@/components/GlobalPanels";
 import {
   PROMPT_MAX_CHARS,
   SANDBOX_PROVIDER,
+  getSandboxModels,
   listModels,
   listPrompts,
   loadBatchRoute,
@@ -24,12 +25,14 @@ import {
   saveProofreadRoute,
   savePrompt,
   saveSkillsRoute,
+  setSandboxModel,
   type KeyStatus,
   type ModelInfo,
   type ModelKeyStatus,
   type PromptId,
   type PromptInfo,
   type Route,
+  type SandboxModels,
 } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 
@@ -57,10 +60,38 @@ const FEATURES: (Feature & { only?: "leader" | "agent" })[] = [
 /** ワークのエージェントで、校正をコンテナ内の Claude Code で行うことを示す `Route.provider`(Rust 側の `SANDBOX_PROVIDER`)。 */
 const SANDBOX_ROUTE: Route = { provider: "sandbox" as Route["provider"], model: "" };
 
+/** ワークで、会話のモデルを選ぶカードに使う機能。 */
+const SANDBOX_DEFAULT = "default";
+
+/**
+ * ワークのコンテナ内 Claude Code のモデル選択。選べるのは Sandbox タブの settings.json の`model`・`availableModels`。
+ * 先頭の「settings.json の既定」は、モデルを指定せず settings.json の`model`に任せる。
+ */
+function SandboxModelSelect({ models, value, onChange, label }: { models: string[]; value: string | null; onChange: (m: string | null) => void; label: string }) {
+  const t = useT();
+  const current = value && models.includes(value) ? value : SANDBOX_DEFAULT;
+  return (
+    <div className="flex flex-col gap-2">
+      <Select value={current} onValueChange={(v) => onChange(v === SANDBOX_DEFAULT ? null : v)}>
+        <SelectTrigger size="sm" aria-label={label}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={SANDBOX_DEFAULT}>{t("settings.json の既定")}</SelectItem>
+          {models.map((m) => (
+            <SelectItem key={m} value={m}>{m}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {models.length === 0 && <p className="text-xs text-muted-foreground">{t("選べるモデルがありません。Sandbox タブの settings.json に model または availableModels を書いてください。")}</p>}
+    </div>
+  );
+}
+
 /**
  * エージェントの「AI設定」。
- * ワークのエージェント(`work`)は、会話・整理・校正をコンテナ内の Claude Code が受け持つため、モデル選択は出さない
- * (校正だけ、コンテナ / 端末内のQwen / オフの選択)。プロンプトは編集できる。
+ * ワークのエージェント(`work`)は、会話・整理・校正をコンテナ内の Claude Code が受け持つ。
+ * モデルは Sandbox タブの settings.json で許可したものから機能ごとに選ぶ(校正だけ、コンテナ / 端末内のQwen / オフの選択)。
  *LLMを使う機能ごとに、使うモデルと渡すプロンプトを1か所で扱う。
  * プロンプトは全文を編集でき、「全体設定を利用」で個別の上書きを外す(以後は全体設定の変更に自動で追従する)。変更は次の呼び出しから反映される。
  */
@@ -68,6 +99,7 @@ export default function AiSettings({ keyStatus, leader, work = false }: { keySta
   const t = useT();
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [routes, setRoutes] = useState<Partial<Record<PromptId, Route | null>>>({});
+  const [sandbox, setSandbox] = useState<SandboxModels>({ models: [], selected: null });
   const [prompts, setPrompts] = useState<Partial<Record<PromptId, PromptInfo>>>({});
 
   const features = FEATURES.filter((f) => !f.only || (f.only === "leader") === leader);
@@ -76,10 +108,12 @@ export default function AiSettings({ keyStatus, leader, work = false }: { keySta
     Promise.all([
       listModels(),
       listPrompts(),
-      ...features.map(async (f) => [f.id, !work || f.id === "proofread" ? await ROUTES[f.id]?.load() : null] as const),
+      work ? getSandboxModels() : Promise.resolve({ models: [], selected: null } as SandboxModels),
+      ...features.map(async (f) => [f.id, !work || f.id === "proofread" || f.id === "organize" ? await ROUTES[f.id]?.load() : null] as const),
     ])
-      .then(([m, p, ...r]) => {
+      .then(([m, p, sm, ...r]) => {
         setModels(m);
+        setSandbox(sm);
         setPrompts(Object.fromEntries(p.map((x) => [x.id, x])));
         setRoutes(Object.fromEntries(r));
       })
@@ -106,7 +140,7 @@ export default function AiSettings({ keyStatus, leader, work = false }: { keySta
   return (
     <section className="hud-panel hud-accent px-5 py-4">
       <Heading title="AI Settings" help={t("AI設定")}>
-        <p>{work ? t("AIを使う機能ごとに、渡すプロンプト(指示)を設定します。モデルは、Sandbox タブの Claude Code の settings.json で決まります。") : t("AIを使う機能ごとに、使うモデルと渡すプロンプト(指示)を設定します。")}</p>
+        <p>{work ? t("AIを使う機能ごとに、使うモデルと渡すプロンプト(指示)を設定します。選べるモデルは、Sandbox タブの Claude Code の settings.json(model・availableModels)で決まります。") : t("AIを使う機能ごとに、使うモデルと渡すプロンプト(指示)を設定します。")}</p>
         <ul>
           <li>{t("プロンプトは全文を編集できます。変更は次の呼び出しから反映されます。")}</li>
           <li>{t("出力の形式(JSONなど)を示す部分を消すと、結果を読み取れず機能が働かなくなることがあります。")}</li>
@@ -117,7 +151,7 @@ export default function AiSettings({ keyStatus, leader, work = false }: { keySta
       </Heading>
       <div className="flex flex-col gap-3">
         {features.map((f) => {
-          const api = work && f.id !== "proofread" ? undefined : ROUTES[f.id];
+          const api = work && f.id !== "proofread" && f.id !== "organize" ? undefined : ROUTES[f.id];
           const route = routes[f.id] ?? null;
           const localModel = models.find((m) => m.provider === "local");
           const list = modelsFor(f.id);
@@ -127,7 +161,30 @@ export default function AiSettings({ keyStatus, leader, work = false }: { keySta
           const initial = usable.find((m) => m.tier === "light") ?? usable[0];
           return (
             <FeatureCard key={f.id} feature={f} info={prompts[f.id]} onInfo={(i) => setPrompts((p) => ({ ...p, [f.id]: i }))}>
-              {api && work && (
+              {work && f.id === "chat" && (
+                <SandboxModelSelect
+                  models={sandbox.models}
+                  value={sandbox.selected}
+                  label={t(f.title)}
+                  onChange={(m) =>
+                    setSandboxModel(m)
+                      .then(() => setSandbox((s) => ({ ...s, selected: m })))
+                      .catch((e) => toast.error(reportError(e)))
+                  }
+                />
+              )}
+              {api && work && f.id === "organize" && (
+                <div className="flex flex-col gap-2">
+                  {f.modelLabel && <p className="text-xs text-muted-foreground">{t(f.modelLabel)}</p>}
+                  <SandboxModelSelect
+                    models={sandbox.models}
+                    value={route?.model ?? null}
+                    label={t(f.title)}
+                    onChange={(m) => changeRoute(f.id, { ...SANDBOX_ROUTE, model: m ?? "" })}
+                  />
+                </div>
+              )}
+              {api && work && f.id === "proofread" && (
                 <div className="flex flex-col gap-2">
                   <Select
                     value={route?.provider === SANDBOX_ROUTE.provider ? "sandbox" : route?.provider === "local" ? "local" : "off"}
@@ -144,8 +201,16 @@ export default function AiSettings({ keyStatus, leader, work = false }: { keySta
                       <SelectItem value="local" disabled={!localModel}>{t("端末内のモデル(Qwen 2.5)")}</SelectItem>
                     </SelectContent>
                   </Select>
+                  {route?.provider === SANDBOX_ROUTE.provider && (
+                    <SandboxModelSelect
+                      models={sandbox.models}
+                      value={route.model}
+                      label={t("校正に使うモデル")}
+                      onChange={(m) => changeRoute(f.id, { ...SANDBOX_ROUTE, model: m ?? "" })}
+                    />
+                  )}
                   <p className="text-xs text-muted-foreground">
-                    {t("コンテナ内の Claude Code は、発話のたびに起動するため数秒かかります。遅さが気になるときは、端末内のモデル(AI Link で取得)を選べます。")}
+                    {t("コンテナ内の Claude Code は、発話のたびに起動するため数秒かかります。軽量なモデルを選ぶか、端末内のモデル(AI Link で取得)を選ぶと速くなります。")}
                   </p>
                 </div>
               )}
