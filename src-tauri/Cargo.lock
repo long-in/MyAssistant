@@ -102,7 +102,6 @@ name = "app"
 version = "0.2.0"
 dependencies = [
  "aws-credential-types",
- "aws-sdk-bedrockruntime",
  "aws-sdk-sts",
  "aws-smithy-http-client",
  "aws-smithy-types",
@@ -351,7 +350,6 @@ dependencies = [
  "aws-credential-types",
  "aws-sigv4",
  "aws-smithy-async",
- "aws-smithy-eventstream",
  "aws-smithy-http",
  "aws-smithy-runtime",
  "aws-smithy-runtime-api",
@@ -365,33 +363,6 @@ dependencies = [
  "pin-project-lite",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "aws-sdk-bedrockruntime"
-version = "1.124.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "135b4983ee5cef449a1442a91779959ba3f8a7b9ab95b4cc8b081f026567eab3"
-dependencies = [
- "aws-credential-types",
- "aws-runtime",
- "aws-sigv4",
- "aws-smithy-async",
- "aws-smithy-eventstream",
- "aws-smithy-http",
- "aws-smithy-json",
- "aws-smithy-observability",
- "aws-smithy-runtime",
- "aws-smithy-runtime-api",
- "aws-smithy-types",
- "aws-types",
- "bytes",
- "fastrand",
- "http 0.2.12",
- "http 1.5.0",
- "http-body-util",
- "regex-lite",
- "tracing",
 ]
 
 [[package]]
@@ -426,7 +397,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "efa49f3c607b92daae0c078d48a4571f599f966dce3caee5f1ea55c4d9073f99"
 dependencies = [
  "aws-credential-types",
- "aws-smithy-eventstream",
  "aws-smithy-http",
  "aws-smithy-runtime-api",
  "aws-smithy-types",
@@ -454,23 +424,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "aws-smithy-eventstream"
-version = "0.60.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35b9c7354a3b13c66f60fe4616d6d1969c9fd36b1b5333a5dfb3ee716b33c588"
-dependencies = [
- "aws-smithy-types",
- "bytes",
- "crc32fast",
-]
-
-[[package]]
 name = "aws-smithy-http"
 version = "0.63.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "630e67f2a31094ffa51b210ae030855cb8f3b7ee1329bdd8d085aaf61e8b97fc"
 dependencies = [
- "aws-smithy-eventstream",
  "aws-smithy-runtime-api",
  "aws-smithy-types",
  "bytes",

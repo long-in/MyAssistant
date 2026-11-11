@@ -104,7 +104,8 @@ pub async fn run_with_tools(
     let (system, tools) = (&system, &tools);
     let cancel = CancelToken::default();
     state.set_cancel(cancel.clone());
-    let env = Env::new(root).with_cancel(cancel.clone()).with_shell(shell_access).with_host(host).with_skills(skills).with_sandbox(sandbox.then_some(ctx));
+    let once = |id: &str| state.take_once(id);
+    let env = Env::new(root).with_cancel(cancel.clone()).with_shell(shell_access).with_host(host).with_skills(skills).with_sandbox(sandbox.then_some(ctx)).with_once_check(Some(&once));
     let is_foreground = &is_foreground;
     let result = tool_loop::run(
         &env,
@@ -126,7 +127,7 @@ pub async fn run_with_tools(
                 answer
             }
         },
-        |event| on_event(event),
+        on_event,
     )
     .await;
     state.clear_cancel();
@@ -134,9 +135,14 @@ pub async fn run_with_tools(
 }
 
 /// 承認への応答。待っていない`id`は無視する。
+/// `once`は、許可リストにないコマンドの承認で「今回だけ実行する」(許可リストへ加えない)を選んだとき。
 #[tauri::command]
-pub fn task_approve(ctx: Ctx, id: String, approved: bool) {
-    ctx.shared.task.answer(&id, approved);
+pub fn task_approve(ctx: Ctx, id: String, approved: bool, once: Option<bool>) {
+    if approved && once == Some(true) {
+        ctx.shared.task.answer_once(&id);
+    } else {
+        ctx.shared.task.answer(&id, approved);
+    }
 }
 
 /// 実行中の依頼を中断する。動いているコマンドは強制終了し、承認待ちは拒否として扱う。実行中でなければ何もしない。

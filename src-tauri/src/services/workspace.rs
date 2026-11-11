@@ -836,8 +836,8 @@ mod tests {
     fn enforces_agent_limit() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
-        for i in 0..MAX_AGENTS {
-            ws.create(&format!("p{i}"), PALETTE[i]).unwrap();
+        for (i, color) in PALETTE.iter().enumerate().take(MAX_AGENTS) {
+            ws.create(&format!("p{i}"), color).unwrap();
         }
         assert!(matches!(ws.create("over", PALETTE[0]), Err(AppError::AgentLimit)));
         let (first, first_color) = (ws.list()[0].id.clone(), ws.list()[0].color.clone());

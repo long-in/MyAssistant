@@ -11,6 +11,10 @@ export type LogEntry = {
   id: string;
   /** コマンドなら実行したコマンド、それ以外は操作の説明。 */
   title: string;
+  /** 操作の名前(「読み取り」「Bash」など)。 */
+  label: string;
+  /** 操作の対象(パス・コマンド・検索語など)。 */
+  target: string;
   /** 承認済みの計画の手順番号(1始まり)。 */
   step?: number;
   isCommand: boolean;
@@ -76,9 +80,10 @@ export function applyTaskEvent(log: LogState, e: TaskEvent): LogState {
     const i = e.input;
     const target =
       str(i.path) || str(i.file_path) || str(i.notebook_path) || str(i.pattern) || str(i.url) || str(i.query) || str(i.description) || str(i.text) || str(i.name);
-    const title = isCommand ? str(i.command) : `${tr(TOOL_LABELS[e.name] ?? e.name)} ${target}`.trim();
+    const label = isCommand ? "Bash" : tr(TOOL_LABELS[e.name] ?? e.name);
+    const title = isCommand ? str(i.command) : `${label} ${target}`.trim();
     const step = typeof e.input.step === "number" ? e.input.step : undefined;
-    return { ...log, entries: [...log.entries, { id: e.id, title, step, isCommand, output: "", status: "running", at: new Date() }] };
+    return { ...log, entries: [...log.entries, { id: e.id, title, label, target: isCommand ? str(i.command) : target, step, isCommand, output: "", status: "running", at: new Date() }] };
   }
   const update = (id: string, fn: (x: LogEntry) => LogEntry): LogState => ({
     ...log,

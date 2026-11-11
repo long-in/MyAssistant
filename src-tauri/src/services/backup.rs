@@ -53,6 +53,8 @@ const MARKER: &str = "pending-restore.json";
 /// manifestの大きさの上限。
 const MAX_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_WORKSPACES: usize = 64;
+/// 展開する合計の大きさの上限。細工したzip(展開すると巨大になるもの)でディスクを埋めさせない。
+const MAX_RESTORE_BYTES: u64 = 64 << 30;
 /// ZIP64にしないと入らない大きさ。
 const LARGE_FILE: u64 = 3 << 30;
 
@@ -397,6 +399,7 @@ pub fn prepare(root: &Path, src: &Path, password: Option<&str>) -> Result<Previe
 fn prepare_inner(src: &Path, stage: &Path, password: Option<&str>) -> Result<Preview, AppError> {
     let mut archive = ZipArchive::new(File::open(src).map_err(io)?).map_err(|e| bad(format!("zip を開けません: {e}")))?;
     let (manifest, raw) = read_manifest(&mut archive, password)?;
+    let mut total = 0u64;
     for (name, expected) in &manifest.files {
         let mut entry = open_entry(&mut archive, name, password)?;
         let target = name.split('/').fold(stage.to_owned(), |acc, part| acc.join(part));
@@ -415,6 +418,10 @@ fn prepare_inner(src: &Path, stage: &Path, password: Option<&str>) -> Result<Pre
             let n = entry.read(&mut buf).map_err(io)?;
             if n == 0 {
                 break;
+            }
+            total += n as u64;
+            if total > MAX_RESTORE_BYTES {
+                return Err(bad("バックアップが大きすぎます"));
             }
             hasher.update(&buf[..n]);
             out.write_all(&buf[..n]).map_err(io)?;

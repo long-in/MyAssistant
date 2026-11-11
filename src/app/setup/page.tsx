@@ -1127,6 +1127,9 @@ function WhisperSourcePanel({ onChanged }: { onChanged: () => void }) {
         <label htmlFor="ms-whisper">{t("Whisperモデル")}</label>
         <Input id="ms-whisper" maxLength={64} placeholder={src.whisper_default} value={revision} onChange={(e) => setDraft(e.target.value)} />
       </div>
+      {(revision !== src.whisper_default || !src.whisper_verified) && (
+        <p className="mt-2 text-xs text-destructive">{t("既定以外のバージョンは、取得物の検証(SHA-256の照合)を行いません。信頼できるバージョンだけを指定してください。")}</p>
+      )}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button size="sm" disabled={busy !== null || !edited} onClick={() => run("save", () => setWhisperRevision(revision).then(() => setDraft(null)), t("取得バージョンを保存しました。"))}>
           {busy === "save" && <Loader2 className="animate-spin" />} {t("保存")}
@@ -1174,6 +1177,9 @@ function VoicevoxSourcePanel({ onChanged }: { onChanged: () => void }) {
           </div>
         ))}
       </div>
+      {(!src.voicevox_verified || VERSION_FIELDS.some(({ key }) => versions[key] !== src.voicevox_default[key])) && (
+        <p className="mt-2 text-xs text-destructive">{t("既定以外のバージョンは、取得物の検証(SHA-256の照合)を行いません。信頼できるバージョンだけを指定してください。")}</p>
+      )}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button size="sm" disabled={busy !== null || !edited} onClick={() => run("save", () => setVoicevoxVersions(versions).then(() => setDraft(null)), t("取得バージョンを保存しました。"))}>
           {busy === "save" && <Loader2 className="animate-spin" />} {t("保存")}

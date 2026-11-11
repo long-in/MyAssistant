@@ -286,8 +286,8 @@ pub fn run() {
     .build(tauri::generate_context!())
     .expect("error while building tauri application");
 
-  // 終了要求時に未処理ログを1回だけバッチ処理してから終了する。
-  let flushed = AtomicBool::new(false);
+  // 終了要求時に、動いているサンドボックスのコンテナを1回だけ止めてから終了する。
+  let stopping = AtomicBool::new(false);
   app.run(move |handle, event| {
     // ggmlのMetalリソースは終了処理の静的デストラクタより前に解放しておく。
     if let RunEvent::Exit = event {
@@ -297,7 +297,7 @@ pub fn run() {
       services::local_llm::shutdown();
     }
     if let RunEvent::ExitRequested { api, .. } = event
-      && !flushed.swap(true, Ordering::SeqCst)
+      && !stopping.swap(true, Ordering::SeqCst)
     {
       api.prevent_exit();
       let handle = handle.clone();

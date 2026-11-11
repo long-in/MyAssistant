@@ -43,6 +43,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   key_missing: "選択したプロバイダーのAPIキーが未登録です。",
   invalid_model: "選択したモデルは利用できません。",
   empty_message: "メッセージを入力してください。",
+  busy: "このエージェントは、ほかの依頼を実行中です。終わってから送ってください。",
   bad_response: "プロバイダーから想定外の応答が返りました。",
   audio_error: "マイクを利用できません。マイクの権限と接続を確認してください。",
   already_recording: "すでに録音中です。",
@@ -277,8 +278,9 @@ export const taskResume = (workspaceId: string, onEvent: (e: TaskEvent) => void)
 /** 画面がワークスペースを離れたことを知らせる。依頼は止まらず、進捗はバックエンドに記録される。 */
 export const taskDetach = (workspaceId: string) => invoke<void>("task_detach", { workspaceId });
 
-export const taskApprove = (id: string, approved: boolean) =>
-  invoke<void>("task_approve", { id, approved });
+/** `once`: 許可リストにないコマンドを、許可へ加えずに今回だけ実行する。 */
+export const taskApprove = (id: string, approved: boolean, once = false) =>
+  invoke<void>("task_approve", { id, approved, once });
 /** 実行中の依頼を中断する。動いているコマンドは強制終了され、承認待ちは拒否になる。 */
 export const taskCancel = () => invoke<void>("task_cancel");
 
@@ -589,6 +591,9 @@ export type VoicevoxVersions = { core: string; onnxruntime: string; models: stri
 export type ModelSources = {
   whisper_revision: string;
   whisper_default: string;
+  /** 取得物をSHA-256で照合できるか(既定のバージョンのときだけ)。 */
+  whisper_verified: boolean;
+  voicevox_verified: boolean;
   voicevox: VoicevoxVersions;
   voicevox_installed: VoicevoxVersions | null;
   voicevox_default: VoicevoxVersions;

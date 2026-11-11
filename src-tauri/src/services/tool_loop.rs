@@ -607,6 +607,9 @@ pub struct TaskOutcome {
     pub text: String,
 }
 
+/// 承認が「今回だけ」(許可リストへ加えない)だったかを、`tool_use`のidで確かめる。確かめたら記録は消える。
+pub type OnceCheck<'a> = &'a (dyn Fn(&str) -> bool + Sync);
+
 /// 1回の依頼の実行環境。
 pub struct Env<'a> {
     root: &'a Path,
@@ -618,12 +621,14 @@ pub struct Env<'a> {
     skills: SkillAccess,
     /// 指定すると、コマンドをこのエージェントのDockerコンテナの中で実行する(ホストでは実行しない)。
     sandbox: Option<&'a WorkspaceCtx>,
+    /// 許可リストにないコマンドの承認が「今回だけ」だったかの確認。無ければ、承認は常に許可リストへ加える。
+    once: Option<OnceCheck<'a>>,
 }
 
 impl<'a> Env<'a> {
     /// ファイル操作だけの環境。コマンド実行は`with_shell`で有効にする。
     pub fn new(root: &'a Path) -> Self {
-        Self { root, cancel: CancelToken::default(), shell: false, host: None, skills: SkillAccess::default(), sandbox: None }
+        Self { root, cancel: CancelToken::default(), shell: false, host: None, skills: SkillAccess::default(), sandbox: None, once: None }
     }
 
     pub fn with_cancel(mut self, cancel: CancelToken) -> Self {
@@ -648,6 +653,11 @@ impl<'a> Env<'a> {
 
     pub fn with_sandbox(mut self, ctx: Option<&'a WorkspaceCtx>) -> Self {
         self.sandbox = ctx;
+        self
+    }
+
+    pub fn with_once_check(mut self, once: Option<OnceCheck<'a>>) -> Self {
+        self.once = once;
         self
     }
 
@@ -991,7 +1001,8 @@ where
 
     // 許可・拒否のリストはナレッジから毎回読み直す
     let policy = command_policy::load(env.root);
-    let scope = command_policy::Scope::new(env.root, &cwd);
+    let app_data = sandbox::app_dir().ok();
+    let scope = command_policy::Scope::new(env.root, &cwd).with_private(app_data.as_deref());
     let mut allowed = Vec::new();
     let reason = match command_policy::classify_in(command, &policy, Some(&scope)) {
         Verdict::Deny(reason) => return Err(format!("実行できません: {reason}")),
@@ -1002,12 +1013,15 @@ where
                 path: cwd.display().to_string(),
                 preview: command.to_owned(),
                 steps: patterns.clone(),
-                reason: "許可リストにないコマンドです。許可に加えて実行します。".into(),
+                reason: "許可リストにないコマンドです。今回だけ実行するか、許可に加えて実行するかを選べます。".into(),
             };
             if !ask(approve, emit, approval).await {
                 return Err("ユーザーがこのコマンドを許可に加えず、実行も許可しませんでした。".into());
             }
-            allowed = patterns;
+            // 「今回だけ」の承認なら、許可リストへは加えずに実行する
+            if !env.once.is_some_and(|once| once(&call.id)) {
+                allowed = patterns;
+            }
             None
         }
         Verdict::Auto => None,

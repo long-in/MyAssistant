@@ -93,7 +93,7 @@ pub fn parse(text: &str) -> Option<(Frontmatter, &str)> {
         }
         let Some((k, v)) = line.split_once(':') else { continue };
         let k = k.trim();
-        list_key = Some(k).filter(|_| v.trim().is_empty());
+        list_key = v.trim().is_empty().then_some(k);
         match k {
             "title" => fm.title = scalar(v),
             "category" => fm.category = scalar(v),
@@ -185,6 +185,30 @@ pub struct KnowledgeFile {
     pub updated_at: String,
 }
 
+/// 一覧のために読む、ファイルの先頭の長さ。Frontmatter(タイトル・更新日時)はここに収まる。
+const LIST_HEAD_BYTES: u64 = 8 * 1024;
+
+/// ファイルの先頭だけを読む(一覧のたびに全ノートの全文を読まないため)。読めなければ空。
+fn read_head(path: &Path) -> String {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    if let Ok(f) = fs::File::open(path) {
+        let _ = f.take(LIST_HEAD_BYTES).read_to_end(&mut bytes);
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Frontmatterのタイトルと更新日時。
+/// 先頭だけを読んだためFrontmatterが途中で切れていても(`source_log_ids`が長いノート)、切れた行を捨てて読めた分を使う。
+fn head_meta(head: &str) -> Option<(String, String)> {
+    let meta = |(fm, _): (Frontmatter, &str)| (fm.title, fm.updated_at);
+    if let Some(found) = parse(head) {
+        return Some(meta(found));
+    }
+    let complete = head.rsplit_once('\n').map_or("", |(lines, _)| lines);
+    parse(&format!("{complete}\n---\n")).map(meta)
+}
+
 /// 既存ファイル一覧(最大3階層)。シンボリックリンクは辿らない。
 pub fn list(root: &Path) -> Result<Vec<KnowledgeFile>, AppError> {
     let mut out = Vec::new();
@@ -212,12 +236,12 @@ fn walk(root: &Path, dir: &Path, depth: u8, out: &mut Vec<KnowledgeFile>) -> Res
         if ft.is_dir() {
             walk(root, &path, depth + 1, out)?;
         } else if ft.is_file() && path.extension().is_some_and(|x| x == "md") {
-            let text = fs::read_to_string(&path).unwrap_or_default();
+            let head = read_head(&path);
             let rel = path.strip_prefix(root).map_err(|_| AppError::PathNotAllowed)?;
             let rel_s = rel.to_string_lossy().replace('\\', "/");
             let category = rel.parent().map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
-            let (title, updated_at) = match parse(&text) {
-                Some((fm, _)) => (fm.title, fm.updated_at),
+            let (title, updated_at) = match head_meta(&head) {
+                Some(meta) => meta,
                 None => (path.file_stem().unwrap_or_default().to_string_lossy().into_owned(), String::new()),
             };
             out.push(KnowledgeFile { path: rel_s, title, category, updated_at });
@@ -736,6 +760,19 @@ pub fn list_dirs(root: &Path) -> Result<Vec<String>, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn list_reads_the_title_even_when_the_frontmatter_is_longer_than_the_head() {
+        let dir = tempfile::tempdir().unwrap();
+        let ids: Vec<String> = (0..2000).map(|i| format!("log-{i:08}")).collect();
+        let fm = Frontmatter { title: "長いノート".into(), updated_at: "2026-01-02T03:04:05Z".into(), source_log_ids: ids, ..Default::default() };
+        fs::write(dir.path().join("a.md"), format!("{}\n本文", fm.render())).unwrap();
+        fs::write(dir.path().join("b.md"), "frontmatterなし").unwrap();
+        let files = list(dir.path()).unwrap();
+        let a = files.iter().find(|f| f.path == "a.md").unwrap();
+        assert_eq!((a.title.as_str(), a.updated_at.as_str()), ("長いノート", "2026-01-02T03:04:05Z"));
+        assert_eq!(files.iter().find(|f| f.path == "b.md").unwrap().title, "b");
+    }
 
     #[test]
     fn lists_and_reads_non_markdown_read_only() {

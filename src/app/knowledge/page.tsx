@@ -7,8 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { BookOpen, Brain, Download, FileText, FolderOpen, Loader2, Pencil, RotateCcw, Save, Sparkles, Trash2, Upload } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { ChatMarkdown } from "@/components/ChatMarkdown";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -431,9 +430,7 @@ export default function Knowledge() {
                       ))}
                     </div>
                   )}
-                  <div className="prose prose-sm max-w-none dark:prose-invert">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{doc.body}</ReactMarkdown>
-                  </div>
+                  <ChatMarkdown text={doc.body} />
                 </div>
               </div>
             )}

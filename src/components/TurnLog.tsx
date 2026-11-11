@@ -27,22 +27,28 @@ function Node({ state }: { state: NodeState }) {
   );
 }
 
+/** 1件の操作。「操作名(対象)」を1行で示し、出力は「⎿」の下にぶら下げる。 */
 function Entry({ x }: { x: LogEntry }) {
-  const label = x.isCommand ? "EXEC" : "FILE";
   const head = (
-    <span className="break-all">
-      <span className="text-muted-foreground">[{clock(x.at)}]</span>{" "}
-      <span className={x.status === "error" ? "text-destructive" : "text-primary"}>&gt; {label}</span>
-      <span className="text-foreground/90"> :: {x.title}</span>
+    <span className="break-all" title={clock(x.at)}>
+      <span className={cn("font-semibold", x.status === "error" ? "text-destructive" : "text-foreground")}>{x.label}</span>
+      {x.target && (
+        <span className="text-muted-foreground">
+          (<span className="text-foreground/80">{x.target}</span>)
+        </span>
+      )}
       {x.status === "running" && <span className="animate-hud-blink text-muted-foreground"> …</span>}
-      {x.status === "error" && <span className="text-destructive"> &lt; FAILED</span>}
+      {x.status === "error" && <span className="text-destructive"> — failed</span>}
     </span>
   );
   if (!x.output) return <p>{head}</p>;
   const pre = (
-    <pre className="my-0.5 max-h-48 overflow-auto border-l border-primary/30 pl-2 whitespace-pre-wrap break-all text-foreground/80">
-      {x.output}
-    </pre>
+    <div className="my-0.5 flex gap-1.5 text-foreground/80">
+      <span aria-hidden className="shrink-0 text-muted-foreground select-none">
+        ⎿
+      </span>
+      <pre className="max-h-48 min-w-0 flex-1 overflow-auto whitespace-pre-wrap break-all">{x.output}</pre>
+    </div>
   );
   // 実行中と失敗は出力を開いたまま、成功したものは畳んで経過を見やすくする
   return x.status === "ok" ? (
@@ -87,7 +93,7 @@ export default function TurnLog({ log, running, onCancel }: { log: LogState; run
   const failed = log.entries.some((x) => x.status === "error");
 
   return (
-    <section aria-label={t("実行ログ")} className="w-full max-w-3xl rounded-md border border-primary/20 bg-background/40 font-mono text-xs leading-relaxed">
+    <section aria-label={t("実行ログ")} className="w-full rounded-md border border-border/60 bg-muted/20 font-mono text-xs leading-relaxed">
       <div className="flex items-center gap-2 px-3 py-1.5">
         <button
           type="button"
