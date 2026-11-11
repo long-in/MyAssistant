@@ -9,7 +9,7 @@
 | 項目 | 決定 |
 | --- | --- |
 | 方式 | Rust 側に自前のツール使用ループ(方式 A)。Claude Agent SDK / Claude Code CLI の子プロセス(B)や MCP(C)は不採用 |
-| プロバイダー | Claude(Anthropic 直接・Amazon Bedrock)。Bedrock にはサーバーツール(検索・ページ取得)が無いため、Web 検索は Anthropic 直接のときだけ |
+| プロバイダー | Anthropic(API キー)と端末内のモデル。Web 検索(サーバーツール)は Anthropic のときだけ。Amazon Bedrock は、このアプリから直接は呼ばず、コンテナ内の Claude Code が自身のツールで行う([sandbox.md](sandbox.md)) |
 | ファイル操作の範囲 | ナレッジディレクトリ内のみ。操作ルートは引数で受ける形にしてあり、将来拡大できる |
 | 書き込み | 承認必須、上書きは不可 |
 

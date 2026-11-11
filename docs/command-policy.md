@@ -54,7 +54,7 @@ flowchart TD
 | --- | --- | --- |
 | `deny_words` | `rm` `rmdir` `unlink` `shred` `sudo` `su` `doas` | **コマンドのどの位置にあっても**拒否(`xargs rm`、`git rm`、`sh -c 'rm …'` 経由も) |
 | `deny` | `shutdown` `reboot` `halt` `poweroff` `launchctl` `systemsetup` `diskutil` `csrutil` `nvram` `pmset` `scutil` `networksetup` `dscl` `spctl` `tmutil` `mount` `defaults write` など `find -delete` | 引数の途中でも一致 |
-| `protected` | `secrets.json` `timeline.db` `sandbox.env` | 引数に含むコマンドを拒否(API キー・DB・サンドボックスの環境変数の漏えい防止) |
+| `protected` | `secrets.json` `timeline.db` `sandbox.env` `.aws/credentials` `.ssh/id_` `.netrc` `.gnupg/` | 引数に含むコマンドを拒否(API キー・DB・サンドボックスの環境変数・端末の認証情報の漏えい防止) |
 | `system_paths` | `/System` `/usr` `/bin` `/sbin` `/etc` `/Library` `/private/etc` `/dev` | ここへの書き込み・リダイレクトを拒否 |
 | `system_exceptions` | `/usr/local` | `system_paths` のうち書き込みを許す |
 
@@ -64,6 +64,25 @@ flowchart TD
 
 フラグ: `confirm_overwrite`(リダイレクト `>` での上書きを毎回承認)、`confirm_pipe_to_shell`(パイプで受けたコードの実行、`curl … | sh` など)。
 
+### アプリデータの保護(編集できない)
+
+`protected` は文字列の一致なので、ワイルドカード(`secrets.jso?`)や作業ディレクトリの指定で避けられる。そのため、ポリシーファイルとは別に、**場所**でも守る。この保護は設定で外せない。
+
+- アプリデータのフォルダ(`~/Library/Application Support/MyAssistant/`。そのワークスペース自身のナレッジを除く)を、作業ディレクトリ・パス引数・`--opt=<パス>`・ワイルドカードの手前のフォルダ・シンボリックリンクのどれで指しても、読み取り系を含めて `Deny`。ほかのワークスペースのナレッジ・DB・キーにも届かない。
+- アプリデータを含む範囲(ホームなど)を再帰的に読むコマンド(`rg`、`grep -r`、`find … -exec`)は `Deny`(対象のフォルダを絞るよう返す)。
+
+### 読み取り系でも承認が要る形
+
+許可リスト(`allow`)に一致しても、次の形は Auto にせず `Plan`(承認済みの計画が必要、範囲の検査も受ける)にする。
+
+| 形 | 例 | 理由 |
+| --- | --- | --- |
+| 環境変数の前置き | `GIT_EXTERNAL_DIFF='sh -c …' git diff` | 読み取り系のコマンドに別のコマンドを起動させられる |
+| 代入だけの区切り | `a=secrets; cat $a.json` | 後のコマンドの引数を実行時に変えられる |
+| 変数・コマンド置換の引数 | `cat $HOME/x`、`echo $(ls)` | 行き先を確認できない(正規表現の行末の `$` は対象外) |
+| `xargs` | `ls \| xargs cat` | 引数が実行時に決まる |
+| 書き出し・別コマンド起動のオプション | `--output`、`-fprint`・`-fprintf`・`-fls`、`--pre`、`--ext-diff`、`--textconv`、`--hostname-bin`、`--open-files-in-pager`、`tree -o` | ファイルへの書き込み・任意のコマンドの実行になる |
+
 ## 実行範囲(`Scope`)
 
 フラグ `restrict_to_knowledge`(既定オン)。**読み取り系(Auto)を除き**、作業ディレクトリ(`cwd`)とパス引数・リダイレクト先はナレッジ配下に限る。
@@ -71,7 +90,7 @@ flowchart TD
 - 外を指すもの(`/tmp/x`、`../x`、`~/x`、`$HOME/x` など変数で組み立てたパス)は、`Deny`(理由: 読み取り系以外はナレッジの中でしか実行できない)。ただし、パス引数・リダイレクト先を持たない単純なコマンドが作業ディレクトリだけ外にある場合は、許可リストへ加える承認(`Unlisted`)を求める。`Ask` の規則に当たったものは対象外で、`Deny` になる。
 - `..` とシンボリックリンクは解決して判定する(存在する最も深い祖先を正規化して残りを付け直す)。
 - `ls /etc` や `cat ~/x` のような**読み取りはナレッジの外でも実行できる**。
-- サンドボックスが有効なときは、会話をコンテナ内の Claude Code が受け持つ。このファイルの拒否(`deny`)と、どこにあっても拒否する語(`deny_words`)を、Claude Code の拒否ルール(`Bash(<コマンド>:*)`)へ変換して渡す。確認(`ask`)・許可(`allow`)・保護(`protected`)は渡さない(初版は承認を挟まないため。コンテナにはアプリのデータがマウントされない)([sandbox.md](sandbox.md))。
+- コンテナで動くエージェント(ワークは常に、パーソナルは Bedrock 方式のとき)は、会話をコンテナ内の Claude Code が受け持つ。このファイルの拒否(`deny`)と、どこにあっても拒否する語(`deny_words`)を、Claude Code の拒否ルール(`Bash(<コマンド>:*)`)へ変換して渡す。確認(`ask`)・許可(`allow`)・保護(`protected`)は渡さない(初版は承認を挟まないため。コンテナにはアプリのデータがマウントされない)([sandbox.md](sandbox.md))。
 - コマンドを区切り単位ごとに見るので、`ls /etc && mkdir a` は後者だけが検査される。
 
 ## ポリシーファイル
@@ -80,7 +99,7 @@ flowchart TD
 
 ```json
 {
-  "version": 3,
+  "version": 5,
   "allow": ["ls", "git status"],
   "ask": ["npm publish"],
   "deny": ["curl"],
@@ -107,12 +126,12 @@ flowchart TD
 
 - 隠しフォルダなので、LLM のファイルツール(一覧・読み取り・作成)からは触れない。
 - ファイルが壊れていれば許可リストは空として扱う(拒否などは初期値のまま)。
-- `version` が無い・古いファイルは、後から追加した初期値(拒否・ask・読み取り系の許可・`protected`)を足して書き戻す。ユーザーの項目は残す。版 4 で `protected` に `sandbox.env` を加えた。
+- `version` が無い・古いファイルは、後から追加した初期値(拒否・ask・読み取り系の許可・`protected`)を足して書き戻す。ユーザーの項目は残す。版 4 で `protected` に `sandbox.env` を、版 5 で端末の認証情報(`.aws/credentials` `.ssh/id_` `.netrc` `.gnupg/`)を加えた。
 - 設定画面の「初期値を読み込む」で初期値に戻せる(保存するまで反映されない)。
 
 ### 許可リストへの追加
 
-`Unlisted` のコマンドをユーザーが承認すると、`add_allow` がパターンを許可リストへ加える。パターンは、サブコマンドで性質が変わるツール(`git` `npm` `pnpm` `yarn` `cargo` `brew` `docker` `gh` `kubectl` `go` `pip`)では `git log` のようにサブコマンドまで含める。シェル・インタプリタ・ラッパーなど、何でも実行できるものは候補にしない。
+`Unlisted` のコマンドの承認では、「今回だけ実行」(許可リストへ加えない)と「許可に加えて実行」を選べる。後者を選ぶと、`add_allow` がパターンを許可リストへ加える。この承認は画面のボタンでだけ行える(音声では拒否だけ)。パターンは、サブコマンドで性質が変わるツール(`git` `npm` `pnpm` `yarn` `cargo` `brew` `docker` `gh` `kubectl` `go` `pip`)では `git log` のようにサブコマンドまで含める。シェル・インタプリタ・ラッパーなど、何でも実行できるものは候補にしない。
 
 ## バックアップ
 
