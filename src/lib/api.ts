@@ -995,6 +995,8 @@ export type MemoryPin = { text: string; date: string };
 /** エージェントの記憶(覚えておくこと)。 */
 export type MemoryView = { pins: MemoryPin[] };
 /** 記憶のファイル(ナレッジ内の相対パス)。編集は通常のノートと同じ画面で行う。 */
+/** アプリが使うナレッジ直下のフォルダ。画面からは削除できない。 */
+export const SYSTEM_DIRS = ["memory", "skills", "captures", "preferences", "debug-logs"];
 export const MEMORY_PINNED_PATH = "memory/pinned.md";
 export const memoryView = () => invoke<MemoryView>("memory_view");
 export const memoryForget = (text: string) => invoke<boolean>("memory_forget", { text });

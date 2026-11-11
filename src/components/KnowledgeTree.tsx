@@ -172,12 +172,12 @@ export default function KnowledgeTree({
                 }}
                 onContextMenu={(e) => {
                   e.preventDefault();
+                  e.stopPropagation(); // 親のルート用メニューで上書きされないようにする
                   setFocusDir(d.key);
                   setMenu({ x: e.clientX, y: e.clientY, kind: "dir", path: d.key });
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "F2") setEditing({ mode: "rename", path: d.key, kind: "dir" });
-                  if (e.key === "Delete") onDelete("dir", d.key);
                 }}
                 aria-expanded={isOpen}
               >
@@ -219,13 +219,13 @@ export default function KnowledgeTree({
               }}
               onContextMenu={(e) => {
                 e.preventDefault();
+                e.stopPropagation();
                 setFocusDir(dir.key);
                 if (f.path.endsWith(".md")) setMenu({ x: e.clientX, y: e.clientY, kind: "file", path: f.path });
               }}
               onKeyDown={(e) => {
                 if (!f.path.endsWith(".md")) return;
                 if (e.key === "F2") setEditing({ mode: "rename", path: f.path, kind: "file" });
-                if (e.key === "Delete") onDelete("file", f.path);
               }}
               title={f.title ? `${f.title} (${f.path})` : f.path}
             >

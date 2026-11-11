@@ -343,6 +343,7 @@ export const EN: Record<string, string> = {
   "保存していない変更があります。破棄しますか?": "You have unsaved changes. Discard them?",
   "未保存の変更": "Unsaved changes",
   "破棄する": "Discard",
+  "「{name}」はシステムが管理するフォルダのため、削除できません。": "\"{name}\" is a folder managed by the system and cannot be deleted.",
   "フォルダ「{name}」と中のノートをすべて削除します。この操作は元に戻せません。続行しますか?": "This will delete the folder \"{name}\" and all notes in it. This cannot be undone. Continue?",
   "ノート「{name}」を削除します。この操作は元に戻せません。続行しますか?": "This will delete the note \"{name}\". This cannot be undone. Continue?",
   "削除の確認": "Confirm deletion",

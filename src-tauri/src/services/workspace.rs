@@ -114,7 +114,7 @@ impl WorkspaceCtx {
     }
 
     /// ナレッジのフォルダ構成を整える(失敗しても開くのは止めず、ログだけ残す)。
-    /// フォルダ名を小文字にそろえ、ワークのエージェントには担当システムのフォルダ`data/`を(無ければ)作る。
+    /// フォルダ名を小文字にそろえ、アプリが使うフォルダ(`inbox`・`memory`・`skills`・`captures`・`preferences`・`data`)を(無ければ)作る。
     fn prepare_knowledge(&self) {
         let Ok(root) = super::batch::knowledge_root(self) else { return };
         if root.is_dir() {
@@ -123,9 +123,11 @@ impl WorkspaceCtx {
                 log::info!("lowercased {n} knowledge folder(s) of {}", self.id);
             }
         }
-        if self.id != PERSONAL_ID && self.id != LEADER_ID
-            && let Err(e) = super::sandbox::ensure_data_dir(self, &root)
-        {
+        // 画面から見えるよう、アプリが使うフォルダを(無ければ)作る。記憶はリーダーには無い
+        if let Err(e) = super::knowledge::ensure_system_dirs(&root, self.id != LEADER_ID) {
+            log::warn!("system folders not prepared for {}: {e}", self.id);
+        }
+        if let Err(e) = super::sandbox::ensure_data_dir(self, &root) {
             log::warn!("data folder not prepared for {}: {e}", self.id);
         }
     }
@@ -237,6 +239,13 @@ impl Workspaces {
             loaded.insert(LEADER_ID.to_owned(), l.clone());
             if let Err(e) = debug_log::refresh(l) {
                 log::warn!("debug log init failed for leader: {e}");
+            }
+        }
+        // 切り替えるまで開かれないエージェントも、ナレッジのフォルダ構成(小文字化・`data/`)を起動時に整える。開くだけで、読み込んだままにしない
+        for agent in &agents {
+            let dir = root.join(DIR_NAME).join(&agent.id);
+            if let Err(e) = WorkspaceCtx::open_shared(&agent.id, &dir, Arc::new(Shared::default()), global.clone()) {
+                log::warn!("agent {} not prepared at startup: {e}", agent.id);
             }
         }
         Self {
@@ -620,12 +629,12 @@ impl Workspaces {
     }
 }
 
-/// 空の`data/`だけがあるナレッジか(自動で作った枠だけで、残すものが無い)。
+/// 空のフォルダだけのナレッジか(自動で作った`data/`・`inbox/`などの枠だけで、残すものが無い)。
 fn is_empty_scaffold(knowledge: &Path) -> bool {
-    let is_empty_data = |p: &Path| std::fs::read_dir(p).is_ok_and(|mut d| d.next().is_none());
-    std::fs::read_dir(knowledge).is_ok_and(|d| {
-        d.flatten().all(|e| e.file_name() == super::knowledge::DATA_DIR && e.path().is_dir() && is_empty_data(&e.path()))
-    })
+    fn only_empty_dirs(dir: &Path) -> bool {
+        std::fs::read_dir(dir).is_ok_and(|d| d.flatten().all(|e| e.file_type().is_ok_and(|t| t.is_dir()) && only_empty_dirs(&e.path())))
+    }
+    only_empty_dirs(knowledge)
 }
 
 /// エージェントの削除の結果。
@@ -942,12 +951,19 @@ mod tests {
         // 大文字のフォルダは、開き直したときに小文字へ改名する。パーソナルには data/ を作らない
         std::fs::create_dir_all(knowledge.join("Dev/Rust")).unwrap();
         std::fs::remove_dir(knowledge.join("data")).unwrap();
-        let ctx = ws.open_for_knowledge(&a.id).unwrap();
-        drop(ctx);
+        // 起動時(`Workspaces::new`)に、切り替えていないエージェントも整える
+        drop(ws);
         let ws2 = workspaces(d.path());
-        let _ = ws2.open_for_knowledge(&a.id).unwrap();
         assert!(knowledge.join("data").is_dir() && knowledge.join("dev/rust").is_dir());
-        assert!(!d.path().join("knowledge/data").exists());
+        for name in ["inbox", "memory", "skills", "captures", "preferences"] {
+            assert!(knowledge.join(name).is_dir(), "{name}");
+        }
+        // パーソナルにも作る。リーダーには記憶を作らない
+        assert!(d.path().join("knowledge/data").is_dir() && d.path().join("knowledge/inbox").is_dir());
+        let leader = ws2.create_leader().unwrap();
+        let lk = d.path().join(DIR_NAME).join(LEADER_ID).join("knowledge");
+        assert!(lk.join("inbox").is_dir() && lk.join("data").is_dir() && !lk.join("memory").exists());
+        drop(leader);
     }
 
     #[test]
@@ -973,6 +989,7 @@ mod tests {
         let a = ws.create("A", PALETTE[0]).unwrap();
         let knowledge = d.path().join(DIR_NAME).join(&a.id).join("knowledge");
         std::fs::create_dir_all(knowledge.join("notes")).unwrap();
+        std::fs::write(knowledge.join("notes/a.md"), "x").unwrap();
         let id8: String = a.id.chars().take(8).collect();
         std::fs::create_dir_all(d.path().join(KEPT_DIR_NAME).join(format!("A-{id8}"))).unwrap();
         assert!(matches!(ws.delete(&a.id, false), Err(AppError::PathInUse)));

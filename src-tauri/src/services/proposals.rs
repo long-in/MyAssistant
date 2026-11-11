@@ -31,7 +31,7 @@ const MERGE_MAX: usize = 10;
 /// これより長く更新されていないノートを見直しの候補にする(日)。
 const STALE_DAYS: i64 = 90;
 /// 新しいノートの既定の置き場。カテゴリ未設定として見直しの候補にする。
-const INBOX: &str = "inbox";
+const INBOX: &str = knowledge::INBOX_DIR;
 
 /// 記憶の候補を足す。使えない文面・すでに覚えているもの・提案済みのものは足さない。足したら`true`。
 pub fn propose_memory(db: &Db, root: &Path, text: &str, source_log_ids: &[String]) -> Result<bool, AppError> {
