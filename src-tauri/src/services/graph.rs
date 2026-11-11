@@ -193,7 +193,11 @@ impl Graph {
             nodes.push(Node {
                 path: f.path,
                 title: f.title,
-                summary: summarize(body),
+                // 整理が書いた現在の要約があればそれを使い、無ければ本文の最初の段落から作る
+                summary: match fm.summary.trim() {
+                    "" => summarize(body),
+                    s => summarize(s),
+                },
                 tags: fm.tags.iter().map(|t| t.trim().to_lowercase()).filter(|t| !t.is_empty()).collect(),
                 head_terms: terms(&head),
                 body_terms: terms(&body_head),
@@ -335,6 +339,48 @@ impl Graph {
         }
         out.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
         out.truncate(MAX_SEEDS);
+        out
+    }
+
+    /// 内容が似ているノートの組(類似度の高い順に最大`max`組)。棚卸しの統合の候補に使う。
+    /// 語の集合をIDFで重み付けしたコサイン類似度が`threshold`以上か、タイトルが同じものを選ぶ。
+    pub fn similar_pairs(&self, threshold: f32, max: usize) -> Vec<(String, String, f32)> {
+        let common = (self.nodes.len() / 2).max(2);
+        let vectors: Vec<HashMap<&str, f32>> = self
+            .nodes
+            .iter()
+            .map(|n| {
+                let mut v: HashMap<&str, f32> = HashMap::new();
+                for t in n.body_terms.iter().chain(n.head_terms.iter()) {
+                    if self.df.get(t).is_some_and(|&d| d > common) {
+                        continue;
+                    }
+                    let w = if n.head_terms.contains(t) { 3.0 } else { 1.0 } * self.idf(t);
+                    v.insert(t.as_str(), w);
+                }
+                v
+            })
+            .collect();
+        let norms: Vec<f32> = vectors.iter().map(|v| v.values().map(|w| w * w).sum::<f32>().sqrt()).collect();
+        let mut out = Vec::new();
+        for i in 0..self.nodes.len() {
+            for j in i + 1..self.nodes.len() {
+                let same_title = !self.nodes[i].title.trim().is_empty()
+                    && self.nodes[i].title.trim().to_lowercase() == self.nodes[j].title.trim().to_lowercase();
+                let (small, large) = if vectors[i].len() <= vectors[j].len() { (&vectors[i], &vectors[j]) } else { (&vectors[j], &vectors[i]) };
+                let dot: f32 = small.iter().filter_map(|(t, w)| large.get(t).map(|x| w * x)).sum();
+                let denom = norms[i] * norms[j];
+                let sim = if denom > 0.0 { dot / denom } else { 0.0 };
+                let sim = if same_title { sim.max(1.0) } else { sim };
+                if sim >= threshold {
+                    let (a, b) = (&self.nodes[i].path, &self.nodes[j].path);
+                    let (a, b) = if a <= b { (a, b) } else { (b, a) };
+                    out.push((a.clone(), b.clone(), sim));
+                }
+            }
+        }
+        out.sort_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.cmp(&b.0)).then_with(|| a.1.cmp(&b.1)));
+        out.truncate(max);
         out
     }
 
@@ -494,6 +540,33 @@ mod tests {
         let g = Graph::build(&root).unwrap();
         assert!(g.nodes.is_empty());
         assert!(g.recall("Tauri", 5).is_empty());
+    }
+
+    #[test]
+    fn frontmatter_summary_is_preferred_over_the_first_paragraph() {
+        use crate::services::knowledge::{NewNote, NoteUpdate, create_note};
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let u = NoteUpdate { title: "Alpha", summary: "整理が書いた要約", tags: &[], current: "最初の段落", history: "", source_log_ids: &[] };
+        create_note(root, &NewNote { category: "Dev", filename: "a" }, &u, "now").unwrap();
+        note(root, "Dev", "b", "Beta", &[], "本文の段落", &[]);
+        let g = Graph::build(root).unwrap();
+        assert_eq!(g.recall("Alpha", 1)[0].summary, "整理が書いた要約");
+        assert_eq!(g.recall("Beta", 1)[0].summary, "本文の段落");
+    }
+
+    #[test]
+    fn similar_pairs_find_near_duplicates_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let body = "Tauriのビルドでは署名とnotarizeを行い、証明書はキーチェーンに入れる";
+        note(root, "Dev", "a", "Tauri build", &[], body, &[]);
+        note(root, "Dev", "b", "Tauri release", &[], body, &[]);
+        note(root, "Ideas", "c", "料理", &[], "カレーの作り方。玉ねぎを炒める", &[]);
+        note(root, "Ideas", "d", "旅行", &[], "京都の寺を巡る計画", &[]);
+        let pairs = Graph::build(root).unwrap().similar_pairs(0.6, 10);
+        assert_eq!(pairs.len(), 1, "{pairs:?}");
+        assert_eq!((pairs[0].0.as_str(), pairs[0].1.as_str()), ("Dev/a.md", "Dev/b.md"));
     }
 
     #[test]

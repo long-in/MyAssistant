@@ -91,6 +91,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   work_disabled: "ワークは無効です。全体設定で有効にしてください。",
   work_busy: "ワークの中に実行中または承認待ちの依頼があります。完了してから無効にしてください。",
   sandbox_error: "サンドボックスで問題が発生しました。",
+  proposal_error: "提案を反映できませんでした。",
   path_in_use: "その場所は、ほかのワークスペースのナレッジまたはデバッグログの保存先と重なっています。別の場所を選んでください。",
 };
 
@@ -99,7 +100,7 @@ export function errorMessage(e: unknown): string {
   const body =
     code === "provider_rejected" && message
       ? tr("拒否されました: {message}", { message })
-      : code === "sandbox_error" && message
+      : (code === "sandbox_error" || code === "proposal_error") && message
         ? tr(message)
       : code === "aws_config_error" && message
         ? tr("AWSの設定に問題があります: {message}", { message })
@@ -873,7 +874,14 @@ export type KnowledgeFile = {
 };
 export type BatchReport = {
   processed_logs: number;
+  /** 書き込んだノートの数(新規 + 更新)。 */
   files_written: number;
+  notes_created: number;
+  notes_updated: number;
+  /** 縮みすぎるため現在の内容を書き換えず、経緯への追記だけにしたノートの数。 */
+  rewrites_skipped: number;
+  /** 新しく出した学びの提案の数。 */
+  proposals_added: number;
   failed_segments: number;
   captures_removed: number;
 };
@@ -957,6 +965,30 @@ export const importKnowledge = (src: string) => invoke<TransferReport>("import_k
 export const resetKnowledge = () => invoke<TransferReport>("reset_knowledge");
 /** 実行中・対象ログなし・キー未登録の場合は null。 */
 export const runBatch = () => invoke<BatchReport | null>("run_batch");
+/** 棚卸し(LLMは使わない)。似たノート・古いノート・Inboxのノートを提案にし、足した件数を返す。 */
+export const runMaintenance = () => invoke<number>("run_maintenance");
+
+/** 学びの提案の種類。memory: 記憶の候補、skill: スキルの下書き、merge: ノートの統合、review: 見直し。 */
+export type ProposalKind = "memory" | "skill" | "merge" | "review";
+export type Proposal = {
+  id: string;
+  kind: ProposalKind;
+  text: string;
+  /** skill: { name, description, body }、merge: { keep, drop }、review: { path }。 */
+  payload: Record<string, string> | null;
+  source_log_ids: string[];
+  status: "pending" | "accepted" | "rejected";
+  created_at: string;
+};
+export const listProposals = () => invoke<Proposal[]>("list_proposals");
+/** 承認は記憶・スキル・ノートへ反映する(統合はLLMを使う)。反映できなければ未決のまま残り、エラーになる。 */
+export const decideProposal = (id: string, accept: boolean) => invoke<void>("decide_proposal", { id, accept });
+
+/** ノートの退避済みの版(新しい順)。整理で書き換える前の内容が残る。 */
+export const knowledgeVersions = (path: string) => invoke<string[]>("knowledge_versions", { path });
+export const readKnowledgeVersion = (path: string, version: string) => invoke<string>("read_knowledge_version", { path, version });
+/** 退避済みの版へ戻す。今の内容も版として退避される。 */
+export const restoreKnowledgeVersion = (path: string, version: string) => invoke<void>("restore_knowledge_version", { path, version });
 
 /** 覚えておくこと1件。 */
 export type MemoryPin = { text: string; date: string };
@@ -1097,7 +1129,7 @@ export const leaderOverview = () => invoke<LeaderOverview>("leader_overview");
 export const leaderSetConfirmed = (id: string, confirmed: boolean) => invoke<void>("leader_set_confirmed", { id, confirmed });
 
 /** LLMへ渡すプロンプトを持つ機能。 */
-export type PromptId = "chat" | "summary" | "proofread" | "organize" | "skills" | "suggest";
+export type PromptId = "chat" | "summary" | "proofread" | "organize" | "consolidate" | "skills" | "suggest";
 export type PromptInfo = {
   id: PromptId;
   /** いま使われる文章。 */

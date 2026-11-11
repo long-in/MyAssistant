@@ -19,14 +19,17 @@ pub const MAX_CHARS: usize = 20_000;
 pub const CHAT_KEY: &str = "prompt_chat";
 pub const SUMMARY_KEY: &str = "prompt_summary";
 pub const PROOFREAD_KEY: &str = "prompt_proofread";
-pub const ORGANIZE_KEY: &str = "prompt_organize";
+/// 整理(抽出)。出力の形式を変えたため、以前のキー(`prompt_organize`)の上書きは読まない。
+pub const ORGANIZE_KEY: &str = "prompt_organize_v2";
+pub const CONSOLIDATE_KEY: &str = "prompt_consolidate";
 pub const SKILLS_KEY: &str = "prompt_skills";
 pub const SUGGEST_KEY: &str = "prompt_suggest";
 
 /// 全体設定の側のキー。チャットは従来どおり`chat::BASE_INSTRUCTIONS_KEY`。
 pub const GLOBAL_SUMMARY_KEY: &str = "global_prompt_summary";
 pub const GLOBAL_PROOFREAD_KEY: &str = "global_prompt_proofread";
-pub const GLOBAL_ORGANIZE_KEY: &str = "global_prompt_organize";
+pub const GLOBAL_ORGANIZE_KEY: &str = "global_prompt_organize_v2";
+pub const GLOBAL_CONSOLIDATE_KEY: &str = "global_prompt_consolidate";
 pub const GLOBAL_SKILLS_KEY: &str = "global_prompt_skills";
 pub const GLOBAL_SUGGEST_KEY: &str = "global_prompt_suggest";
 
@@ -40,8 +43,10 @@ pub enum PromptId {
     Summary,
     /// 音声認識結果の校正。
     Proofread,
-    /// ナレッジ整理バッチ。
+    /// ナレッジ整理バッチの抽出(会話から種類付きの項目を取り出す)。
     Organize,
+    /// ナレッジ整理バッチの統合(項目を既存ノートへ取り込み、現在の内容を書き直す)。
+    Consolidate,
     /// スキルの選定。
     Skills,
     /// リーダーの宛先の提案。
@@ -49,11 +54,12 @@ pub enum PromptId {
 }
 
 impl PromptId {
-    pub const ALL: [PromptId; 6] = [
+    pub const ALL: [PromptId; 7] = [
         PromptId::Chat,
         PromptId::Summary,
         PromptId::Proofread,
         PromptId::Organize,
+        PromptId::Consolidate,
         PromptId::Skills,
         PromptId::Suggest,
     ];
@@ -65,6 +71,7 @@ impl PromptId {
             PromptId::Summary => SUMMARY_KEY,
             PromptId::Proofread => PROOFREAD_KEY,
             PromptId::Organize => ORGANIZE_KEY,
+            PromptId::Consolidate => CONSOLIDATE_KEY,
             PromptId::Skills => SKILLS_KEY,
             PromptId::Suggest => SUGGEST_KEY,
         }
@@ -77,6 +84,7 @@ impl PromptId {
             PromptId::Summary => GLOBAL_SUMMARY_KEY,
             PromptId::Proofread => GLOBAL_PROOFREAD_KEY,
             PromptId::Organize => GLOBAL_ORGANIZE_KEY,
+            PromptId::Consolidate => GLOBAL_CONSOLIDATE_KEY,
             PromptId::Skills => GLOBAL_SKILLS_KEY,
             PromptId::Suggest => GLOBAL_SUGGEST_KEY,
         }
@@ -89,6 +97,7 @@ impl PromptId {
             PromptId::Summary => compact::DEFAULT_SYSTEM.to_owned(),
             PromptId::Proofread => proofread::DEFAULT_SYSTEM.to_owned(),
             PromptId::Organize => batch::default_instructions(),
+            PromptId::Consolidate => batch::DEFAULT_CONSOLIDATE.to_owned(),
             PromptId::Skills => skills::DEFAULT_SELECT_SYSTEM.to_owned(),
             PromptId::Suggest => leader::DEFAULT_SYSTEM.to_owned(),
         }

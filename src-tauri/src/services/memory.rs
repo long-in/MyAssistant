@@ -45,7 +45,7 @@ pub struct Pin {
 
 /// 1行にそろえ、上限の文字数で切る。空、または`<` `>`・制御文字を含むものは`None`
 /// (覚えておくことは指示として渡すため、タグの偽装でプロンプトを壊させない)。
-fn clean(text: &str) -> Option<String> {
+pub(crate) fn clean(text: &str) -> Option<String> {
     let text = text.replace(['\n', '\r', '\t'], " ");
     let text = text.trim().trim_start_matches("- ").trim();
     if text.is_empty() || text.contains(['<', '>']) || text.chars().any(char::is_control) {
@@ -55,7 +55,7 @@ fn clean(text: &str) -> Option<String> {
 }
 
 /// 比較用に空白を除く。
-fn norm(text: &str) -> String {
+pub(crate) fn norm(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_lowercase()
 }
 
@@ -107,6 +107,7 @@ fn write_doc(root: &Path, file: &str, title: &str, body: &str, now: &str) -> Res
         created_at: created,
         updated_at: now.to_owned(),
         source_log_ids: Vec::new(),
+        ..Default::default()
     };
     knowledge::atomic_write(&dir.join(file), &format!("{}\n# {title}\n\n{body}\n", fm.render()))
 }

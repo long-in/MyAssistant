@@ -32,6 +32,7 @@ pub mod llm_router;
 pub mod local_llm;
 pub mod memory;
 pub mod proofread;
+pub mod proposals;
 pub mod prompts;
 pub mod profile;
 pub mod proxy;

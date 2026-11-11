@@ -133,6 +133,23 @@ const MIGRATIONS: &[&str] = &[
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
     ",
+    // 版6: 整理・棚卸しが出す学びの提案(記憶・スキル・ノートの統合・見直し)。承認されるまで反映しない。
+    // 同じ種類・同じ`norm`の提案は、決定済み(却下を含む)でも重ねて出さない
+    "
+    CREATE TABLE learning_proposals (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        norm TEXT NOT NULL,
+        text TEXT NOT NULL,
+        payload TEXT,
+        source_log_ids TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        decided_at TEXT
+    );
+    CREATE UNIQUE INDEX idx_proposals_kind_norm ON learning_proposals(kind, norm);
+    CREATE INDEX idx_proposals_status ON learning_proposals(status, created_at);
+    ",
 ];
 
 /// 最新の版。

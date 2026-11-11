@@ -52,7 +52,8 @@ const FEATURES: (Feature & { only?: "leader" | "agent" })[] = [
   { id: "chat", title: "チャット", description: "毎回の質問でAIへ最初に渡す指示です。モデルはチャット画面の左下で切り替えます。" },
   { id: "summary", title: "会話の要約", description: "長くなった会話を畳み込むときの指示です。要約にはチャットと同じモデルを使います。" },
   { id: "proofread", title: "文字起こしの校正", description: "音声認識の結果を、直近の会話と訂正履歴から校正する指示です。モデルを選ぶとオンになります。", modelLabel: "校正に使うモデル" },
-  { id: "organize", title: "ナレッジの整理", description: "会話ログをトピックごとに分類・要約してナレッジにする指示です。", modelLabel: "整理に使うモデル" },
+  { id: "organize", title: "ナレッジの整理", description: "会話ログから事実・決定・手順・学びなどの項目を取り出す指示です。取り出した項目は、次の「ナレッジの統合」でノートへまとめます。", modelLabel: "整理に使うモデル" },
+  { id: "consolidate", title: "ナレッジの統合", description: "取り出した項目を既存のノートへ取り込み、ノートの現在の内容を書き直す指示です。モデルは「ナレッジの整理」と同じものを使います。" },
   { id: "skills", title: "スキルの選定", description: "発話に合うスキルを選ぶ指示です。選定のたびに送られます。", modelLabel: "発話に合うスキルを選ぶモデル", only: "agent" },
   { id: "suggest", title: "宛先の提案", description: "指示の配布先を、過去の履歴から提案する指示です。軽量なモデルを自動で選びます。", only: "leader" },
 ];

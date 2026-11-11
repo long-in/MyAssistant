@@ -28,7 +28,7 @@
 
 ## SQLite スキーマ(`db/`)
 
-表ごとの読み書きは `db/{logs,summaries,usage,settings,ledger}.rs`、スキーマと版の管理は `db/schema.rs` に分けている。
+表ごとの読み書きは `db/{logs,summaries,usage,settings,ledger,proposals}.rs`、スキーマと版の管理は `db/schema.rs` に分けている。
 
 ```mermaid
 erDiagram
@@ -62,6 +62,17 @@ erDiagram
     TEXT value
     TEXT updated_at
   }
+  learning_proposals {
+    TEXT id PK
+    TEXT kind "memory | skill | merge | review"
+    TEXT norm "重複判定用"
+    TEXT text
+    TEXT payload "JSON"
+    TEXT source_log_ids "JSON"
+    TEXT status "pending | accepted | rejected"
+    TEXT created_at
+    TEXT decided_at
+  }
   leader_tasks {
     TEXT id PK
     TEXT batch_id
@@ -82,6 +93,7 @@ erDiagram
 | `conversation_summaries` | 会話(セッション)ごとの要約。どこまで畳み込んだか(`upto_id`)と本文([chat-flow.md](chat-flow.md)) | 取得、upsert |
 | `usage_logs` | LLM 呼び出しごとのトークン使用量。インデックスは `created_at` | 記録、当月(ローカル時間)のプロバイダー・モデル別集計 |
 | `app_settings` | エージェントごとのキー・値の設定(値は文字列。構造のあるものは JSON) | 取得、upsert、削除 |
+| `learning_proposals` | 整理・棚卸しが出した学びの提案。`(kind, norm)` は一意で、決定済み(却下を含む)の提案も重ねて出さない([knowledge.md](knowledge.md#学びの提案)) | 追加(重複は無視)、未決の一覧、決定の記録 |
 | `leader_tasks` | リーダーの台帳。**リーダーのDBにだけある**([workspace.md](workspace.md)) | 追加、一覧、状態・確認済みの更新 |
 
 - `conversation_logs.is_processed`: 整理バッチがナレッジへ反映したかどうか([knowledge.md](knowledge.md))。
@@ -99,6 +111,7 @@ erDiagram
 | 1 | その時点のスキーマ(既存のDBには何もしない) |
 | 2 | 日時を上記の形式へそろえる(既定値を含む。表を作り直し、行の `rowid` は引き継ぐので同時刻の並びも変わらない)。`usage_logs(created_at)` のインデックスを追加 |
 | 3 | 会話の要約を `app_settings`(キー `summary:<session_id>`)から `conversation_summaries` へ移す。読めない値は移さない(従来も読まれていなかった) |
+| 6 | 学びの提案の表 `learning_proposals` を追加 |
 
 - **既存のDBを書き換える前に複製を残す**: 同じフォルダへ `timeline.db.bak-v<元の版>` として `VACUUM INTO` で書き出す。同名のファイルがあれば日時を付けた別名にし、上書きしない。複製できなければDBを開かない(書き換えない)。空のDB(新規作成)では複製しない。
 - 複製と WAL のファイルも名前が `timeline.db` で始まるため、コマンド実行の保護の対象になる([command-policy.md](command-policy.md))。

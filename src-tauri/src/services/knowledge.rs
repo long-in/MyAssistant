@@ -18,6 +18,8 @@ fn io(e: impl std::fmt::Display) -> AppError {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Frontmatter {
     pub title: String,
+    /// 1行の現在の要約。整理の統合で書き直し、想起の一覧に使う。空なら書き出さない
+    pub summary: String,
     pub category: String,
     pub tags: Vec<String>,
     pub created_at: String,
@@ -32,8 +34,9 @@ fn json<T: Serialize + ?Sized>(v: &T) -> String {
 
 impl Frontmatter {
     pub(crate) fn render(&self) -> String {
+        let summary = if self.summary.is_empty() { String::new() } else { format!("summary: {}\n", json(&self.summary)) };
         format!(
-            "---\ntitle: {}\ncategory: {}\ntags: {}\ncreated_at: {}\nupdated_at: {}\nsource_log_ids: {}\n---\n",
+            "---\ntitle: {}\n{summary}category: {}\ntags: {}\ncreated_at: {}\nupdated_at: {}\nsource_log_ids: {}\n---\n",
             json(&self.title),
             json(&self.category),
             json(&self.tags),
@@ -96,6 +99,7 @@ pub fn parse(text: &str) -> Option<(Frontmatter, &str)> {
         list_key = v.trim().is_empty().then_some(k);
         match k {
             "title" => fm.title = scalar(v),
+            "summary" => fm.summary = scalar(v),
             "category" => fm.category = scalar(v),
             "tags" => fm.tags = inline_list(v),
             "created_at" => fm.created_at = scalar(v),
@@ -114,6 +118,8 @@ pub(crate) fn atomic_write(path: &Path, content: &str) -> Result<(), AppError> {
     fs::rename(&tmp, path).map_err(io)
 }
 
+/// 旧形式(日時見出しの追記)のノートの内容。旧形式からの移行を確かめるテストで使う。
+#[cfg(test)]
 pub struct Entry<'a> {
     pub category: &'a str,
     pub filename: &'a str,
@@ -123,7 +129,8 @@ pub struct Entry<'a> {
     pub source_log_ids: &'a [String],
 }
 
-/// 既存ファイルがあれば追記・メタデータ更新、なければ新規作成する。書き込んだ相対パスを返す。
+/// 旧形式のノートを書く(既存ファイルがあれば日時見出しの節を追記、なければ新規作成)。テスト用。
+#[cfg(test)]
 pub fn upsert(root: &Path, e: &Entry, now: &str) -> Result<String, AppError> {
     let parts = category_parts(e.category);
     let dir = ensure_dir(root, &parts)?;
@@ -165,6 +172,7 @@ pub fn upsert(root: &Path, e: &Entry, now: &str) -> Result<String, AppError> {
                 created_at: now.to_owned(),
                 updated_at: now.to_owned(),
                 source_log_ids: e.source_log_ids.to_vec(),
+                ..Default::default()
             };
             format!("{}\n# {}\n{}", fm.render(), e.title, section)
         }
@@ -174,6 +182,306 @@ pub fn upsert(root: &Path, e: &Entry, now: &str) -> Result<String, AppError> {
     let root = root.canonicalize().map_err(io)?;
     let rel = path.strip_prefix(&root).map_err(|_| AppError::PathNotAllowed)?;
     Ok(rel.to_string_lossy().replace('\\', "/"))
+}
+
+// ---------- 統合型のノート(現在の内容 + 経緯) ----------
+
+/// 経緯の節の見出し。これより前が「現在の内容」(整理で書き直す)、以降が「経緯」(追記のみ)。
+pub const HISTORY_HEADING: &str = "## 経緯";
+/// 書き換え前の版を退避するフォルダ。隠しフォルダなので一覧・グラフ・LLMのツールからは見えない。
+const VERSIONS_DIR: [&str; 2] = [".my-assistant", "history"];
+/// ノートごとに残す版の数。
+const VERSIONS_KEEP: usize = 10;
+/// これ以上の長さの現在の内容が半分未満に縮む書き換えは採らない(要約しすぎて情報を落とすのを防ぐ)。
+const SHRINK_MIN_CHARS: usize = 400;
+/// Frontmatterの要約の最大文字数。
+const SUMMARY_MAX: usize = 200;
+
+/// ノートの本文を分けたもの。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NoteParts {
+    pub fm: Frontmatter,
+    /// タイトル行(`# …`)を除いた、経緯より前の本文
+    pub current: String,
+    /// 経緯の節の中身(見出しを除く)
+    pub history: String,
+}
+
+/// 旧形式(`upsert`の追記)の節見出し`## <RFC3339>`か。
+fn is_stamp_heading(line: &str) -> bool {
+    line.strip_prefix("## ").is_some_and(|t| chrono::DateTime::parse_from_rfc3339(t.trim()).is_ok())
+}
+
+/// 本文を現在の内容と経緯に分ける。経緯の見出しが無い旧形式は、最初の日時見出し以降を経緯とし、見出しを1段下げる。
+pub fn split_body(body: &str) -> (String, String) {
+    let lines: Vec<&str> = body.lines().collect();
+    // 先頭のタイトル行は現在の内容に含めない(書き戻すときに付け直す)
+    let start = lines.iter().position(|l| !l.trim().is_empty()).filter(|&i| lines[i].starts_with("# ")).map_or(0, |i| i + 1);
+    let lines = &lines[start..];
+    if let Some(i) = lines.iter().position(|l| l.trim_end() == HISTORY_HEADING) {
+        return (lines[..i].join("\n").trim().to_owned(), lines[i + 1..].join("\n").trim().to_owned());
+    }
+    match lines.iter().position(|l| is_stamp_heading(l)) {
+        Some(i) => {
+            let history: Vec<String> =
+                lines[i..].iter().map(|l| if is_stamp_heading(l) { format!("#{l}") } else { (*l).to_owned() }).collect();
+            (lines[..i].join("\n").trim().to_owned(), history.join("\n").trim().to_owned())
+        }
+        None => (lines.join("\n").trim().to_owned(), String::new()),
+    }
+}
+
+/// LLMの書いた現在の内容に経緯の見出しが紛れても、構造を壊さないよう1段下げる。
+fn sanitize_current(current: &str) -> String {
+    current
+        .trim()
+        .lines()
+        .map(|l| if l.trim_end() == HISTORY_HEADING { format!("#{l}") } else { l.to_owned() })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn compose(fm: &Frontmatter, current: &str, history: &str) -> String {
+    let mut doc = format!("{}\n# {}\n", fm.render(), fm.title);
+    if !current.trim().is_empty() {
+        doc.push_str(&format!("\n{}\n", current.trim()));
+    }
+    if !history.trim().is_empty() {
+        doc.push_str(&format!("\n{HISTORY_HEADING}\n\n{}\n", history.trim()));
+    }
+    doc
+}
+
+/// 既存ノートを読み、Frontmatter・現在の内容・経緯に分ける。Frontmatterが無ければファイル名をタイトルにする。
+pub fn read_note(root: &Path, rel: &str) -> Result<NoteParts, AppError> {
+    let text = read(root, rel)?;
+    let (fm, body) = match parse(&text) {
+        Some((fm, body)) => (fm, body),
+        None => {
+            let stem = rel.rsplit('/').next().unwrap_or(rel).trim_end_matches(".md");
+            let category = rel.rsplit_once('/').map(|(c, _)| c).unwrap_or("");
+            (Frontmatter { title: stem.to_owned(), category: category.to_owned(), ..Default::default() }, text.as_str())
+        }
+    };
+    let (current, history) = split_body(body);
+    Ok(NoteParts { fm, current, history })
+}
+
+/// 整理による書き込みの内容。
+pub struct NoteUpdate<'a> {
+    pub title: &'a str,
+    pub summary: &'a str,
+    pub tags: &'a [String],
+    /// 新しい現在の内容(Markdown、タイトル行なし)
+    pub current: &'a str,
+    /// 経緯へ追記する内容。空なら追記しない
+    pub history: &'a str,
+    pub source_log_ids: &'a [String],
+}
+
+/// 書き込みの結果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Written {
+    pub path: String,
+    pub created: bool,
+    /// 縮み判定で現在の内容を書き換えなかった
+    pub rewrite_skipped: bool,
+}
+
+fn merge_unique(dst: &mut Vec<String>, src: &[String]) {
+    for v in src {
+        let v = v.trim();
+        if !v.is_empty() && !dst.iter().any(|d| d == v) {
+            dst.push(v.to_owned());
+        }
+    }
+}
+
+fn history_section(now: &str, text: &str) -> String {
+    format!("### {now}\n\n{}", text.trim())
+}
+
+/// 既存ノートの現在の内容を書き換え、経緯に追記する。書き換え前の版を退避する。
+/// 長い内容が半分未満に縮む書き換えは採らず、経緯への追記だけ行う。
+pub fn rewrite(root: &Path, rel: &str, u: &NoteUpdate, now: &str) -> Result<Written, AppError> {
+    let path = resolve_existing(root, rel)?;
+    if !rel.ends_with(".md") {
+        return Err(AppError::PathNotAllowed);
+    }
+    let old = fs::read_to_string(&path).map_err(io)?;
+    let NoteParts { mut fm, current, mut history } = read_note(root, rel)?;
+    let new_current = sanitize_current(u.current);
+    let skipped = new_current.is_empty() || would_shrink(&current, &new_current);
+    let current = if skipped { current } else { new_current };
+    if !u.title.trim().is_empty() {
+        fm.title = u.title.trim().to_owned();
+    }
+    if !skipped || fm.summary.is_empty() {
+        let s = one_line(u.summary, SUMMARY_MAX);
+        if !s.is_empty() {
+            fm.summary = s;
+        }
+    }
+    merge_unique(&mut fm.tags, u.tags);
+    merge_unique(&mut fm.source_log_ids, u.source_log_ids);
+    if fm.created_at.is_empty() {
+        fm.created_at = now.to_owned();
+    }
+    fm.updated_at = now.to_owned();
+    if !u.history.trim().is_empty() {
+        let section = history_section(now, u.history);
+        history = if history.is_empty() { section } else { format!("{history}\n\n{section}") };
+    }
+    save_version(root, rel, &old, now)?;
+    atomic_write(&path, &compose(&fm, &current, &history))?;
+    Ok(Written { path: rel.to_owned(), created: false, rewrite_skipped: skipped && !u.current.trim().is_empty() })
+}
+
+/// 新しいノートの置き場所。
+pub struct NewNote<'a> {
+    pub category: &'a str,
+    pub filename: &'a str,
+}
+
+fn note_name(filename: &str) -> String {
+    match slug(filename, 60) {
+        s if s.is_empty() => "note".to_owned(),
+        s => s,
+    }
+}
+
+/// 新しいノートを置く相対パス(`create_note`が使う場所と同じ)。
+pub fn note_rel(at: &NewNote) -> String {
+    format!("{}/{}.md", category_parts(at.category).join("/"), note_name(at.filename))
+}
+
+/// 書き換えると現在の内容が縮みすぎるか(長い内容が半分未満になる)。
+pub fn would_shrink(old_current: &str, new_current: &str) -> bool {
+    let old_len = old_current.trim().chars().count();
+    old_len >= SHRINK_MIN_CHARS && new_current.trim().chars().count() * 2 < old_len
+}
+
+/// 新しいノートを作る。同じ場所に既にあれば、そのノートを書き換える(`rewrite`)。
+pub fn create_note(root: &Path, at: &NewNote, u: &NoteUpdate, now: &str) -> Result<Written, AppError> {
+    let parts = category_parts(at.category);
+    let dir = ensure_dir(root, &parts)?;
+    let name = note_name(at.filename);
+    let rel = note_rel(at);
+    let path = dir.join(format!("{name}.md"));
+    if path.symlink_metadata().is_ok() {
+        return rewrite(root, &rel, u, now);
+    }
+    let mut fm = Frontmatter {
+        title: if u.title.trim().is_empty() { name.clone() } else { u.title.trim().to_owned() },
+        summary: one_line(u.summary, SUMMARY_MAX),
+        category: parts.join("/"),
+        created_at: now.to_owned(),
+        updated_at: now.to_owned(),
+        ..Default::default()
+    };
+    merge_unique(&mut fm.tags, u.tags);
+    merge_unique(&mut fm.source_log_ids, u.source_log_ids);
+    let history = if u.history.trim().is_empty() { String::new() } else { history_section(now, u.history) };
+    atomic_write(&path, &compose(&fm, &sanitize_current(u.current), &history))?;
+    Ok(Written { path: rel, created: true, rewrite_skipped: false })
+}
+
+// ---------- 版の退避と復元 ----------
+
+/// ノートの版を置くフォルダ(`.my-assistant/history/<カテゴリ>/<ファイル名>`)。`create`なら作る。
+fn versions_dir(root: &Path, rel: &str, create: bool) -> Result<Option<PathBuf>, AppError> {
+    let stem = rel.strip_suffix(".md").ok_or(AppError::PathNotAllowed)?;
+    let mut parts: Vec<String> = VERSIONS_DIR.iter().map(|s| (*s).to_owned()).collect();
+    for p in stem.split('/') {
+        if p.is_empty() || p == "." || p == ".." {
+            return Err(AppError::PathNotAllowed);
+        }
+        parts.push(p.to_owned());
+    }
+    if create {
+        return ensure_dir(root, &parts).map(Some);
+    }
+    let rel_dir = parts.join("/");
+    match resolve_existing(root, &rel_dir) {
+        Ok(dir) if dir.is_dir() => Ok(Some(dir)),
+        _ => Ok(None),
+    }
+}
+
+/// 版のファイル名として正しいか(`save_version`が作る形だけを受け付ける)。
+fn valid_version(name: &str) -> bool {
+    name.ends_with(".md")
+        && !name.starts_with('.')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && !name.contains("..")
+}
+
+/// 書き換え前の内容を版として退避し、古い版を`VERSIONS_KEEP`件まで減らす。
+pub fn save_version(root: &Path, rel: &str, content: &str, now: &str) -> Result<(), AppError> {
+    let Some(dir) = versions_dir(root, rel, true)? else { return Ok(()) };
+    let stamp = now.replace(':', "-");
+    let stamp: String = stamp.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')).collect();
+    // 同じ時刻に複数回書き換えても前の版を潰さないよう、連番を付ける(名前順=時刻順になる)。
+    // 古い版を消して空いた番号は使わず、同じ時刻の最大の番号の次にする
+    let mut names = version_names(&dir);
+    let next = names
+        .iter()
+        .filter_map(|n| n.strip_prefix(&format!("{stamp}_"))?.strip_suffix(".md")?.parse::<u32>().ok())
+        .max()
+        .map_or(0, |n| n + 1);
+    let name = format!("{stamp}_{next:03}.md");
+    fs::write(dir.join(&name), content).map_err(io)?;
+    names.insert(0, name);
+    names.sort_by(|a, b| b.cmp(a));
+    while names.len() > VERSIONS_KEEP {
+        let oldest = names.remove(names.len() - 1);
+        let _ = fs::remove_file(dir.join(oldest));
+    }
+    Ok(())
+}
+
+/// 版の名前(新しい順)。
+fn version_names(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(dir)
+        .map(|it| it.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_file())).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| valid_version(n)).collect())
+        .unwrap_or_default();
+    names.sort_by(|a, b| b.cmp(a));
+    names
+}
+
+/// ノートの退避済みの版(新しい順)。
+pub fn versions(root: &Path, rel: &str) -> Result<Vec<String>, AppError> {
+    read(root, rel)?;
+    Ok(versions_dir(root, rel, false)?.map(|d| version_names(&d)).unwrap_or_default())
+}
+
+/// 退避済みの版の内容。
+pub fn read_version(root: &Path, rel: &str, version: &str) -> Result<String, AppError> {
+    if !valid_version(version) {
+        return Err(AppError::PathNotAllowed);
+    }
+    read(root, rel)?;
+    let dir = versions_dir(root, rel, false)?.ok_or(AppError::PathNotAllowed)?;
+    let path = dir.join(version).canonicalize().map_err(io)?;
+    if !path.starts_with(&dir) {
+        return Err(AppError::PathNotAllowed);
+    }
+    fs::read_to_string(path).map_err(io)
+}
+
+/// 退避済みの版へ戻す。今の内容も版として退避する。
+pub fn restore_version(root: &Path, rel: &str, version: &str, now: &str) -> Result<(), AppError> {
+    let content = read_version(root, rel, version)?;
+    let current = read(root, rel)?;
+    save_version(root, rel, &current, now)?;
+    atomic_write(&resolve_existing(root, rel)?, &content)
+}
+
+/// ノートを削除する前に版として退避する(統合で取り込んだノートを消すときに使う)。
+pub fn delete_with_version(root: &Path, rel: &str, now: &str) -> Result<(), AppError> {
+    let content = read(root, rel)?;
+    save_version(root, rel, &content, now)?;
+    fs::remove_file(resolve_existing(root, rel)?).map_err(io)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -390,6 +698,12 @@ pub fn reset(root: &Path) -> Result<TransferReport, AppError> {
         fs::remove_file(resolve_existing(root, &f.path)?).map_err(io)?;
         report.files += 1;
     }
+    // 退避した版も消す(コマンドの権限など、ほかの`.my-assistant`の中身は残す)
+    if let Ok(versions) = resolve_existing(root, &VERSIONS_DIR.join("/"))
+        && versions.is_dir()
+    {
+        fs::remove_dir_all(versions).map_err(io)?;
+    }
     remove_empty_dirs(&root.canonicalize().map_err(io)?, 0);
     Ok(report)
 }
@@ -459,6 +773,7 @@ pub fn append_capture(root: &Path, session_id: &str, user: &str, assistant: &str
                 created_at: now.to_owned(),
                 updated_at: now.to_owned(),
                 source_log_ids: vec![],
+                ..Default::default()
             };
             (dir.join(format!("{date}_{sid}.md")), format!("{}\n# {title}\n{chapter}", fm.render()))
         }
@@ -585,6 +900,7 @@ pub fn add_correction(root: &Path, heard: &str, correct: &str, now: &str) -> Res
                 created_at: now.to_owned(),
                 updated_at: now.to_owned(),
                 source_log_ids: vec![],
+                ..Default::default()
             };
             format!(
                 "{}\n# 音声認識の訂正履歴\n\n聞き取り間違いをユーザーが訂正した記録です(「誤」→「正」)。\n\n{line}\n",
@@ -861,6 +1177,105 @@ mod tests {
         assert_eq!(fm.source_log_ids, ["a", "b"]);
         assert!(body.contains("first") && body.contains("second"));
         assert_eq!(list(&root).unwrap().len(), 1);
+    }
+
+    fn update<'a>(current: &'a str, history: &'a str, ids: &'a [String]) -> NoteUpdate<'a> {
+        NoteUpdate { title: "", summary: "", tags: &[], current, history, source_log_ids: ids }
+    }
+
+    #[test]
+    fn summary_roundtrips_and_is_omitted_when_empty() {
+        let fm = Frontmatter { title: "t".into(), summary: "1行の要約".into(), ..Default::default() };
+        assert_eq!(parse(&fm.render()).unwrap().0.summary, "1行の要約");
+        assert!(!Frontmatter::default().render().contains("summary"));
+    }
+
+    #[test]
+    fn create_and_rewrite_keep_current_and_history_apart() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let ids = vec!["a".to_owned()];
+        let u = NoteUpdate { title: "Tauri", summary: "要約1", tags: &["rust".to_owned()], current: "- npm", history: "- 作成", source_log_ids: &ids };
+        let w = create_note(root, &NewNote { category: "Dev", filename: "tauri" }, &u, "2026-11-01T00:00:00Z").unwrap();
+        assert_eq!(w, Written { path: "Dev/tauri.md".into(), created: true, rewrite_skipped: false });
+        assert_eq!(note_rel(&NewNote { category: "Dev", filename: "tauri" }), w.path);
+        // LLMが経緯の見出しを書いても、構造は壊さない
+        let ids2 = vec!["b".to_owned()];
+        let u2 = NoteUpdate { summary: "要約2", ..update("- pnpm\n## 経緯\nx", "- 変更", &ids2) };
+        let w2 = rewrite(root, &w.path, &u2, "2026-11-02T00:00:00Z").unwrap();
+        assert!(!w2.created && !w2.rewrite_skipped);
+        let n = read_note(root, &w.path).unwrap();
+        assert_eq!(n.current, "- pnpm\n### 経緯\nx");
+        assert!(n.history.starts_with("### 2026-11-01T00:00:00Z\n\n- 作成"));
+        assert!(n.history.ends_with("### 2026-11-02T00:00:00Z\n\n- 変更"));
+        assert_eq!((n.fm.title.as_str(), n.fm.summary.as_str()), ("Tauri", "要約2"));
+        assert_eq!(n.fm.source_log_ids, ["a", "b"]);
+        assert_eq!(n.fm.created_at, "2026-11-01T00:00:00Z");
+        // 同じ場所への作成は書き換えになる
+        let w3 = create_note(root, &NewNote { category: "Dev", filename: "tauri" }, &update("- yarn", "", &[]), "2026-11-03T00:00:00Z").unwrap();
+        assert!(!w3.created);
+        assert_eq!(read_note(root, &w.path).unwrap().current, "- yarn");
+    }
+
+    #[test]
+    fn legacy_notes_move_their_dated_sections_into_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        upsert(root, &entry("Dev", "old", "最初のメモ", &[]), "2026-10-01T00:00:00Z").unwrap();
+        upsert(root, &entry("Dev", "old", "追記", &[]), "2026-10-02T00:00:00Z").unwrap();
+        let n = read_note(root, "Dev/old.md").unwrap();
+        assert_eq!(n.current, "");
+        assert!(n.history.starts_with("### 2026-10-01T00:00:00Z") && n.history.contains("追記"));
+        rewrite(root, "Dev/old.md", &update("- まとめ", "- 統合", &[]), "2026-11-01T00:00:00Z").unwrap();
+        let text = read(root, "Dev/old.md").unwrap();
+        let body = parse(&text).unwrap().1;
+        assert!(body.contains("\n\n- まとめ\n\n## 経緯\n\n### 2026-10-01T00:00:00Z"), "{body}");
+        // 手書きのノート(Frontmatterなし)も読める
+        fs::write(root.join("Dev/hand.md"), "# 手書き\n\n自由に書いた本文\n\n## 節\n内容").unwrap();
+        let n = read_note(root, "Dev/hand.md").unwrap();
+        assert_eq!((n.fm.title.as_str(), n.current.as_str(), n.history.as_str()), ("hand", "自由に書いた本文\n\n## 節\n内容", ""));
+    }
+
+    #[test]
+    fn shrinking_rewrites_only_append_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let long = "- 大事な情報\n".repeat(80);
+        let w = create_note(root, &NewNote { category: "Dev", filename: "x" }, &NoteUpdate { summary: "元の要約", ..update(&long, "", &[]) }, "t1").unwrap();
+        let r = rewrite(root, &w.path, &NoteUpdate { summary: "新しい要約", ..update("- 短い", "- 変更", &[]) }, "t2").unwrap();
+        assert!(r.rewrite_skipped);
+        let n = read_note(root, &w.path).unwrap();
+        assert_eq!(n.current, long.trim());
+        assert_eq!(n.fm.summary, "元の要約", "書き換えなかったときは要約も変えない");
+        assert!(n.history.contains("- 変更"));
+        assert!(would_shrink(&long, "- 短い") && !would_shrink("- 短い", ""));
+    }
+
+    #[test]
+    fn versions_are_kept_up_to_ten_and_can_be_restored() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let w = create_note(root, &NewNote { category: "Dev", filename: "v" }, &update("- v0", "", &[]), "2026-11-01T00:00:00Z").unwrap();
+        for i in 1..=12 {
+            // 同じ時刻の書き換えでも、前の版を潰さない
+            rewrite(root, &w.path, &update(&format!("- v{i}"), "", &[]), "2026-11-02T00:00:00Z").unwrap();
+        }
+        let vs = versions(root, &w.path).unwrap();
+        assert_eq!(vs.len(), 10);
+        assert!(read_version(root, &w.path, &vs[0]).unwrap().contains("- v11"), "新しい順");
+        assert!(read_version(root, &w.path, &vs[9]).unwrap().contains("- v2"));
+        for bad in ["../x.md", ".x.md", "a/b.md", "x.txt"] {
+            assert!(read_version(root, &w.path, bad).is_err(), "{bad}");
+        }
+        restore_version(root, &w.path, &vs[9], "2026-11-03T00:00:00Z").unwrap();
+        assert_eq!(read_note(root, &w.path).unwrap().current, "- v2");
+        assert!(read_version(root, &w.path, &versions(root, &w.path).unwrap()[0]).unwrap().contains("- v12"), "戻す前の内容も退避する");
+        // 版は一覧・グラフに出ず、初期化で消える(コマンドの権限は残す)
+        assert!(list(root).unwrap().iter().all(|f| !f.path.starts_with('.')));
+        fs::write(root.join(".my-assistant/command-policy.json"), "{}").unwrap();
+        reset(root).unwrap();
+        assert!(!root.join(".my-assistant/history").exists());
+        assert!(root.join(".my-assistant/command-policy.json").exists());
     }
 
     #[test]
