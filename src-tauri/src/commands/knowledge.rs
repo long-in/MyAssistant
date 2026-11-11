@@ -69,7 +69,7 @@ fn check_writable(dir: &std::path::Path) -> Result<(), AppError> {
 
 #[tauri::command]
 pub fn list_knowledge(ctx: Ctx) -> Result<Vec<KnowledgeFile>, AppError> {
-    knowledge::list(&batch::knowledge_root(&ctx)?)
+    knowledge::list_for_screen(&batch::knowledge_root(&ctx)?)
 }
 
 /// Markdown以外のファイル一覧(閲覧専用)。

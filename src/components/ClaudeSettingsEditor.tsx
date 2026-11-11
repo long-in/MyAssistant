@@ -3,34 +3,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
-import { Eye, EyeOff } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { getClaudeSettingsTemplate, getSandboxClaudeSettings, reportError, setSandboxClaudeSettings } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
-const MASKED = "••••••••";
-
-/** `env`の値を伏せた表示用の文字列。`env`に値がない・JSON として読めないときは `null`(伏せる対象がない)。 */
-function maskEnv(text: string): string | null {
-  try {
-    const root: unknown = JSON.parse(text);
-    if (typeof root !== "object" || root === null || Array.isArray(root)) return null;
-    const env = (root as { env?: unknown }).env;
-    if (typeof env !== "object" || env === null || Array.isArray(env) || Object.keys(env).length === 0) return null;
-    const masked = Object.fromEntries(Object.keys(env).map((k) => [k, MASKED]));
-    return JSON.stringify({ ...root, env: masked }, null, 2);
-  } catch {
-    return null;
-  }
-}
-
 /**
  * このエージェントの Claude Code の settings.json を貼り付けるエディタ。保存時に JSON のオブジェクトか検証し、誤りがあれば保存しない。
  * コンテナへは、指示ごとに `--settings` で渡す(ファイルとしては置かない)。空で保存すると未設定に戻る。
  * モデル(`model`)と許可・拒否するツール(`permissions.allow` / `permissions.deny`)もここで決める。空のときは、雛形を入れるボタンを出す。
- * `env` に値があるときは、既定で値を伏せた読み取り専用の表示にし、「値を表示して編集」で本文を出す。
+ * 既定は閲覧だけで、「編集」で書き換えられるようにする。「全体設定に戻す」で、編集中の内容と個別設定を捨てて全体設定へ戻す。
  */
 export default function ClaudeSettingsEditor() {
   const t = useT();
@@ -41,10 +24,9 @@ export default function ClaudeSettingsEditor() {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [revealed, setRevealed] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [template, setTemplate] = useState<string | null>(null);
   const dirty = saved !== null && draft.trim() !== saved.trim();
-  const masked = revealed ? null : maskEnv(draft);
 
   const load = useCallback(async () => {
     try {
@@ -54,6 +36,7 @@ export default function ClaudeSettingsEditor() {
       setShared(s.shared);
       setSaved(effective);
       setDraft(effective);
+      setEditing(false);
       setError(null);
     } catch (e) {
       toast.error(reportError(e));
@@ -85,18 +68,18 @@ export default function ClaudeSettingsEditor() {
     }
   };
 
-  /** 個別設定をやめて全体設定を利用する(以後は全体設定の変更に追従する)。 */
-  const switchToShared = async () => {
-    const yes = await ask(t("このエージェント専用の settings.json を破棄して、全体設定の settings.json を利用します。よろしいですか?"), {
-      title: t("全体設定を利用"),
-      kind: "warning",
-      okLabel: t("利用する"),
-      cancelLabel: t("キャンセル"),
-    });
+  /** 編集中の内容と個別設定を捨てて、全体設定を利用する(以後は全体設定の変更に追従する)。 */
+  const revertToShared = async () => {
+    const yes = await ask(
+      own.trim()
+        ? t("このエージェント専用の settings.json を破棄して、全体設定の settings.json を利用します。よろしいですか?")
+        : t("編集中の内容を破棄して、全体設定の内容に戻します。よろしいですか?"),
+      { title: t("全体設定に戻す"), kind: "warning", okLabel: t("戻す"), cancelLabel: t("キャンセル") },
+    );
     if (!yes) return;
     setBusy(true);
     try {
-      await setSandboxClaudeSettings("");
+      if (own.trim()) await setSandboxClaudeSettings("");
       await load();
       toast.success(t("全体設定を利用します。"));
     } catch (e) {
@@ -104,18 +87,6 @@ export default function ClaudeSettingsEditor() {
     } finally {
       setBusy(false);
     }
-  };
-
-  const reload = async () => {
-    const ok =
-      !dirty ||
-      (await ask(t("編集中の内容は破棄されます。保存済みの内容を読み込み直しますか?"), {
-        title: t("再読み込み"),
-        kind: "warning",
-        okLabel: t("読み込む"),
-        cancelLabel: t("キャンセル"),
-      }));
-    if (ok) await load();
   };
 
   return (
@@ -126,10 +97,10 @@ export default function ClaudeSettingsEditor() {
         {dirty && <Badge variant="secondary">{t("未保存の変更")}</Badge>}
       </div>
       <Textarea
-        value={masked ?? draft}
+        value={draft}
         onChange={(e) => setDraft(e.target.value)}
         disabled={saved === null}
-        readOnly={masked !== null}
+        readOnly={!editing}
         spellCheck={false}
         autoComplete="off"
         placeholder={'{\n  "permissions": { "deny": [] }\n}'}
@@ -137,24 +108,17 @@ export default function ClaudeSettingsEditor() {
         aria-label="Claude Code settings.json"
       />
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" disabled={!dirty || busy} onClick={() => void save()}>
-          {t("保存")}
-        </Button>
-        <Button size="sm" variant="outline" disabled={!dirty || busy} onClick={() => setDraft(saved ?? "")}>
-          {t("変更を破棄")}
-        </Button>
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => void reload()}>
-          {t("再読み込み")}
-        </Button>
-        {own.trim() !== "" && (
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => void switchToShared()}>
-            {t("全体設定を利用")}
+        {!editing && (
+          <Button size="sm" variant="outline" disabled={saved === null || busy} onClick={() => setEditing(true)} title={t("settings.json を書き換えられるようにします")}>
+            {t("編集")}
           </Button>
         )}
-        {(masked !== null || (revealed && maskEnv(draft) !== null)) && (
-          <Button size="sm" variant="outline" onClick={() => setRevealed((v) => !v)}>
-            {revealed ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-            {revealed ? t("値を伏せる") : t("値を表示して編集")}
+        <Button size="sm" disabled={!dirty || busy} onClick={() => void save()} title={t("このエージェント専用の内容として保存します(次の指示から反映)")}>
+          {t("保存")}
+        </Button>
+        {(own.trim() !== "" || dirty) && (
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => void revertToShared()} title={t("編集中の内容と個別設定を捨てて、全体設定の内容を使います")}>
+            {t("全体設定に戻す")}
           </Button>
         )}
       </div>
@@ -162,7 +126,11 @@ export default function ClaudeSettingsEditor() {
         <div className="flex flex-col gap-2 border border-amber-500/40 bg-amber-500/5 p-2 text-xs">
           <p>{t("settings.json が空のため、Bash・Read などのツールは許可されていません(指示を実行しても、ツールを使えません)。拒否は、rm・sudo などの初期値だけを渡します。許可・拒否を書いた雛形を入れてから、保存してください。")}</p>
           <div>
-            <Button size="sm" variant="outline" disabled={draft.trim() !== "" || template === null} onClick={() => template && setDraft(template)}>
+            <Button size="sm" variant="outline" disabled={draft.trim() !== "" || template === null} onClick={() => {
+                if (!template) return;
+                setDraft(template);
+                setEditing(true);
+              }}>
               {t("許可・拒否の雛形を入れる")}
             </Button>
           </div>
@@ -171,13 +139,12 @@ export default function ClaudeSettingsEditor() {
       <p className="text-xs text-muted-foreground">
         {own.trim() ? t("このエージェント専用の内容です。全体設定が変わっても更新されません。") : t("全体設定の内容を利用しています。全体設定が変わると、次の指示から自動で反映されます。編集して保存すると、このエージェント専用の個別設定になります。")}
       </p>
-      {masked !== null && <p className="text-xs text-muted-foreground">{t("env の値は伏せています。編集するには「値を表示して編集」を押してください。")}</p>}
       {error && <p className="text-xs text-destructive">{error}</p>}
       <p className="text-xs text-muted-foreground">
         {t("Claude Code の settings.json の内容を貼り付けます(JSON のオブジェクト)。コンテナ内の Claude Code へ、指示ごとに --settings で渡します。モデルは model、許可するツールは permissions.allow、実行前に確認するツールは permissions.ask、拒否するツールは permissions.deny(Bash(git status:*) のような指定も可)で決めます。")}
       </p>
       <p className="text-xs text-muted-foreground">
-        {t("コンテナ内の Claude Code のコマンドの拒否は、アプリの Command Policy ではなく、ここの permissions.deny で決めます(雛形に rm・sudo などの初期値が入っています)。消すとその保護は無くなります。env の値は、画面では既定で伏せますが、バックアップ・設定の書き出しにはそのまま含まれます。コンテナの出力に値が出たときは伏せ字にします。")}
+        {t("コンテナ内の Claude Code のコマンドの拒否は、アプリの Command Policy ではなく、ここの permissions.deny で決めます(雛形に rm・sudo などの初期値が入っています)。消すとその保護は無くなります。env の値は、バックアップ・設定の書き出しにそのまま含まれます。コンテナの出力に値が出たときは伏せ字にします。")}
       </p>
     </div>
   );

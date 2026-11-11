@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import KnowledgeTree, { type NodeKind } from "@/components/KnowledgeTree";
+import { isReadOnlyPath } from "@/lib/knowledgePaths";
 import { EmptyState, PaneHeader, StatusPill } from "@/components/GlobalPanels";
 import {
   type AgentKnowledge,
@@ -182,7 +183,7 @@ export default function AllKnowledge() {
 
 
   const total = agents.reduce((n, s) => n + s.files.length, 0);
-  const readOnly = selected !== null && !isNote(selected.path);
+  const readOnly = selected !== null && (!isNote(selected.path) || isReadOnlyPath(selected.path));
   const doc = selected ? splitFrontmatter(draft) : null;
 
   // `e`で編集、Cmd/Ctrl+Sで保存
