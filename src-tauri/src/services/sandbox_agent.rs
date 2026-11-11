@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use super::{
     cancel::CancelToken,
-    command_policy::{self, Policy},
+    command_policy::Policy,
     global_settings::SettingsStore,
     sandbox,
     shell::Stream,
@@ -26,6 +26,10 @@ pub const LLM_KEY: &str = "sandbox_llm";
 pub const CLAUDE_SETTINGS_KEY: &str = "sandbox_claude_settings";
 /// 全体設定の側の settings.json のキー。エージェントが自分の settings.json を持たない(空)ときは、これを使う。
 pub const SHARED_CLAUDE_SETTINGS_KEY: &str = "sandbox_claude_settings_shared";
+/// エージェントの settings.json へ既定の拒否を足す移行を済ませた印のキー。
+pub const DENY_MIGRATED_KEY: &str = "sandbox_claude_settings_deny_migrated";
+/// 全体設定の settings.json へ既定の拒否を足す移行を済ませた印のキー。
+pub const SHARED_DENY_MIGRATED_KEY: &str = "sandbox_claude_settings_shared_deny_migrated";
 /// チャットで選んだモデル(settings.json の許可するモデルのうち、`--model`で指定するもの)のキー。
 const MODEL_KEY: &str = "sandbox_model";
 /// モデル名の上限(文字数)。
@@ -37,7 +41,7 @@ pub const TIMEOUT_RANGE: RangeInclusive<u32> = 1..=180;
 /// アイドル自動停止の時間(分)の上限。0は無効。
 pub const IDLE_STOP_MAX: u32 = 24 * 60;
 /// Claude Code の標準のツール。ツールなしの単発の呼び出しでは、これをすべて拒否する。
-/// 許可は settings.json の`permissions.allow`で決める(画面の雛形も同じ一覧)。拒否は`command-policy.json`の拒否で絞る。
+/// 許可は settings.json の`permissions.allow`、拒否は`permissions.deny`で決める(画面の雛形も同じ一覧と`default_deny_rules`)。
 pub const DEFAULT_ALLOWED_TOOLS: [&str; 12] =
     ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit", "WebFetch", "WebSearch", "Task", "TodoWrite", "Skill"];
 /// システムプロンプトの上限(Linux の環境変数1つの上限 128KB より小さく)。
@@ -210,6 +214,63 @@ pub fn save_selected_model(db: &impl SettingsStore, global: &impl SettingsStore,
     }
 }
 
+/// settings.json の既定の拒否。コマンド権限の初期値の拒否(`deny`・`deny_words`)を、Claude Code の書式にしたもの。
+pub fn default_deny_rules() -> Vec<String> {
+    deny_rules(&Policy::defaults())
+}
+
+/// settings.json の雛形。許可は標準のツール、拒否は既定の拒否。
+pub fn settings_template() -> String {
+    let v = serde_json::json!({ "permissions": { "allow": DEFAULT_ALLOWED_TOOLS, "deny": default_deny_rules() } });
+    serde_json::to_string_pretty(&v).unwrap_or_default()
+}
+
+/// settings.json が空(個別設定・全体設定とも未設定)のときに渡す内容。既定の拒否だけを持つ(許可は空)。
+fn fallback_settings() -> String {
+    serde_json::json!({ "permissions": { "deny": default_deny_rules() } }).to_string()
+}
+
+/// settings.json の`permissions.deny`へ、無い拒否を足した内容。
+/// JSON のオブジェクトでない、または`permissions`・`deny`の形が違うときは`None`(触らない)。
+fn with_deny(text: &str, rules: &[String]) -> Option<String> {
+    let Ok(Value::Object(mut root)) = serde_json::from_str::<Value>(text) else { return None };
+    let permissions = root.entry("permissions").or_insert_with(|| Value::Object(serde_json::Map::new())).as_object_mut()?;
+    let deny = permissions.entry("deny").or_insert_with(|| Value::Array(Vec::new())).as_array_mut()?;
+    for rule in rules {
+        if !deny.iter().any(|d| d.as_str() == Some(rule)) {
+            deny.push(Value::String(rule.clone()));
+        }
+    }
+    serde_json::to_string_pretty(&Value::Object(root)).ok()
+}
+
+/// 保存済みの settings.json(`key`)へ、既定の拒否を一度だけ足す。空なら足さない(空のときは実行時に既定の拒否を渡す)。
+/// 以前はコマンド権限の拒否を`--disallowedTools`で渡していたため、その保護を settings.json へ引き継ぐ。
+fn migrate_deny_in(store: &impl SettingsStore, key: &str, done_key: &str) -> Result<(), AppError> {
+    if store.get_setting(done_key)?.is_some() {
+        return Ok(());
+    }
+    let text = store.get_setting(key)?.unwrap_or_default();
+    if !text.trim().is_empty() {
+        match with_deny(&text, &default_deny_rules()) {
+            Some(merged) => store.set_setting(key, &merged)?,
+            None => log::warn!("settings.json の形が想定と違うため、既定の拒否を足しませんでした"),
+        }
+    }
+    store.set_setting(done_key, "1")
+}
+
+/// エージェントと全体設定の settings.json へ、既定の拒否を一度だけ足す。
+pub fn migrate_default_deny(db: &impl SettingsStore, global: &impl SettingsStore) -> Result<(), AppError> {
+    migrate_deny_in(db, CLAUDE_SETTINGS_KEY, DENY_MIGRATED_KEY)?;
+    migrate_shared_default_deny(global)
+}
+
+/// 全体設定の settings.json へ、既定の拒否を一度だけ足す。
+pub fn migrate_shared_default_deny(global: &impl SettingsStore) -> Result<(), AppError> {
+    migrate_deny_in(global, SHARED_CLAUDE_SETTINGS_KEY, SHARED_DENY_MIGRATED_KEY)
+}
+
 /// 検証して保存する。空にすると未設定に戻る。
 pub fn save_settings(db: &impl SettingsStore, text: &str) -> Result<(), AppError> {
     validate_settings(text).map_err(AppError::Sandbox)?;
@@ -264,6 +325,7 @@ pub fn check_credentials(vars: &BTreeMap<String, String>) -> Result<(), String> 
 // ------------------------------------------------------------------ 1回の指示の実行
 
 /// コマンド権限の拒否(コマンドの接頭辞と、どこにあっても拒否する語)を、Claude Code の拒否ルールへ変換する。
+/// settings.json の既定の拒否(`default_deny_rules`)を作るのに使う。
 pub fn deny_rules(policy: &Policy) -> Vec<String> {
     let mut rules: Vec<String> = Vec::new();
     for p in policy.deny.iter().chain(policy.deny_words.iter()).map(|p| p.trim()) {
@@ -285,7 +347,8 @@ fn valid_session_id(id: &str) -> bool {
 }
 
 /// アプリが内部で渡す値(`MYASSISTANT_`)。
-fn internal_vars(policy: &Policy, extra_deny: &[String], system: &str, resume: Option<&str>) -> Result<BTreeMap<String, String>, String> {
+/// `deny`は、アプリが決める拒否(ツールの無効化など)。コマンドの拒否は settings.json の`permissions.deny`で決める。
+fn internal_vars(deny: &[String], system: &str, resume: Option<&str>) -> Result<BTreeMap<String, String>, String> {
     if system.len() > SYSTEM_MAX_BYTES {
         return Err(format!("システムプロンプトが長すぎます(上限{}KB)。", SYSTEM_MAX_BYTES / 1024));
     }
@@ -294,7 +357,6 @@ fn internal_vars(policy: &Policy, extra_deny: &[String], system: &str, resume: O
     }
     let mut v = BTreeMap::new();
     v.insert("MYASSISTANT_SYSTEM_PROMPT".to_owned(), system.to_owned());
-    let deny: Vec<String> = extra_deny.iter().cloned().chain(deny_rules(policy)).collect();
     v.insert("MYASSISTANT_DISALLOWED_TOOLS".to_owned(), deny.join(","));
     if let Some(id) = resume {
         if !valid_session_id(id) {
@@ -433,7 +495,7 @@ impl LineParser {
 /// 1回の指示。
 pub struct Turn<'a> {
     pub ctx: &'a WorkspaceCtx,
-    /// ナレッジのルート(ホストのパス)。`/knowledge`にマウントし、コマンド権限もここから読む。
+    /// ナレッジのルート(ホストのパス)。`/knowledge`にマウントする。
     pub knowledge_root: &'a Path,
     /// ユーザーの指示(標準入力で渡す)。
     pub prompt: &'a str,
@@ -469,6 +531,7 @@ pub async fn run_turn(turn: Turn<'_>, cancel: &CancelToken, mut on_event: impl F
         return Err("指示が空です。".into());
     }
     migrate_legacy_llm(&turn.ctx.db).map_err(|e| e.to_string())?;
+    migrate_default_deny(&turn.ctx.db, &*turn.ctx.global).map_err(|e| e.to_string())?;
     let cfg = load(&turn.ctx.db).map_err(|e| e.to_string())?;
     let mounts = sandbox::mounts_for(turn.ctx, turn.knowledge_root)?;
     let mut vars = merge_env(sandbox::env_for(turn.ctx).await?);
@@ -480,8 +543,10 @@ pub async fn run_turn(turn: Turn<'_>, cancel: &CancelToken, mut on_event: impl F
     } else {
         turn.deny.clone()
     };
-    vars.extend(internal_vars(&command_policy::load(turn.knowledge_root), &deny, turn.system, turn.resume)?);
+    vars.extend(internal_vars(&deny, turn.system, turn.resume)?);
+    // 個別設定・全体設定とも空なら、既定の拒否だけを渡す(拒否が無いまま動かさない)
     let settings = effective_settings(&turn.ctx.db, &*turn.ctx.global).map_err(|e| e.to_string())?;
+    let settings = if settings.trim().is_empty() { fallback_settings() } else { settings };
     vars.extend(settings_env(&settings)?);
     if let Some(model) = turn.model.map(str::trim).filter(|m| !m.is_empty()) {
         if model.chars().count() > MODEL_MAX_CHARS || model.chars().any(char::is_control) {
@@ -640,7 +705,7 @@ mod tests {
         assert!(!CLAUDE_COMMAND.contains("--allowedTools") && !CLAUDE_COMMAND.contains("MYASSISTANT_ALLOWED_TOOLS"));
         // ツールなしの単発の呼び出しは、標準のツールをすべて拒否する
         let all: Vec<String> = DEFAULT_ALLOWED_TOOLS.iter().map(|s| (*s).to_owned()).collect();
-        let v = internal_vars(&Policy::defaults(), &all, "sys", None).unwrap();
+        let v = internal_vars(&all, "sys", None).unwrap();
         assert!(!v.contains_key("MYASSISTANT_ALLOWED_TOOLS"));
         assert!(v["MYASSISTANT_DISALLOWED_TOOLS"].contains("Bash") && v["MYASSISTANT_DISALLOWED_TOOLS"].contains("WebFetch"));
     }
@@ -803,22 +868,70 @@ mod tests {
 
     #[test]
     fn internal_values_are_passed_by_environment_only() {
-        let p = Policy::defaults();
-        let v = internal_vars(&p, &[], "ルール\n'\"$(rm -rf /)", Some("cd6a4042-73d8-4e11-84bc-f7e196eab226")).unwrap();
+        let v = internal_vars(&[], "ルール\n'\"$(rm -rf /)", Some("cd6a4042-73d8-4e11-84bc-f7e196eab226")).unwrap();
         assert_eq!(v["MYASSISTANT_SYSTEM_PROMPT"], "ルール\n'\"$(rm -rf /)");
         assert_eq!(v["MYASSISTANT_RESUME"], "cd6a4042-73d8-4e11-84bc-f7e196eab226");
         assert!(v.keys().all(|k| k.starts_with("MYASSISTANT_")));
         // コマンドには値を埋め込まない
         assert!(!CLAUDE_COMMAND.contains("ルール") && CLAUDE_COMMAND.contains("\"$MYASSISTANT_SYSTEM_PROMPT\""));
-        assert!(internal_vars(&p, &[], "x", Some("bad id;rm")).is_err());
-        assert!(internal_vars(&p, &[], &"a".repeat(SYSTEM_MAX_BYTES + 1), None).is_err());
-        assert!(!internal_vars(&p, &[], "x", None).unwrap().contains_key("MYASSISTANT_RESUME"));
+        assert!(internal_vars(&[], "x", Some("bad id;rm")).is_err());
+        assert!(internal_vars(&[], &"a".repeat(SYSTEM_MAX_BYTES + 1), None).is_err());
+        assert!(!internal_vars(&[], "x", None).unwrap().contains_key("MYASSISTANT_RESUME"));
     }
 
     #[test]
-    fn extra_deny_is_added_before_policy_rules() {
-        let v = internal_vars(&Policy::defaults(), &["Bash".into(), "WebFetch".into()], "x", None).unwrap();
-        assert!(v["MYASSISTANT_DISALLOWED_TOOLS"].starts_with("Bash,WebFetch,Bash("));
+    fn only_app_denials_are_passed_as_disallowed_tools() {
+        // コマンドの拒否は settings.json で決める。`--disallowedTools`にはアプリが決める拒否だけを渡す
+        let v = internal_vars(&["Bash".into(), "WebFetch".into()], "x", None).unwrap();
+        assert_eq!(v["MYASSISTANT_DISALLOWED_TOOLS"], "Bash,WebFetch");
+        assert_eq!(internal_vars(&[], "x", None).unwrap()["MYASSISTANT_DISALLOWED_TOOLS"], "");
+    }
+
+    #[test]
+    fn template_and_fallback_carry_the_default_denials() {
+        let rules = default_deny_rules();
+        assert!(rules.contains(&"Bash(rm:*)".to_owned()) && rules.contains(&"Bash(sudo:*)".to_owned()));
+        assert!(rules.contains(&"Bash(defaults write:*)".to_owned()));
+        let template: Value = serde_json::from_str(&settings_template()).unwrap();
+        assert_eq!(template["permissions"]["allow"], serde_json::json!(DEFAULT_ALLOWED_TOOLS));
+        assert_eq!(template["permissions"]["deny"], serde_json::json!(rules));
+        let fallback: Value = serde_json::from_str(&fallback_settings()).unwrap();
+        assert_eq!(fallback["permissions"]["deny"], serde_json::json!(rules));
+        assert!(fallback["permissions"].get("allow").is_none());
+        assert!(validate_settings(&settings_template()).is_ok() && validate_settings(&fallback_settings()).is_ok());
+    }
+
+    #[test]
+    fn deny_is_merged_without_duplicates_and_odd_shapes_are_left_alone() {
+        let rules = vec!["Bash(rm:*)".to_owned(), "Bash(sudo:*)".to_owned()];
+        let merged: Value = serde_json::from_str(&with_deny(r#"{"model":"m","permissions":{"allow":["Bash"],"deny":["Bash(rm:*)","Read"]}}"#, &rules).unwrap()).unwrap();
+        assert_eq!(merged["permissions"]["deny"], serde_json::json!(["Bash(rm:*)", "Read", "Bash(sudo:*)"]));
+        assert_eq!(merged["permissions"]["allow"], serde_json::json!(["Bash"]));
+        assert_eq!(merged["model"], "m");
+        let added: Value = serde_json::from_str(&with_deny(r#"{"model":"m"}"#, &rules).unwrap()).unwrap();
+        assert_eq!(added["permissions"]["deny"], serde_json::json!(rules));
+        assert_eq!(with_deny(r#"{"permissions":[]}"#, &rules), None);
+        assert_eq!(with_deny(r#"{"permissions":{"deny":"x"}}"#, &rules), None);
+        assert_eq!(with_deny("[]", &rules), None);
+    }
+
+    #[test]
+    fn default_deny_is_added_to_saved_settings_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::Db::open(&dir.path().join("t.db")).unwrap();
+        let global = crate::services::global_settings::GlobalStore::open(dir.path());
+        save_settings(&db, r#"{"permissions":{"allow":["Bash"]}}"#).unwrap();
+        migrate_default_deny(&db, &global).unwrap();
+        let own: Value = serde_json::from_str(&load_settings(&db).unwrap()).unwrap();
+        assert_eq!(own["permissions"]["deny"], serde_json::json!(default_deny_rules()));
+        // 空の全体設定には足さない(実行時に既定の拒否を渡す)
+        assert_eq!(load_shared_settings(&global).unwrap(), "");
+        // 2回目は何もしない(利用者が外した拒否を戻さない)
+        save_settings(&db, r#"{"permissions":{"allow":["Bash"]}}"#).unwrap();
+        save_shared_settings(&global, r#"{"model":"m"}"#).unwrap();
+        migrate_default_deny(&db, &global).unwrap();
+        assert_eq!(load_settings(&db).unwrap(), r#"{"permissions":{"allow":["Bash"]}}"#);
+        assert_eq!(load_shared_settings(&global).unwrap(), r#"{"model":"m"}"#);
     }
 
     #[test]

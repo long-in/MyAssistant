@@ -511,8 +511,8 @@ async fn send_chat_inner(
     route: Route,
     skill: Option<String>,
 ) -> Result<ChatReply, AppError> {
-    // ワークは常に、個人・リーダーはモデルにコンテナ内の Claude Code を選んだとき、会話をコンテナ内の Claude Code が受け持つ
-    if sandbox_enabled(ctx) || (llm_router::is_sandbox(&route) && llm_router::offers_sandbox(ctx)) {
+    // ワークは常に、個人・リーダーは Bedrock 方式のとき、選んだモデルに関わらず会話をコンテナ内の Claude Code が受け持つ
+    if sandbox_enabled(ctx) || llm_router::offers_sandbox(ctx) {
         return send_chat_sandbox(app, ctx, contexts, &session_id, text).await;
     }
     let available = batch::available_providers(&ctx.secrets);

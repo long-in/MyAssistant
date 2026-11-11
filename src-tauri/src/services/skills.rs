@@ -570,12 +570,11 @@ async fn select(ctx: &WorkspaceCtx, skills: &[Skill], text: &str, previous: &str
 }
 
 /// 保存済みの選定モデル。未設定、またはキー削除などで使えなければ既定(Haiku。無ければ使えるモデルの先頭)。使えるモデルが無ければ`None`。
-/// Bedrock 方式(ワークは常に)は、コンテナ内の Claude Code か端末内のモデルで、既定はコンテナ(モデルは settings.json)。
+/// Bedrock 方式(ワークは常に)は、コンテナ内の Claude Code だけ(保存が無い・コンテナでなければ、モデルは settings.json の既定)。
 pub fn effective_route(ctx: &WorkspaceCtx, available: &[Provider]) -> Option<Route> {
     let saved = ctx.db.get_setting(ROUTE_KEY).ok().flatten().and_then(|v| serde_json::from_str::<Route>(&v).ok());
     if llm_router::uses_container(ctx) {
-        let saved = saved.filter(|r| llm_router::is_sandbox(r) || llm_router::resolve(ctx, r, available).is_ok_and(|t| t.provider == Provider::Local));
-        return Some(saved.unwrap_or_else(|| llm_router::sandbox_route("")));
+        return Some(saved.filter(llm_router::is_sandbox).unwrap_or_else(|| llm_router::sandbox_route("")));
     }
     let saved = saved.filter(|r| llm_router::resolve(ctx, r, available).is_ok());
     saved.or_else(|| default_route(&llm_router::catalog(ctx), available))
@@ -588,7 +587,7 @@ fn default_route(catalog: &[ModelInfo], available: &[Provider]) -> Option<Route>
 }
 
 /// 選定モデルを保存する。使えないモデルは拒否する。
-/// Bedrock 方式(ワークは常に)は、コンテナ内の Claude Code(settings.json で許可したモデル)か端末内のモデルだけ。
+/// Bedrock 方式(ワークは常に)は、コンテナ内の Claude Code(settings.json で許可したモデル)だけ。
 pub fn save_route(ctx: &WorkspaceCtx, route: &Route) -> Result<(), AppError> {
     let route = if llm_router::is_sandbox(route) {
         if !llm_router::uses_container(ctx) {
@@ -597,10 +596,10 @@ pub fn save_route(ctx: &WorkspaceCtx, route: &Route) -> Result<(), AppError> {
         sandbox_agent::check_route_model(&ctx.db, &*ctx.global, &route.model)?;
         llm_router::sandbox_route(&route.model)
     } else {
-        let target = llm_router::resolve(ctx, route, &batch::available_providers(&ctx.secrets))?;
-        if llm_router::uses_container(ctx) && target.provider != Provider::Local {
-            return Err(AppError::Sandbox("Bedrock 方式では、コンテナ内の Claude Code か端末内のモデルだけ選べます。".into()));
+        if llm_router::uses_container(ctx) {
+            return Err(AppError::Sandbox("Bedrock 方式では、コンテナ内の Claude Code だけ選べます。".into()));
         }
+        llm_router::resolve(ctx, route, &batch::available_providers(&ctx.secrets))?;
         route.clone()
     };
     ctx.db.set_setting(ROUTE_KEY, &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?)
@@ -764,6 +763,19 @@ pub fn tool_delete(root: &Path, input: &Value) -> Result<String, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn bedrock_mode_selects_skills_only_in_the_container() {
+        use crate::services::workspace::PERSONAL_ID;
+        let dir = tempfile::tempdir().unwrap();
+        let personal = WorkspaceCtx::open(PERSONAL_ID, dir.path()).unwrap();
+        llm_router::set_link_mode(&personal, llm_router::LinkMode::Bedrock).unwrap();
+        let local = Route { provider: Provider::Local.as_str().into(), model: crate::services::local_llm::MODEL_ID.into() };
+        // 端末内のモデルは保存できず、保存してあってもコンテナの経路に読み替える
+        assert!(save_route(&personal, &local).is_err());
+        personal.db.set_setting(ROUTE_KEY, &serde_json::to_string(&local).unwrap()).unwrap();
+        assert_eq!(effective_route(&personal, &[Provider::Local]), Some(llm_router::sandbox_route("")));
+    }
 
     fn skill(name: &str) -> Skill {
         Skill {

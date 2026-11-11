@@ -1,6 +1,6 @@
 # ローカル LLM(Qwen 2.5 7B)
 
-端末内で動く LLM。Claude(Anthropic / Bedrock)と同じ用途(対話とツール使用、校正、整理バッチ、スキルの選定、会話の要約)に選べる。実装は `services/local_llm.rs`(取得・起動・形式の変換)と `commands/local_llm.rs`(画面からの取得・削除)。
+端末内で動く LLM。API 方式のとき、Claude(Anthropic)と同じ用途(対話とツール使用、校正、整理バッチ、スキルの選定、会話の要約)に選べる。Bedrock 方式(ワークは常に)では選べず、すべてコンテナ内の Claude Code で行う。AI Link の取得パネルも、API 方式のときだけ出す。実装は `services/local_llm.rs`(取得・起動・形式の変換)と `commands/local_llm.rs`(画面からの取得・削除)。
 
 ## 構成
 

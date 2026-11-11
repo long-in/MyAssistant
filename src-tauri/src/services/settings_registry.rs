@@ -84,6 +84,8 @@ pub const ALL: &[Setting] = &[
     agent(batch::KNOWLEDGE_DIR_KEY, None),
     // アプリの会話とコンテナ内の Claude Code のセッションの対応。端末の履歴(DB)と対なので対象外
     agent(sandbox_agent::SESSIONS_KEY, None),
+    // settings.json へ既定の拒否を足す移行を済ませた印。端末の状態なので対象外
+    agent(sandbox_agent::DENY_MIGRATED_KEY, None),
     agent(debug_log::DIR_KEY, None),
     agent(stt::REVISION_KEY, None),
     agent(voicevox::VERSIONS_KEY, None),
@@ -117,6 +119,8 @@ pub const ALL: &[Setting] = &[
     global(proxy::LEGACY_ENABLED_KEY, None),
     global(proxy::LEGACY_URL_KEY, None),
     global(proxy::LEGACY_USERNAME_KEY, None),
+    // 全体設定の settings.json へ既定の拒否を足す移行を済ませた印。端末の状態なので対象外
+    global(sandbox_agent::SHARED_DENY_MIGRATED_KEY, None),
 ];
 
 /// キーの定義。一覧に無ければ`None`。
@@ -176,7 +180,7 @@ mod tests {
     #[test]
     fn global_backup_covers_all_global_keys_except_device_local_ones() {
         let exported: Vec<_> = transferable(Scope::Global).map(|(k, _)| k).collect();
-        let expected: Vec<_> = keys(Scope::Global).filter(|k| !matches!(*k, workspace::WORK_ENABLED_KEY | proxy::LEGACY_ENABLED_KEY | proxy::LEGACY_URL_KEY | proxy::LEGACY_USERNAME_KEY)).collect();
+        let expected: Vec<_> = keys(Scope::Global).filter(|k| !matches!(*k, workspace::WORK_ENABLED_KEY | proxy::LEGACY_ENABLED_KEY | proxy::LEGACY_URL_KEY | proxy::LEGACY_USERNAME_KEY | sandbox_agent::SHARED_DENY_MIGRATED_KEY)).collect();
         assert_eq!(exported, expected);
     }
 }

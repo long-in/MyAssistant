@@ -131,16 +131,18 @@ pub struct ModelEntry {
     pub tier: Tier,
 }
 
-/// 画面に出すモデルの一覧。個人・リーダーには、settings.json で許可したモデルごとにコンテナ内の Claude Code を足す
-/// (許可の指定が無ければ、settings.json の`model`に任せる1件)。
+/// 画面に出すモデルの一覧。個人・リーダーの Bedrock 方式では、settings.json で許可したモデルごとのコンテナ内の Claude Code だけ
+/// (許可の指定が無ければ、settings.json の`model`に任せる1件)。API のモデルも端末内のモデルも出さない。
 pub fn entries(ctx: &WorkspaceCtx, sandbox_models: &[String]) -> Vec<ModelEntry> {
     let bedrock = offers_sandbox(ctx);
-    let mut list: Vec<ModelEntry> = catalog(ctx)
-        .into_iter()
-        // Bedrock 方式では、Anthropic の API モデルは使わない(端末内のモデルは残す)
-        .filter(|m| !(bedrock && m.provider == Provider::Anthropic))
-        .map(|m| ModelEntry { provider: m.provider.as_str().to_owned(), id: m.id, label: m.label, tier: m.tier })
-        .collect();
+    let mut list: Vec<ModelEntry> = if bedrock {
+        Vec::new()
+    } else {
+        catalog(ctx)
+            .into_iter()
+            .map(|m| ModelEntry { provider: m.provider.as_str().to_owned(), id: m.id, label: m.label, tier: m.tier })
+            .collect()
+    };
     if bedrock {
         if sandbox_models.is_empty() {
             list.push(ModelEntry { provider: SANDBOX_PROVIDER.into(), id: SANDBOX_DEFAULT_MODEL.into(), label: "settings.json".into(), tier: Tier::Heavy });
@@ -181,19 +183,14 @@ fn resolve_in(catalog: &[ModelInfo], route: &Route, available: &[Provider]) -> R
 }
 
 /// 保存済みの選択が今も使えればそれを、なければ既定を返す。使えるプロバイダーが無ければ`None`。
-/// 個人・リーダーは、接続方式が Bedrock のときだけコンテナの経路を選べる。このとき選べるのはコンテナと端末内のモデルで、
-/// 保存済みの選択が使えなければコンテナの経路が既定。以前のBedrockの選択は、コンテナの経路に読み替える。
+/// 個人・リーダーは、接続方式が Bedrock のときだけコンテナの経路を選べる。このとき選べるのはコンテナの経路だけで、
+/// それ以外の保存済みの選択(以前のBedrock・端末内のモデルなど)は、コンテナの経路(モデルは settings.json の既定)に読み替える。
 /// API 方式では、コンテナの経路は使えない(保存してあっても既定へ戻る)。
 pub fn effective(ctx: &WorkspaceCtx, saved: Option<Route>, available: &[Provider]) -> Option<Route> {
     if !offers_sandbox(ctx) {
         return effective_in(&catalog(ctx), saved, available);
     }
-    let saved = saved.map(|r| if r.provider == Provider::Bedrock.as_str() { sandbox_route("") } else { r });
-    if saved.as_ref().is_some_and(is_sandbox) {
-        return saved;
-    }
-    let local = saved.filter(|r| r.provider == Provider::Local.as_str() && resolve_in(&catalog(ctx), r, available).is_ok());
-    Some(local.unwrap_or_else(|| sandbox_route("")))
+    Some(saved.filter(is_sandbox).unwrap_or_else(|| sandbox_route("")))
 }
 
 /// 既定はClaudeのSonnet(名前にsonnetを含むもの)、
@@ -317,6 +314,9 @@ mod tests {
         // API のモデルを保存してあっても、コンテナの経路が既定になる(API の呼び出しへは回らない)
         assert_eq!(effective(&personal, None, &[Provider::Anthropic]), Some(sandbox_route("")));
         assert_eq!(effective(&personal, Some(route("anthropic", "claude-opus-5-5")), &[Provider::Anthropic]), Some(sandbox_route("")));
+        // 端末内のモデルも選べず、保存してあってもコンテナの経路に読み替える
+        assert!(!list.iter().any(|m| m.provider == Provider::Local.as_str()));
+        assert_eq!(effective(&personal, Some(route("local", local_llm::MODEL_ID)), &[Provider::Local]), Some(sandbox_route("")));
         // ワークは選ぶものではない
         assert_eq!(effective(&work, Some(saved), &[Provider::Anthropic]), Some(route("anthropic", "claude-sonnet-5-5")));
     }

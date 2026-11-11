@@ -38,8 +38,8 @@ pub fn effective_route(ctx: &WorkspaceCtx, available: &[Provider]) -> Result<Opt
     let route = ctx.db.get_setting(ROUTE_KEY)?.and_then(|v| serde_json::from_str::<Route>(&v).ok());
     Ok(route.filter(|r| {
         if llm_router::uses_container(ctx) {
-            // Bedrock 方式(ワークは常に)は、コンテナ(Claude Code)か端末内のQwenだけ
-            r.provider == SANDBOX_PROVIDER || (r.provider == Provider::Local.as_str() && llm_router::resolve(ctx, r, available).is_ok())
+            // Bedrock 方式(ワークは常に)は、コンテナ(Claude Code)だけ。端末内のモデルの保存はオフとして扱う
+            r.provider == SANDBOX_PROVIDER
         } else {
             // API 方式は、Anthropic・端末内のQwen
             !llm_router::is_sandbox(r) && llm_router::resolve(ctx, r, available).is_ok()
@@ -151,5 +151,9 @@ mod tests {
         // 旧Bedrockの保存値は、使えないので校正しない(勝手にコンテナへ回さない)
         personal.db.set_setting(ROUTE_KEY, r#"{"provider":"bedrock","model":"x"}"#).unwrap();
         assert_eq!(effective_route(&personal, &[]).unwrap(), None);
+        // 端末内のモデルの保存値も、Bedrock 方式ではオフとして扱う(コンテナへ回さない)
+        let local = format!(r#"{{"provider":"local","model":"{}"}}"#, crate::services::local_llm::MODEL_ID);
+        personal.db.set_setting(ROUTE_KEY, &local).unwrap();
+        assert_eq!(effective_route(&personal, &[Provider::Local]).unwrap(), None);
     }
 }

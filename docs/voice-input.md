@@ -79,7 +79,7 @@ flowchart LR
 
 ## 校正(`proofread.rs`)
 
-> ワークのエージェントでは、モデルの選択の代わりに「オフ / コンテナ内の Claude Code / 端末内の Qwen」を選ぶ([sandbox.md](sandbox.md))。コンテナ内の Claude Code は発話のたびに起動するため数秒かかる。
+> Bedrock 方式(ワークは常に)では、モデルの選択の代わりに「オフ / コンテナ内の Claude Code」を選ぶ([sandbox.md](sandbox.md))。端末内の Qwen は選べない(保存済みならオフとして扱う)。コンテナ内の Claude Code は発話のたびに起動するため数秒かかる。
 
 文字起こし結果を、会話の文脈から LLM で直す補助ステップ。**既定ではオフ**で、エージェントの設定(音声タブ)の Proofread でモデルを選ぶと有効になる(`proofread_route`)。モデルはエージェントごとに選ぶ(エージェントごとに使えるAPIキーが違うため)。
 

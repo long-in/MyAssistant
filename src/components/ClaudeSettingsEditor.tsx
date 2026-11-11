@@ -5,16 +5,12 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { Eye, EyeOff } from "lucide-react";
 import { useT } from "@/lib/i18n";
-import { getSandboxClaudeSettings, reportError, setSandboxClaudeSettings } from "@/lib/api";
+import { getClaudeSettingsTemplate, getSandboxClaudeSettings, reportError, setSandboxClaudeSettings } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
 const MASKED = "••••••••";
-
-/** 許可するツールの雛形(Rust 側の `DEFAULT_ALLOWED_TOOLS` と同じ)。 */
-const DEFAULT_ALLOWED_TOOLS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit", "WebFetch", "WebSearch", "Task", "TodoWrite", "Skill"];
-const TEMPLATE = JSON.stringify({ permissions: { allow: DEFAULT_ALLOWED_TOOLS } }, null, 2);
 
 /** `env`の値を伏せた表示用の文字列。`env`に値がない・JSON として読めないときは `null`(伏せる対象がない)。 */
 function maskEnv(text: string): string | null {
@@ -33,7 +29,7 @@ function maskEnv(text: string): string | null {
 /**
  * このエージェントの Claude Code の settings.json を貼り付けるエディタ。保存時に JSON のオブジェクトか検証し、誤りがあれば保存しない。
  * コンテナへは、指示ごとに `--settings` で渡す(ファイルとしては置かない)。空で保存すると未設定に戻る。
- * モデル(`model`)と許可するツール(`permissions.allow`)もここで決める。空のときは、雛形を入れるボタンを出す。
+ * モデル(`model`)と許可・拒否するツール(`permissions.allow` / `permissions.deny`)もここで決める。空のときは、雛形を入れるボタンを出す。
  * `env` に値があるときは、既定で値を伏せた読み取り専用の表示にし、「値を表示して編集」で本文を出す。
  */
 export default function ClaudeSettingsEditor() {
@@ -46,6 +42,7 @@ export default function ClaudeSettingsEditor() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [revealed, setRevealed] = useState(false);
+  const [template, setTemplate] = useState<string | null>(null);
   const dirty = saved !== null && draft.trim() !== saved.trim();
   const masked = revealed ? null : maskEnv(draft);
 
@@ -67,6 +64,12 @@ export default function ClaudeSettingsEditor() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
+
+  useEffect(() => {
+    getClaudeSettingsTemplate()
+      .then(setTemplate)
+      .catch((e) => toast.error(reportError(e)));
+  }, []);
 
   const save = async () => {
     setBusy(true);
@@ -157,10 +160,10 @@ export default function ClaudeSettingsEditor() {
       </div>
       {saved !== null && saved.trim() === "" && shared.trim() === "" && (
         <div className="flex flex-col gap-2 border border-amber-500/40 bg-amber-500/5 p-2 text-xs">
-          <p>{t("settings.json が空のため、Bash・Read などのツールは許可されていません(指示を実行しても、ツールを使えません)。許可するツールを書いた雛形を入れてから、保存してください。")}</p>
+          <p>{t("settings.json が空のため、Bash・Read などのツールは許可されていません(指示を実行しても、ツールを使えません)。拒否は、rm・sudo などの初期値だけを渡します。許可・拒否を書いた雛形を入れてから、保存してください。")}</p>
           <div>
-            <Button size="sm" variant="outline" disabled={draft.trim() !== ""} onClick={() => setDraft(TEMPLATE)}>
-              {t("許可の雛形を入れる")}
+            <Button size="sm" variant="outline" disabled={draft.trim() !== "" || template === null} onClick={() => template && setDraft(template)}>
+              {t("許可・拒否の雛形を入れる")}
             </Button>
           </div>
         </div>
@@ -171,10 +174,10 @@ export default function ClaudeSettingsEditor() {
       {masked !== null && <p className="text-xs text-muted-foreground">{t("env の値は伏せています。編集するには「値を表示して編集」を押してください。")}</p>}
       {error && <p className="text-xs text-destructive">{error}</p>}
       <p className="text-xs text-muted-foreground">
-        {t("Claude Code の settings.json の内容を貼り付けます(JSON のオブジェクト)。コンテナ内の Claude Code へ、指示ごとに --settings で渡します。モデルは model、許可するツールは permissions.allow(Bash(git status:*) のような指定も可)で決めます。")}
+        {t("Claude Code の settings.json の内容を貼り付けます(JSON のオブジェクト)。コンテナ内の Claude Code へ、指示ごとに --settings で渡します。モデルは model、許可するツールは permissions.allow、拒否するツールは permissions.deny(Bash(git status:*) のような指定も可)で決めます。")}
       </p>
       <p className="text-xs text-muted-foreground">
-        {t("アプリの「コマンド権限」の拒否は、settings.json では緩められません(許可は追加されます)。env の値は、画面では既定で伏せますが、バックアップ・設定の書き出しにはそのまま含まれます。コンテナの出力に値が出たときは伏せ字にします。")}
+        {t("コンテナ内の Claude Code のコマンドの拒否は、アプリの Command Policy ではなく、ここの permissions.deny で決めます(雛形に rm・sudo などの初期値が入っています)。消すとその保護は無くなります。env の値は、画面では既定で伏せますが、バックアップ・設定の書き出しにはそのまま含まれます。コンテナの出力に値が出たときは伏せ字にします。")}
       </p>
     </div>
   );

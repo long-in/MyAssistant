@@ -16,7 +16,7 @@ import HelpDrawer from "@/components/HelpDrawer";
 import BackupPasswordModal from "@/components/BackupPasswordModal";
 import { ensureOsPermission, osNotificationsEnabled, setOsNotificationsEnabled, syncOsNotifications } from "@/lib/osNotify";
 import NotePanel from "@/components/NotePanel";
-import { getSharedData, saveSharedData, LEADER_COLOR, LEADER_ID, createLeader, errorMessage, leaderExists, setWorkEnabled, workEnabled, setGlobalLanguage, getProxies, saveProxy, deleteProxy, setDefaultProxy, getProxyChoice, setProxyChoice, type ProxyList, type ProxyEntry, backupCreate, restorePrepare, restoreApply, restoreDiscard, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, type WakeConfig, reportError, type AppError, saveBaseInstructions, listGlobalPrompts, saveGlobalPrompt, resetGlobalPrompt, getSharedClaudeSettings, setSharedClaudeSettings, PROMPT_MAX_CHARS, type PromptId, type PromptInfo, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
+import { getSharedData, saveSharedData, LEADER_COLOR, LEADER_ID, createLeader, errorMessage, leaderExists, setWorkEnabled, workEnabled, setGlobalLanguage, getProxies, saveProxy, deleteProxy, setDefaultProxy, getProxyChoice, setProxyChoice, type ProxyList, type ProxyEntry, backupCreate, restorePrepare, restoreApply, restoreDiscard, type VoiceTiming, getBaseInstructions, getProfile, saveProfile, clearProfile, type UserProfile, getWakeConfig, type WakeConfig, reportError, type AppError, saveBaseInstructions, listGlobalPrompts, saveGlobalPrompt, resetGlobalPrompt, getSharedClaudeSettings, setSharedClaudeSettings, getClaudeSettingsTemplate, PROMPT_MAX_CHARS, type PromptId, type PromptInfo, type TtsEngine, setWakeConfig, startRecording, cancelRecording, transcribeWakeSample } from "@/lib/api";
 
 /** 見出しの左に出すアイコン(英字の見出しごと)。無いものは歯車。 */
 const HEADING_ICONS: Record<string, LucideIcon> = {
@@ -786,6 +786,7 @@ export function SharedClaudeSettings() {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [template, setTemplate] = useState<string | null>(null);
   const dirty = saved !== null && draft.trim() !== saved.trim();
   useEffect(() => {
     getSharedClaudeSettings()
@@ -793,6 +794,9 @@ export function SharedClaudeSettings() {
         setSaved(v);
         setDraft(v);
       })
+      .catch((e) => toast.error(reportError(e)));
+    getClaudeSettingsTemplate()
+      .then(setTemplate)
       .catch((e) => toast.error(reportError(e)));
   }, []);
 
@@ -819,6 +823,7 @@ export function SharedClaudeSettings() {
           <li>{t("エージェントが自分の settings.json を持たなければ、ここの内容が使われ、変更は次の指示から自動で反映されます。")}</li>
           <li>{t("エージェントの Sandbox 設定で編集したものは個別設定になり、ここを変えても更新されません。")}</li>
           <li>{t("env に値を書くと、全エージェントのコンテナへ渡ります。エージェントごとに分けたい認証情報は sandbox.env に書いてください。")}</li>
+          <li>{t("コマンドの拒否は permissions.deny で決めます。雛形には rm・sudo などの初期値が入っています。ここもエージェントの settings.json も空のときは、初期値の拒否だけを渡します。")}</li>
         </ul>
       </Heading>
       <Textarea
@@ -833,6 +838,11 @@ export function SharedClaudeSettings() {
       />
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
       <div className="mt-3 flex justify-end gap-2">
+        {saved !== null && draft.trim() === "" && (
+          <Button type="button" variant="outline" size="sm" disabled={template === null} onClick={() => template && setDraft(template)}>
+            {t("許可・拒否の雛形を入れる")}
+          </Button>
+        )}
         <Button type="button" variant="ghost" size="sm" disabled={!dirty || busy} onClick={() => setDraft(saved ?? "")}>
           {t("変更を破棄")}
         </Button>

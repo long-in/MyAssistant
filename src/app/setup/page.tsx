@@ -151,8 +151,11 @@ function WebAccess() {
   );
 }
 
-/** シェルコマンドによる作業のオン/オフ。実行前の計画の承認と、コマンドごとの許可・拒否のルールで守られる。 */
-function ShellAccess() {
+/**
+ * シェルコマンドによる作業のオン/オフ。実行前の計画の承認と、コマンドごとの許可・拒否のルールで守られる。
+ * `bedrock`は Bedrock 方式(ワークは常に)。コマンドはコンテナ内の Claude Code が実行し、拒否は settings.json で決まるので、その旨を出す。
+ */
+function ShellAccess({ bedrock }: { bedrock: boolean }) {
   const t = useT();
   const [enabled, setEnabled] = useState<boolean | null>(null);
   useEffect(() => {
@@ -179,7 +182,8 @@ function ShellAccess() {
           <ul>
             <li>{t("Claudeを選んでいるときのみ使われます。")}</li>
             <li>{t("rm・sudo・OSの設定に影響するコマンドは常に拒否します。")}</li>
-            <li>{t("許可・拒否・都度承認のコマンドは、下の Command Policy で編集できます。")}</li>
+            {!bedrock && <li>{t("許可・拒否・都度承認のコマンドは、下の Command Policy で編集できます。")}</li>}
+            {bedrock && <li>{t("コンテナ内の Claude Code で拒否するコマンドは、Sandbox タブの settings.json(permissions.deny)で決めます。")}</li>}
           </ul>
         </Heading>
         <p className="text-xs text-muted-foreground">{t("依頼を承認すると、AIがコマンドを実行して作業します。")}</p>
@@ -217,7 +221,10 @@ const toLines = (list: string[]) => list.join("\n");
 const fromLines = (text: string) => text.split("\n");
 const cleanLines = (text: string) => text.trim().replace(/\n{2,}/g, "\n");
 
-/** コマンド権限の編集。1行1項目。入力欄を離れると自動で保存し、次のコマンドから使われる。rm・sudo・機密の拒否なども初期値として入っており、すべて編集できる。 */
+/**
+ * コマンド権限の編集。1行1項目。入力欄を離れると自動で保存し、次のコマンドから使われる。rm・sudo・機密の拒否なども初期値として入っており、すべて編集できる。
+ * アプリ自身がコマンドを実行する API 方式だけで使う(Bedrock 方式では出さない)。
+ */
 function CommandPolicyEditor() {
   const t = useT();
   const [saved, setSaved] = useState<CommandPolicy | null>(null);
@@ -1291,9 +1298,9 @@ export default function Setup() {
   const hasAny = Object.values(status).some(Boolean);
   // ワークのエージェントは、コンテナ内の Claude Code が Bedrock 固定で動くので、Anthropic は使わない
   const workAgent = active.id !== LEADER_ID && active.id !== PERSONAL_ID;
-  // 接続方式はAPIかBedrockのどちらか一方(ワークはBedrock固定)。ローカル(Qwen)は、どちらの方式でも使える
+  // 接続方式はAPIかBedrockのどちらか一方(ワークはBedrock固定)。Bedrock 方式はすべてコンテナで動くので、ローカル(Qwen)は API 方式だけ
   const bedrockMode = workAgent || linkMode === "bedrock";
-  const providers = PROVIDERS.filter((p) => p === "local" || (bedrockMode ? p === "bedrock" : p === "anthropic"));
+  const providers = PROVIDERS.filter((p) => (bedrockMode ? p === "bedrock" : p === "anthropic" || p === "local"));
   const linked = providers.filter((p) => status[p]).length;
 
   return (
@@ -1344,7 +1351,7 @@ export default function Setup() {
                     <div className="text-sm font-medium">{t("接続方式")}</div>
                     <div className="text-xs text-muted-foreground">
                       {bedrockMode
-                        ? t("Bedrock: 校正以外の機能は、コンテナ内の Claude Code で実行します。")
+                        ? t("Bedrock: すべての機能を、コンテナ内の Claude Code で実行します。")
                         : t("API: Anthropic の API キーでモデルを呼びます。")}
                     </div>
                   </div>
@@ -1372,7 +1379,7 @@ export default function Setup() {
                 />
               ))}
               {bedrockMode && <AwsPanel onChanged={refresh} usedBy={usage.bedrock ?? []} />}
-              <LocalLlmPanel onChanged={refresh} usedBy={usage.local ?? []} />
+              {!bedrockMode && <LocalLlmPanel onChanged={refresh} usedBy={usage.local ?? []} />}
             </div>
           </section>
           {active.id === LEADER_ID && <LeaderKeyCopy onCopied={refresh} />}
@@ -1537,8 +1544,9 @@ export default function Setup() {
           {active.id !== LEADER_ID && (
             <TabsContent value="access" className="flex flex-col gap-6">
               <WebAccess />
-              <ShellAccess />
-              <CommandPolicyEditor />
+              <ShellAccess bedrock={bedrockMode} />
+              {/* Bedrock 方式(ワークは常に)は、すべてコンテナ内の Claude Code で動き、コマンド権限は使わない */}
+              {!bedrockMode && <CommandPolicyEditor />}
             </TabsContent>
           )}
           <TabsContent value="sandbox" className="flex flex-col gap-6">

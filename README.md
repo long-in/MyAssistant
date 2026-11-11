@@ -34,7 +34,7 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
 ### 対話
 
 - **LLM 対話** ([chat-flow.md](docs/chat-flow.md))
-  - Anthropic(API キー)に対応し、チャットのモデルは左下のピッカーで切り替えます。Amazon Bedrock(Claude)は、コンテナ内の Claude Code 経由で使います。AI Link の「接続方式」で API か Bedrock のどちらか一方を選び(ワークは Bedrock 固定。登録済みのキー・AWS 設定は切り替えても消えません)、Bedrock のときは、校正以外の機能(チャット・ナレッジの整理・スキル名の英訳・宛先の提案)をコンテナ内の Claude Code で実行します。モデルは Claude Code の settings.json で決めます。端末内のモデルは、どちらの方式でも使えます。
+  - Anthropic(API キー)に対応し、チャットのモデルは左下のピッカーで切り替えます。Amazon Bedrock(Claude)は、コンテナ内の Claude Code 経由で使います。AI Link の「接続方式」で API か Bedrock のどちらか一方を選び(ワークは Bedrock 固定。登録済みのキー・AWS 設定は切り替えても消えません)、Bedrock のときは、すべての機能(チャット・校正・ナレッジの整理・スキルの選定・スキル名の英訳・宛先の提案)をコンテナ内の Claude Code で実行します。モデルは Claude Code の settings.json で決めます。端末内のモデルは、API 方式のときだけ使えます。
   - 端末内で動くローカル LLM(Qwen 2.5 7B)も選べます。キー不要・無料で、会話の内容は端末の外へ出ません。設定画面からダウンロードします(約4.7GB。[local-llm.md](docs/local-llm.md))。
   - 校正・ナレッジ整理・スキル選定のモデルと、LLM に渡すプロンプト(全文を編集でき、初期値へ戻せる)は、エージェントの設定の「AI Settings」にまとまっています。
   - 応答は読み上げ向けの短い話し言葉です。画面には Markdown(表・コード・Mermaid の図)で描画し、返答・コードブロックごとにコピーできます。
@@ -97,6 +97,7 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
     - アプリのデータ(API キー・会話の記録・ほかのエージェントのデータ)の場所は、読み取りもできません。
     - 計画外・破壊的なコマンドと、許可リストへの追加は、画面のボタンでだけ承認できます(音声の「はい」では通りません)。
   - 許可・拒否・都度承認のコマンドは、設定画面の Command Policy で編集できます(実体はナレッジ内の `.my-assistant/command-policy.json`)。
+  - コンテナ内の Claude Code(ワーク、Bedrock 方式)で拒否するコマンドは、Claude Code の settings.json の `permissions.deny` で決めます(雛形に `rm`・`sudo` などの初期値が入っています)。
 - **サンドボックス** ([sandbox.md](docs/sandbox.md))
   - ワークのエージェントへの指示は、常に、エージェントごとの専用 Docker コンテナの中の Claude Code が受け持ちます(切り替えはありません)。パーソナルとリーダーは、AI Link の接続方式に Bedrock を選んだときだけコンテナで動きます。続きの指示は同じセッションで引き継ぎます。
   - コンテナから見えるのは、そのエージェントの担当フォルダ(`/workspace`。エージェントごとに決まった場所で、ソースコードなどを置く)とナレッジ(`/knowledge`)だけで、ほかのエージェントや `~/.aws` には届きません。
