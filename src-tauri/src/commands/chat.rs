@@ -259,6 +259,18 @@ pub fn list_models(ctx: Ctx) -> Vec<llm_router::ModelEntry> {
     llm_router::entries(&ctx, &sandbox_agent::available_models(&ctx.db, &*ctx.global))
 }
 
+/// AI Link の接続方式(`api` / `bedrock`)。ワークは常に`bedrock`。
+#[tauri::command]
+pub fn load_link_mode(ctx: Ctx) -> llm_router::LinkMode {
+    llm_router::link_mode(&ctx)
+}
+
+/// 接続方式を切り替える。登録済みのキー・AWS設定は消さない。ワークは変えられない。
+#[tauri::command]
+pub fn save_link_mode(ctx: Ctx, mode: llm_router::LinkMode) -> Result<(), AppError> {
+    llm_router::set_link_mode(&ctx, mode)
+}
+
 #[tauri::command]
 /// 前回選んだモデル。キー削除などで使えなくなっていれば既定にフォールバックする。
 pub fn load_routing(ctx: Ctx) -> Result<Option<Route>, AppError> {

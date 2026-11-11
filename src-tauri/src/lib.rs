@@ -134,6 +134,8 @@ pub fn run() {
       commands::voice::download_stt_model,
       commands::voice::stt_download_progress,
       commands::voice::voicevox_download_progress,
+      commands::chat::load_link_mode,
+      commands::chat::save_link_mode,
       commands::voice::load_proofread_route,
       commands::voice::save_proofread_route,
       commands::voice::start_recording,

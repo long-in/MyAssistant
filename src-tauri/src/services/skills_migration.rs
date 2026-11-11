@@ -16,8 +16,9 @@ use std::{
 };
 
 use super::{
+    cancel::CancelToken,
     llm_client::{self, ChatMessage},
-    llm_router,
+    llm_router, sandbox_agent,
     skills::{self, Skill},
     workspace::WorkspaceCtx,
 };
@@ -31,6 +32,8 @@ const HARNESS_DIR: &str = "Harness";
 const FILE_MAX_BYTES: u64 = 100_000;
 /// 英訳に渡す件数の上限(1回の起動あたり)。
 const TRANSLATE_MAX: usize = 50;
+/// コンテナ内の Claude Code で英訳するときの上限時間(起動を含む)。
+const TRANSLATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 /// 移行前の名前として許す文字(日本語を含む英数字・`_`・`-`)。ファイル名になるので区切り文字は不可。
 fn legacy_name_ok(name: &str) -> bool {
     (1..=skills::NAME_MAX).contains(&name.chars().count()) && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
@@ -253,20 +256,28 @@ async fn translate(ctx: &WorkspaceCtx, root: &Path, pending: &[(String, String)]
     let pending = &pending[..pending.len().min(TRANSLATE_MAX)];
     let available = batch::available_providers(&ctx.secrets);
     let Some(route) = skills::effective_route(ctx, &available) else { return NameMap::new() };
-    let target = match llm_router::resolve(ctx, &route, &available) {
-        Ok(t) => t,
-        Err(e) => {
-            log::warn!("skill name translation skipped: {e}");
-            return NameMap::new();
-        }
-    };
     let lines: Vec<String> = pending.iter().map(|(n, d)| format!("- {n}: {}", d.chars().take(100).collect::<String>())).collect();
     let system = format!("{TRANSLATE_SYSTEM}\n\n<skills>\n{}\n</skills>", lines.join("\n"));
-    let msg = [ChatMessage { role: "user".into(), content: "上の<skills>の名前を英訳してください。".into() }];
-    match llm_client::complete_cached(ctx, target.provider, &target.model, &system, &msg).await {
-        Ok(done) => {
+    let content = "上の<skills>の名前を英訳してください。";
+    // Bedrock 方式(ワークは常に)は、コンテナ内の Claude Code で英訳する。API 方式はアプリから直接 LLM を呼ぶ
+    let text = if llm_router::is_sandbox(&route) {
+        let model = sandbox_agent::route_model(&ctx.db, &*ctx.global, &route.model);
+        sandbox_agent::complete(ctx, root, Some(&system), content, model.as_deref(), Some(TRANSLATE_TIMEOUT), &CancelToken::default()).await
+    } else {
+        let target = match llm_router::resolve(ctx, &route, &available) {
+            Ok(t) => t,
+            Err(e) => {
+                log::warn!("skill name translation skipped: {e}");
+                return NameMap::new();
+            }
+        };
+        let msg = [ChatMessage { role: "user".into(), content: content.into() }];
+        llm_client::complete_cached(ctx, target.provider, &target.model, &system, &msg).await.map(|d| d.text).map_err(|e| e.to_string())
+    };
+    match text {
+        Ok(text) => {
             let taken: HashSet<String> = skills::list(root).into_iter().map(|s| s.name).collect();
-            parse_name_map(&done.text, pending, taken)
+            parse_name_map(&text, pending, taken)
         }
         Err(e) => {
             log::warn!("skill name translation failed: {e}");

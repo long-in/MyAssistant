@@ -10,7 +10,7 @@ use crate::{
         audio::Recorder,
         batch, debug_log, download_progress::Progress, knowledge,
         llm_router::{self, Route},
-        proofread, pronunciation, sandbox, secrets, settings_transfer::MAX_FILE_BYTES, stt,
+        proofread, pronunciation, secrets, settings_transfer::MAX_FILE_BYTES, stt,
         stt::SttEngine,
         stt_google, tts,
         tts::Voice,
@@ -214,24 +214,18 @@ pub fn save_proofread_route(ctx: Ctx, route: Option<Route>) -> Result<(), AppErr
     let Some(route) = route else {
         return ctx.db.set_setting(proofread::ROUTE_KEY, "");
     };
-    if sandbox::runs_in_sandbox(&ctx.id) {
-        // ワークは、コンテナ(Claude Code)か端末内のQwenだけ
+    if llm_router::uses_container(&ctx) {
+        // Bedrock 方式(ワークは常に)は、コンテナ(Claude Code)か端末内のQwenだけ。コンテナのモデルは settings.json で決まる
         if route.provider == proofread::SANDBOX_PROVIDER {
             sandbox_agent::check_route_model(&ctx.db, &*ctx.global, &route.model)?;
+            let route = llm_router::sandbox_route(&route.model);
             return ctx.db.set_setting(proofread::ROUTE_KEY, &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?);
         }
         if route.provider != secrets::Provider::Local.as_str() {
-            return Err(AppError::Sandbox("ワークの校正は、コンテナ内の Claude Code か端末内のモデルだけ選べます。".into()));
+            return Err(AppError::Sandbox("Bedrock 方式の校正は、コンテナ内の Claude Code か端末内のモデルだけ選べます。".into()));
         }
-    }
-    if llm_router::is_sandbox(&route) {
-        // 個人・リーダーは、コンテナ(Claude Code)も選べる。モデルは settings.json で決まる
-        if !llm_router::offers_sandbox(&ctx) {
-            return Err(AppError::InvalidProvider(route.provider));
-        }
-        sandbox_agent::check_route_model(&ctx.db, &*ctx.global, &route.model)?;
-        let route = llm_router::sandbox_route(&route.model);
-        return ctx.db.set_setting(proofread::ROUTE_KEY, &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?);
+    } else if llm_router::is_sandbox(&route) {
+        return Err(AppError::InvalidProvider(route.provider));
     }
     llm_router::resolve(&ctx, &route, &batch::available_providers(&ctx.secrets))?;
     ctx.db.set_setting(

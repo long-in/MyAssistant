@@ -1,5 +1,11 @@
 /** 日本語の原文 → 英語。辞書にない文字列は原文のまま表示される。 */
 export const EN: Record<string, string> = {
+  "接続方式": "Connection type",
+  "Bedrock: 校正以外の機能は、コンテナ内の Claude Code で実行します。": "Bedrock: every feature except proofreading runs in Claude Code in the container.",
+  "API: Anthropic の API キーでモデルを呼びます。": "API: models are called with your Anthropic API key.",
+  "接続方式を API か Amazon Bedrock から選びます。選んだ方式のカードだけが表示され、登録済みのキーや設定は切り替えても消えません。ローカル(Qwen)は、どちらの方式でも使えます。": "Choose API or Amazon Bedrock. Only the cards for the chosen type are shown, and registered keys and settings are kept when you switch. The local model (Qwen) works with either.",
+  "Bedrockのモデルは、Sandbox タブの Claude Code の settings.json で決めます。校正以外の機能(チャット・整理・スキル名の英訳・宛先の提案)は、コンテナ内の Claude Code で実行します。Sandbox タブでコンテナを準備してください。": "The Bedrock model is set in Claude Code's settings.json in the Sandbox tab. Every feature except proofreading (chat, organizing, skill name translation, recipient suggestions) runs in Claude Code in the container. Prepare the container in the Sandbox tab.",
+  "API 方式では、アプリが Anthropic の API を直接呼びます。": "With the API type, the app calls the Anthropic API directly.",
   "個別設定": "Custom",
   "全体設定を利用": "Use global settings",
   "個別設定を使用中": "Using custom",

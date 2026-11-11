@@ -34,7 +34,7 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
 ### 対話
 
 - **LLM 対話** ([chat-flow.md](docs/chat-flow.md))
-  - Anthropic(API キー)に対応し、チャットのモデルは左下のピッカーで切り替えます。Amazon Bedrock(Claude)は、コンテナ内の Claude Code 経由で使います(パーソナル・リーダーは、ピッカーで「コンテナ内の Claude Code」を選びます。モデルは Claude Code の settings.json で決めます)。
+  - Anthropic(API キー)に対応し、チャットのモデルは左下のピッカーで切り替えます。Amazon Bedrock(Claude)は、コンテナ内の Claude Code 経由で使います。AI Link の「接続方式」で API か Bedrock のどちらか一方を選び(ワークは Bedrock 固定。登録済みのキー・AWS 設定は切り替えても消えません)、Bedrock のときは、校正以外の機能(チャット・ナレッジの整理・スキル名の英訳・宛先の提案)をコンテナ内の Claude Code で実行します。モデルは Claude Code の settings.json で決めます。端末内のモデルは、どちらの方式でも使えます。
   - 端末内で動くローカル LLM(Qwen 2.5 7B)も選べます。キー不要・無料で、会話の内容は端末の外へ出ません。設定画面からダウンロードします(約4.7GB。[local-llm.md](docs/local-llm.md))。
   - 校正・ナレッジ整理・スキル選定のモデルと、LLM に渡すプロンプト(全文を編集でき、初期値へ戻せる)は、エージェントの設定の「AI Settings」にまとまっています。
   - 応答は読み上げ向けの短い話し言葉です。
@@ -98,7 +98,7 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
 - **サンドボックス** ([sandbox.md](docs/sandbox.md))
   - 全体設定で有効にすると、パーソナルを含む全エージェントへの指示を、エージェントごとの専用 Docker コンテナの中の Claude Code が受け持ちます(既定は無効)。続きの指示は同じセッションで引き継ぎます。
   - コンテナから見えるのは、そのエージェントの担当フォルダ(`/workspace`。エージェントごとに決まった場所で、ソースコードなどを置く)とナレッジ(`/knowledge`)だけで、ほかのエージェントや `~/.aws` には届きません。
-  - Claude Code の接続先は Amazon Bedrock(AWS の一時キー)です。モデルと許可するツールは、Claude Code の settings.json で決めます。パーソナル・リーダーは、モデルに「コンテナ内の Claude Code」を選んだときだけコンテナで動きます(それ以外の Anthropic・端末内のモデルは従来どおり)。
+  - Claude Code の接続先は Amazon Bedrock(AWS の一時キー)です。モデルと許可するツールは、Claude Code の settings.json で決めます。パーソナル・リーダーは、AI Link の接続方式に Bedrock を選んだときだけコンテナで動きます(API 方式では、Anthropic・端末内のモデルを従来どおり使います)。
   - エージェントごとの環境変数(`sandbox.env`)と AWS の一時キーを、実行時にだけコンテナへ渡します。イメージは全エージェント共通で、Dockerfile は全体設定で編集します。エージェントごとに専用の Dockerfile を登録すると、そちらを優先します。
   - Docker が使えないときは、ホストでは実行せずエラーにします。
 

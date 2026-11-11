@@ -57,7 +57,10 @@ const FEATURES: (Feature & { only?: "leader" | "agent" })[] = [
   { id: "suggest", title: "宛先の提案", description: "指示の配布先を、過去の履歴から提案する指示です。軽量なモデルを自動で選びます。", only: "leader" },
 ];
 
-/** ワークのエージェントで、校正をコンテナ内の Claude Code で行うことを示す `Route.provider`(Rust 側の `SANDBOX_PROVIDER`)。 */
+/** Bedrock 方式(ワークは常に)で、モデルを選べる機能。コンテナ内の Claude Code か、端末内のモデル(校正だけ)から選ぶ。 */
+const CONTAINER_ROUTES: PromptId[] = ["proofread", "organize", "skills"];
+
+/** Bedrock 方式で、校正をコンテナ内の Claude Code で行うことを示す `Route.provider`(Rust 側の `SANDBOX_PROVIDER`)。 */
 const SANDBOX_ROUTE: Route = { provider: "sandbox" as Route["provider"], model: "" };
 
 /** ワークで、会話のモデルを選ぶカードに使う機能。 */
@@ -95,7 +98,7 @@ function SandboxModelSelect({ models, value, onChange, label }: { models: string
  *LLMを使う機能ごとに、使うモデルと渡すプロンプトを1か所で扱う。
  * プロンプトは全文を編集でき、「全体設定を利用」で個別の上書きを外す(以後は全体設定の変更に自動で追従する)。変更は次の呼び出しから反映される。
  */
-export default function AiSettings({ keyStatus, leader, work = false }: { keyStatus: Partial<KeyStatus>; leader: boolean; work?: boolean }) {
+export default function AiSettings({ keyStatus, leader, work = false, bedrock = work }: { keyStatus: Partial<KeyStatus>; leader: boolean; work?: boolean; bedrock?: boolean }) {
   const t = useT();
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [routes, setRoutes] = useState<Partial<Record<PromptId, Route | null>>>({});
@@ -108,8 +111,8 @@ export default function AiSettings({ keyStatus, leader, work = false }: { keySta
     Promise.all([
       listModels(),
       listPrompts(),
-      work ? getSandboxModels() : Promise.resolve({ models: [], selected: null } as SandboxModels),
-      ...features.map(async (f) => [f.id, !work || f.id === "proofread" || f.id === "organize" ? await ROUTES[f.id]?.load() : null] as const),
+      bedrock ? getSandboxModels() : Promise.resolve({ models: [], selected: null } as SandboxModels),
+      ...features.map(async (f) => [f.id, !bedrock || CONTAINER_ROUTES.includes(f.id) ? await ROUTES[f.id]?.load() : null] as const),
     ])
       .then(([m, p, sm, ...r]) => {
         setModels(m);
@@ -119,7 +122,7 @@ export default function AiSettings({ keyStatus, leader, work = false }: { keySta
       })
       .catch((e) => toast.error(reportError(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keyStatus, leader, work]);
+  }, [keyStatus, leader, work, bedrock]);
 
   const changeRoute = useCallback(
     async (id: PromptId, next: Route | null) => {
@@ -133,14 +136,13 @@ export default function AiSettings({ keyStatus, leader, work = false }: { keySta
     [],
   );
 
-  // コンテナ内の Claude Code を選べるのは、校正と整理だけ(スキルの選定・宛先の提案は、毎回呼ぶので選べない)
-  const modelsFor = (id: PromptId) => (id === "proofread" || id === "organize" ? models : models.filter((m) => m.provider !== SANDBOX_PROVIDER));
+  const modelsFor = (id: PromptId) => models.filter((m) => m.provider !== SANDBOX_PROVIDER || id === "proofread");
   const keysFor = (list: ModelInfo[]): ModelKeyStatus => ({ ...keyStatus, sandbox: list.some((m) => m.provider === SANDBOX_PROVIDER) });
 
   return (
     <section className="hud-panel hud-accent px-5 py-4">
       <Heading title="AI Settings" help={t("AI設定")}>
-        <p>{work ? t("AIを使う機能ごとに、使うモデルと渡すプロンプト(指示)を設定します。選べるモデルは、Sandbox タブの Claude Code の settings.json(model・availableModels)で決まります。") : t("AIを使う機能ごとに、使うモデルと渡すプロンプト(指示)を設定します。")}</p>
+        <p>{bedrock ? t("AIを使う機能ごとに、使うモデルと渡すプロンプト(指示)を設定します。選べるモデルは、Sandbox タブの Claude Code の settings.json(model・availableModels)で決まります。") : t("AIを使う機能ごとに、使うモデルと渡すプロンプト(指示)を設定します。")}</p>
         <ul>
           <li>{t("プロンプトは全文を編集できます。変更は次の呼び出しから反映されます。")}</li>
           <li>{t("出力の形式(JSONなど)を示す部分を消すと、結果を読み取れず機能が働かなくなることがあります。")}</li>
@@ -151,7 +153,7 @@ export default function AiSettings({ keyStatus, leader, work = false }: { keySta
       </Heading>
       <div className="flex flex-col gap-3">
         {features.map((f) => {
-          const api = work && f.id !== "proofread" && f.id !== "organize" ? undefined : ROUTES[f.id];
+          const api = bedrock && !CONTAINER_ROUTES.includes(f.id) ? undefined : ROUTES[f.id];
           const route = routes[f.id] ?? null;
           const localModel = models.find((m) => m.provider === "local");
           const list = modelsFor(f.id);
@@ -173,7 +175,7 @@ export default function AiSettings({ keyStatus, leader, work = false }: { keySta
                   }
                 />
               )}
-              {api && work && f.id === "organize" && (
+              {api && bedrock && (f.id === "organize" || f.id === "skills") && (
                 <div className="flex flex-col gap-2">
                   {f.modelLabel && <p className="text-xs text-muted-foreground">{t(f.modelLabel)}</p>}
                   <SandboxModelSelect
@@ -184,7 +186,7 @@ export default function AiSettings({ keyStatus, leader, work = false }: { keySta
                   />
                 </div>
               )}
-              {api && work && f.id === "proofread" && (
+              {api && bedrock && f.id === "proofread" && (
                 <div className="flex flex-col gap-2">
                   <Select
                     value={route?.provider === SANDBOX_ROUTE.provider ? "sandbox" : route?.provider === "local" ? "local" : "off"}
@@ -214,7 +216,7 @@ export default function AiSettings({ keyStatus, leader, work = false }: { keySta
                   </p>
                 </div>
               )}
-              {api && !work && (
+              {api && !bedrock && (
                 <div className="flex flex-col gap-2">
                   {api.optional && (
                     <div className="flex items-center justify-between gap-3">

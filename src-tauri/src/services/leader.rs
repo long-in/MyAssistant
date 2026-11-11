@@ -8,6 +8,8 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::{
+    cancel::CancelToken,
+    sandbox_agent,
     prompts::{self, PromptId},
     tool_loop::{TaskEvent, DraftTarget},
     task_run::RunStatus,
@@ -17,6 +19,9 @@ use super::{
     workspace::{Agent, WorkspaceCtx},
 };
 use crate::{db::{Db, LedgerRow}, utils::error::AppError};
+
+/// コンテナ内の Claude Code で宛先を提案するときの上限時間(起動を含む)。
+const SUGGEST_SANDBOX_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
 /// リーダープロンプト(行動原理・役割)を保存する設定のキー。
 pub const PROMPT_KEY: &str = "leader_prompt";
@@ -418,13 +423,16 @@ fn parse_suggestion(text: &str, agents: &[Agent]) -> Vec<String> {
 
 /// 提案に使うモデル。軽量なモデルがあればそれを、無ければ既定を使う。キーが無ければ`None`。
 pub fn suggest_route(ctx: &WorkspaceCtx) -> Option<Route> {
+    // Bedrock 方式は、提案もコンテナ内の Claude Code で行う(提案のたびにコンテナを起動する)
+    if llm_router::uses_container(ctx) {
+        return Some(llm_router::sandbox_route(""));
+    }
     let available = super::batch::available_providers(&ctx.secrets);
     llm_router::catalog(ctx)
         .into_iter()
         .find(|m| m.tier == Tier::Light && available.contains(&m.provider))
         .map(|m| Route { provider: m.provider.as_str().into(), model: m.id })
-        // コンテナ内の Claude Code は、提案のたびに起動してしまうので使わない(キーが無ければ提案しない)
-        .or_else(|| llm_router::effective(ctx, None, &available).filter(|r| !llm_router::is_sandbox(r)))
+        .or_else(|| llm_router::effective(ctx, None, &available))
 }
 
 /// 宛先の提案。履歴が無い、または、キーが無いときは空(LLMを呼ばない)。リーダーのキーと使用量で呼ぶ。
@@ -436,14 +444,21 @@ pub async fn suggest(leader: &WorkspaceCtx, agents: &[Agent], instruction: &str)
         return Ok(Vec::new());
     }
     let Some(route) = suggest_route(leader) else { return Ok(Vec::new()) };
-    let available = super::batch::available_providers(&leader.secrets);
-    let target = llm_router::resolve(leader, &route, &available)?;
     let system = build_system(&prompts::load(&leader.db, &*leader.global, PromptId::Suggest)?, &load_prompt(&leader.db)?);
-    let msg = [ChatMessage { role: "user".into(), content: build_user_prompt(&render_history(&rows), agents, &instruction) }];
-    match llm_client::complete(leader, target.provider, &target.model, Some(&system), &msg).await {
-        Ok(done) => {
-            Ok(parse_suggestion(&done.text, agents))
-        }
+    let content = build_user_prompt(&render_history(&rows), agents, &instruction);
+    let reply = if llm_router::is_sandbox(&route) {
+        let root = super::batch::knowledge_root(leader)?;
+        std::fs::create_dir_all(&root).map_err(|e| AppError::Io(e.to_string()))?;
+        let model = sandbox_agent::route_model(&leader.db, &*leader.global, &route.model);
+        sandbox_agent::complete(leader, &root, Some(&system), &content, model.as_deref(), Some(SUGGEST_SANDBOX_TIMEOUT), &CancelToken::default()).await
+    } else {
+        let available = super::batch::available_providers(&leader.secrets);
+        let target = llm_router::resolve(leader, &route, &available)?;
+        let msg = [ChatMessage { role: "user".into(), content }];
+        llm_client::complete(leader, target.provider, &target.model, Some(&system), &msg).await.map(|d| d.text).map_err(|e| e.to_string())
+    };
+    match reply {
+        Ok(text) => Ok(parse_suggestion(&text, agents)),
         Err(e) => {
             log::warn!("leader suggestion failed: {e}");
             Ok(Vec::new())
