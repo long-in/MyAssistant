@@ -147,6 +147,7 @@ fn is_excluded(path: &str, category: &str) -> bool {
         || category == CAPTURE_CATEGORY
         || super::memory::is_memory(path)
         || super::skills::is_skill(path)
+        || knowledge::is_data(path)
         || path.split('/').any(|p| p.starts_with('.'))
 }
 
@@ -160,6 +161,10 @@ pub fn fingerprint(root: &Path) -> u64 {
         entries.sort_by_key(|e| e.file_name());
         for e in entries {
             let Ok(ft) = e.file_type() else { continue };
+            // `data/`(ソースコードなど)の変更では作り直さない
+            if depth == 0 && e.file_name().to_string_lossy().eq_ignore_ascii_case(knowledge::DATA_DIR) {
+                continue;
+            }
             if ft.is_dir() && depth < 4 {
                 walk(&e.path(), depth + 1, h);
             } else if ft.is_file() && e.path().extension().is_some_and(|x| x == "md") {

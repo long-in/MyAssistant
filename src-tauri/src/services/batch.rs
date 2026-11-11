@@ -246,10 +246,10 @@ fn group(items: Vec<Item>) -> Vec<(String, Vec<Item>)> {
     out
 }
 
-/// 整理で書かない場所(記憶・スキル・キャプチャ・隠しフォルダ)。人やツールが専用に書くものを整理で変えない。
+/// 整理で書かない場所(記憶・スキル・キャプチャ・`data/`・隠しフォルダ)。人やツールが専用に書くものを整理で変えない。
 fn is_reserved(category: &str) -> bool {
     let first = category.trim().trim_start_matches("./").split(['/', '\\']).next().unwrap_or("");
-    memory::is_memory(first) || skills::is_skill(first) || first.eq_ignore_ascii_case(knowledge::CAPTURE_CATEGORY) || first.starts_with('.')
+    memory::is_memory(first) || skills::is_skill(first) || first.eq_ignore_ascii_case(knowledge::CAPTURE_CATEGORY) || knowledge::is_data(first) || first.starts_with('.')
 }
 
 /// 話題に近い既存ノートを、グラフ索引で選ぶ(ローカル・無料)。

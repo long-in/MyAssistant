@@ -194,19 +194,21 @@ pub async fn stop_agent_sandbox(ctx: Ctx) -> Result<(), AppError> {
     sandbox::stop_container(&id).await.map_err(AppError::Sandbox)
 }
 
-/// `/workspace`にマウントするフォルダ(エージェントごとに決まった場所)。無ければ作る。
+/// 担当システムのフォルダ(ナレッジ直下の`data/`。コンテナでは`/knowledge/data`)。無ければ作る。
 #[tauri::command]
-pub fn get_sandbox_workspace_dir(ctx: Ctx) -> Result<String, AppError> {
+pub fn get_sandbox_data_dir(ctx: Ctx) -> Result<String, AppError> {
     supported(&ctx)?;
-    let dir = sandbox::ensure_workspace_dir(&ctx).map_err(AppError::Sandbox)?;
+    let root = crate::services::batch::knowledge_root(&ctx)?;
+    let dir = sandbox::ensure_data_dir(&ctx, &root).map_err(AppError::Sandbox)?;
     Ok(dir.to_string_lossy().into_owned())
 }
 
-/// `/workspace`にマウントするフォルダを Finder で開く(無ければ作る)。
+/// 担当システムのフォルダを Finder で開く(無ければ作る)。
 #[tauri::command]
-pub fn open_sandbox_workspace_dir(ctx: Ctx) -> Result<(), AppError> {
+pub fn open_sandbox_data_dir(ctx: Ctx) -> Result<(), AppError> {
     supported(&ctx)?;
-    let dir = sandbox::ensure_workspace_dir(&ctx).map_err(AppError::Sandbox)?;
+    let root = crate::services::batch::knowledge_root(&ctx)?;
+    let dir = sandbox::ensure_data_dir(&ctx, &root).map_err(AppError::Sandbox)?;
     let status = std::process::Command::new("/usr/bin/open").arg(&dir).status().map_err(|e| AppError::Io(e.to_string()))?;
     if status.success() { Ok(()) } else { Err(AppError::Io(format!("open failed: {status}"))) }
 }
