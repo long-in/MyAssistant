@@ -68,7 +68,7 @@ flowchart LR
 
 - モデルは Qwen2.5-7B-Instruct のみ。3B は Qwen Research License(非商用)のため扱わない。7B は Apache 2.0。
 - llama-server は同梱せず、実行時に取得する(VOICEVOX と同じ運用)。ビルドと CI に手順を足さないため。
-- Web 検索・ページ取得(Anthropic のサーバーツール)は使えない。ファイル操作・コマンド実行(承認付き)・スキルのツールは Claude と同じものを渡す。
+- Web 検索・ページ取得(Anthropic のサーバーツール)は使えない。ファイル操作・設計書の参照・コマンド実行(承認付き)・スキルのツールは Claude と同じものを渡す。
 
 ## 既知の限界
 
