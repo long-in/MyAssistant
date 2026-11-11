@@ -28,7 +28,7 @@ sequenceDiagram
 3. **会話の用意**: 往復数が上限(調整項目 `history_exchanges`、既定 10)を超えていれば、古い分を要約して「要約 + 直近の会話」だけを LLM へ渡す(後述)。
 4. **システムプロンプトの組み立て**(後述)。
 5. **LLM 呼び出し**: ファイル操作・コマンド実行・Web 検索(Bedrock とローカルは除く)のツールを付けたループ(`commands/task.rs::run_with_tools`)で呼ぶ。
-6. **後処理**: 応答を `assistant` として保存し、1 往復をナレッジの「キャプチャ」へ追記して `knowledge-updated` を通知する。LLM を使う整理はここでは行わない([knowledge.md](knowledge.md))。会話が途切れたら裏で記憶を更新するよう予約する([memory.md](memory.md))。
+6. **後処理**: 応答を `assistant` として保存し、1 往復をナレッジの「キャプチャ」へ追記して `knowledge-updated` を通知する。LLM を使う整理はここでは行わない([knowledge.md](knowledge.md))。
 
 使用量(入力・出力トークン)は LLM 呼び出しごとに `usage_logs` へ記録する。途中で失敗しても、そこまでに使った分は残る。
 
