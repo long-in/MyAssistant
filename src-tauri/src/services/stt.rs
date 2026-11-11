@@ -1,4 +1,5 @@
 //! ローカルWhisperによる音声認識。
+use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -18,7 +19,13 @@ use crate::{
 
 /// モデルを取得するHugging Faceのリビジョン(ブランチ・タグ・コミット)の設定キー。
 pub const REVISION_KEY: &str = "whisper_revision";
-pub const DEFAULT_REVISION: &str = "main";
+/// 既定はコミットを固定する(ブランチ名は中身が変わりうる)。このコミットの取得物だけ、SHA-256を照合できる。
+pub const DEFAULT_REVISION: &str = "5359861c739e955e79d9a303bcbc70fb988958b1";
+
+/// 取得物をSHA-256で照合できるリビジョンか。利用者が別のリビジョンを指定したときは照合しない(画面で知らせる)。
+pub fn is_verified(revision: &str) -> bool {
+    revision == DEFAULT_REVISION
+}
 
 /// 設定のリビジョン。未設定・不正な値は既定値(壊れた設定で取得先を変えさせない)。
 pub fn revision(db: &Db) -> Result<String, AppError> {
@@ -33,13 +40,23 @@ pub fn set_revision(db: &Db, revision: &str) -> Result<(), AppError> {
 /// 使えるモデル。先頭ほど優先する(日本語の精度が高い量子化版large-v3-turbo、次にsmall)。
 /// 最小サイズは破損・途中切れの検出用(実サイズはそれぞれ約574MB、約466MB)。
 const MODELS: [Model; 2] = [
-    Model { file: "ggml-large-v3-turbo-q5_0.bin", min_bytes: 500 * 1024 * 1024 },
-    Model { file: "ggml-small.bin", min_bytes: 400 * 1024 * 1024 },
+    Model {
+        file: "ggml-large-v3-turbo-q5_0.bin",
+        min_bytes: 500 * 1024 * 1024,
+        sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+    },
+    Model {
+        file: "ggml-small.bin",
+        min_bytes: 400 * 1024 * 1024,
+        sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+    },
 ];
 
 struct Model {
     file: &'static str,
     min_bytes: u64,
+    /// `DEFAULT_REVISION`での取得物のSHA-256。
+    sha256: &'static str,
 }
 
 impl Model {
@@ -102,15 +119,19 @@ pub async fn download_model(path: &Path, revision: &str) -> Result<(), AppError>
     let total = res.content_length().unwrap_or(0);
     let mut file = tokio::fs::File::create(&tmp).await.map_err(|e| AppError::Stt(e.to_string()))?;
     let mut done = 0u64;
+    let mut hasher = Sha256::new();
     while let Some(chunk) = res.chunk().await.map_err(AppError::from_reqwest)? {
         file.write_all(&chunk).await.map_err(|e| AppError::Stt(e.to_string()))?;
+        hasher.update(&chunk);
         done += chunk.len() as u64;
         progress.set(Progress::bytes(done, total));
     }
     file.flush().await.map_err(|e| AppError::Stt(e.to_string()))?;
     drop(file);
     let size = tokio::fs::metadata(&tmp).await.map(|m| m.len()).unwrap_or(0);
-    if size < model.min_bytes {
+    // 既定のリビジョンは、固定したSHA-256と一致しなければ破棄する(差し替えられた取得物を読み込まない)
+    let digest: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    if size < model.min_bytes || (is_verified(revision) && digest != model.sha256) {
         let _ = tokio::fs::remove_file(&tmp).await;
         return Err(AppError::BadResponse);
     }

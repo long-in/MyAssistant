@@ -118,6 +118,9 @@ pub fn voicevox_download_progress() -> Option<Progress> {
 pub struct ModelSources {
     whisper_revision: String,
     whisper_default: &'static str,
+    /// 取得物をSHA-256で照合できるか(既定のリビジョン・バージョンのときだけ)。
+    whisper_verified: bool,
+    voicevox_verified: bool,
     voicevox: voicevox::Versions,
     voicevox_installed: Option<voicevox::Versions>,
     voicevox_default: voicevox::Versions,
@@ -128,6 +131,8 @@ pub fn get_model_sources(app: AppHandle, ctx: Ctx) -> Result<ModelSources, AppEr
     Ok(ModelSources {
         whisper_revision: stt::revision(&ctx.db)?,
         whisper_default: stt::DEFAULT_REVISION,
+        whisper_verified: stt::is_verified(&stt::revision(&ctx.db)?),
+        voicevox_verified: voicevox::Versions::load(&ctx.db)?.is_verified(),
         voicevox: voicevox::Versions::load(&ctx.db)?,
         voicevox_installed: voicevox::installed_versions(&app_data(&app)?),
         voicevox_default: voicevox::Versions::default(),
@@ -308,7 +313,7 @@ async fn transcribe_recording(
 
 /// 校正モデルが登録されていれば、`session_id`の直近の会話と訂正履歴を文脈に校正する。
 async fn proofread_text(ctx: &WorkspaceCtx, session_id: Option<&str>, text: String) -> Result<String, AppError> {
-    let Some(route) = proofread::effective_route(&ctx, &batch::available_providers(&ctx.secrets))? else {
+    let Some(route) = proofread::effective_route(ctx, &batch::available_providers(&ctx.secrets))? else {
         return Ok(text);
     };
     let corrections = batch::knowledge_root(ctx)

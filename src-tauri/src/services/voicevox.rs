@@ -55,7 +55,29 @@ impl Default for Versions {
     }
 }
 
+/// 既定のバージョンの取得物のSHA-256(COREとONNX Runtimeは`archs`の配布物名ごと)。
+/// 利用者が別のバージョンを指定した項目は照合しない(画面で知らせる)。
+const CORE_SHA256: [(&str, &str); 2] = [
+    ("osx-arm64", "b3959b18d64f0039e402b4f70f14291a182910bd739eeb6130d1a0324742644d"),
+    ("osx-x64", "8bbf3c7ff790a787b8cf6db1f654ec39155b1401831ff46051448a8a670e89ce"),
+];
+const ONNXRUNTIME_SHA256: [(&str, &str); 2] = [
+    ("osx-arm64", "010bdb42fefb4ca73429c0d8d3df2cb20a3b6ca0affebac3c05dc450b9fe338d"),
+    ("osx-x86_64", "48d86ebd4a588e179c3e7e91741c76b5cf7606b30fd250eee2cf62857e8fca0e"),
+];
+const DICT_SHA256: &str = "fe6ba0e43542cef98339abdffd903e062008ea170b04e7e2a35da805902f382a";
+const MODEL_SHA256: [(&str, &str); 1] = [("0.vvm", "ecd35374d4182cd883cba5040376f7f888cc6ba248b1c2f4cea07cdb34bb1318")];
+
+fn pinned(table: &[(&'static str, &'static str)], key: &str) -> Option<&'static str> {
+    table.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
+}
+
 impl Versions {
+    /// すべての取得物をSHA-256で照合できる(全項目が既定のバージョン)か。
+    pub fn is_verified(&self) -> bool {
+        *self == Self::default()
+    }
+
     /// URLやパスへ埋め込める識別子だけか。
     pub fn validate(&self) -> Result<(), AppError> {
         [&self.core, &self.onnxruntime, &self.models, &self.dict_release, &self.dict].into_iter().try_for_each(|v| version::validate(v))
@@ -158,8 +180,11 @@ pub fn installed(app_data: &Path) -> bool {
 }
 
 /// `url`を`dest`へ保存する。一時ファイル経由で置き、`min_bytes`未満(途中切れ)は失敗にする。
+/// `sha256`があれば照合し、一致しなければ破棄して失敗にする(差し替えられた取得物を展開・読み込みしない)。
 /// `on_fraction`へ、サイズが分かる間はこのファイルの進み(0〜1)を流す。
-async fn download(url: &str, dest: &Path, min_bytes: u64, on_fraction: impl Fn(f64)) -> Result<(), AppError> {
+async fn download(url: &str, dest: &Path, min_bytes: u64, sha256: Option<&str>, on_fraction: impl Fn(f64)) -> Result<(), AppError> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
     let mut res = super::proxy::get(url).await?;
     if !res.status().is_success() {
         return Err(AppError::from_status(res.status().as_u16()));
@@ -170,6 +195,7 @@ async fn download(url: &str, dest: &Path, min_bytes: u64, on_fraction: impl Fn(f
     let mut done = 0u64;
     while let Some(chunk) = res.chunk().await.map_err(AppError::from_reqwest)? {
         file.write_all(&chunk).await.map_err(|e| AppError::Io(e.to_string()))?;
+        hasher.update(&chunk);
         done += chunk.len() as u64;
         if let Some(total) = total {
             on_fraction(done as f64 / total as f64);
@@ -178,7 +204,8 @@ async fn download(url: &str, dest: &Path, min_bytes: u64, on_fraction: impl Fn(f
     file.flush().await.map_err(|e| AppError::Io(e.to_string()))?;
     drop(file);
     let size = tokio::fs::metadata(&tmp).await.map(|m| m.len()).unwrap_or(0);
-    if size < min_bytes {
+    let digest: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    if size < min_bytes || sha256.is_some_and(|expected| expected != digest) {
         let _ = tokio::fs::remove_file(&tmp).await;
         return Err(AppError::BadResponse);
     }
@@ -242,15 +269,20 @@ async fn fetch_all(l: &Layout, work: &Path, core_arch: &str, onnx_arch: &str, v:
     // 進み具合は、取得するファイル数(CORE・ONNX Runtime・辞書・音声モデル)に対する割合で出す
     let n = 3 + MODEL_FILES.len();
     let at = |done: usize| move |fraction: f64| DOWNLOAD.set(Progress::steps(done, n, fraction));
+    // 既定のバージョンの項目だけ、固定したSHA-256と照合する
+    let d = Versions::default();
+    let core_sha = (v.core == d.core).then(|| pinned(&CORE_SHA256, core_arch)).flatten();
+    let onnx_sha = (v.onnxruntime == d.onnxruntime).then(|| pinned(&ONNXRUNTIME_SHA256, onnx_arch)).flatten();
+    let dict_sha = (v.dict_release == d.dict_release && v.dict == d.dict).then_some(DICT_SHA256);
 
     let zip = work.join("core.zip");
-    download(&format!("{gh}/VOICEVOX/voicevox_core/releases/download/{core}/voicevox_core-{core_arch}-{core}.zip", core = v.core), &zip, 1 << 20, at(0)).await?;
+    download(&format!("{gh}/VOICEVOX/voicevox_core/releases/download/{core}/voicevox_core-{core_arch}-{core}.zip", core = v.core), &zip, 1 << 20, core_sha, at(0)).await?;
     let out = work.join("core");
     extract("unzip", &["-q", "-o"], &zip, &out).await?;
     place(&out.join(format!("voicevox_core-{core_arch}-{}/lib/libvoicevox_core.dylib", v.core)), &l.core())?;
 
     let tgz = work.join("onnxruntime.tgz");
-    download(&format!("{gh}/VOICEVOX/onnxruntime-builder/releases/download/voicevox_onnxruntime-{ort}/voicevox_onnxruntime-{onnx_arch}-{ort}.tgz", ort = v.onnxruntime), &tgz, 1 << 20, at(1)).await?;
+    download(&format!("{gh}/VOICEVOX/onnxruntime-builder/releases/download/voicevox_onnxruntime-{ort}/voicevox_onnxruntime-{onnx_arch}-{ort}.tgz", ort = v.onnxruntime), &tgz, 1 << 20, onnx_sha, at(1)).await?;
     let out = work.join("onnxruntime");
     tokio::fs::create_dir_all(&out).await.map_err(|e| AppError::Io(e.to_string()))?;
     extract("tar", &["-xzf"], &tgz, &out).await?;
@@ -260,7 +292,7 @@ async fn fetch_all(l: &Layout, work: &Path, core_arch: &str, onnx_arch: &str, v:
     )?;
 
     let tgz = work.join("dict.tgz");
-    download(&format!("{gh}/r9y9/open_jtalk/releases/download/{}/{}.tar.gz", v.dict_release, v.dict_name()), &tgz, 1 << 20, at(2)).await?;
+    download(&format!("{gh}/r9y9/open_jtalk/releases/download/{}/{}.tar.gz", v.dict_release, v.dict_name()), &tgz, 1 << 20, dict_sha, at(2)).await?;
     let out = work.join("dict");
     tokio::fs::create_dir_all(&out).await.map_err(|e| AppError::Io(e.to_string()))?;
     extract("tar", &["-xzf"], &tgz, &out).await?;
@@ -269,7 +301,8 @@ async fn fetch_all(l: &Layout, work: &Path, core_arch: &str, onnx_arch: &str, v:
     // 音声モデルは最後に置く(`installed`の判定に使うため、これが揃えば完了)
     for (i, model) in MODEL_FILES.iter().enumerate() {
         let tmp = work.join(model);
-        download(&format!("{gh}/VOICEVOX/voicevox_vvm/releases/download/{}/{model}", v.models), &tmp, 1 << 20, at(3 + i)).await?;
+        let model_sha = (v.models == d.models).then(|| pinned(&MODEL_SHA256, model)).flatten();
+        download(&format!("{gh}/VOICEVOX/voicevox_vvm/releases/download/{}/{model}", v.models), &tmp, 1 << 20, model_sha, at(3 + i)).await?;
         place(&tmp, &l.models().join(model))?;
     }
     Ok(())
