@@ -1445,10 +1445,11 @@ mod tests {
     #[test]
     fn legacy_workspace_is_moved_into_the_knowledge() {
         let dir = tempfile::tempdir().unwrap();
-        let ctx = WorkspaceCtx::open("0b9c3f5e-1d2a-4c6b-8e7f-123456789abc", dir.path()).unwrap();
-        let knowledge = dir.path().join("knowledge");
         std::fs::create_dir_all(dir.path().join("workspace/app")).unwrap();
         std::fs::write(dir.path().join("workspace/app/main.rs"), "fn main() {}").unwrap();
+        // 開いたときに、以前のフォルダを`data/`へ移す
+        let ctx = WorkspaceCtx::open("0b9c3f5e-1d2a-4c6b-8e7f-123456789abc", dir.path()).unwrap();
+        let knowledge = dir.path().join("knowledge");
         let data = ensure_data_dir(&ctx, &knowledge).unwrap();
         assert_eq!(std::fs::read_to_string(data.join("app/main.rs")).unwrap(), "fn main() {}");
         assert!(!dir.path().join("workspace").exists());
