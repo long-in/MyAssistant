@@ -151,8 +151,11 @@ function WebAccess() {
   );
 }
 
-/** シェルコマンドによる作業のオン/オフ。実行前の計画の承認と、コマンドごとの許可・拒否のルールで守られる。 */
-function ShellAccess() {
+/**
+ * シェルコマンドによる作業のオン/オフ。実行前の計画の承認と、コマンドごとの許可・拒否のルールで守られる。
+ * `bedrock`は Bedrock 方式(ワークは常に)。コンテナ内の Claude Code の拒否は settings.json で決まるので、その旨を添える。
+ */
+function ShellAccess({ work, bedrock }: { work: boolean; bedrock: boolean }) {
   const t = useT();
   const [enabled, setEnabled] = useState<boolean | null>(null);
   useEffect(() => {
@@ -179,7 +182,8 @@ function ShellAccess() {
           <ul>
             <li>{t("Claudeを選んでいるときのみ使われます。")}</li>
             <li>{t("rm・sudo・OSの設定に影響するコマンドは常に拒否します。")}</li>
-            <li>{t("許可・拒否・都度承認のコマンドは、下の Command Policy で編集できます。")}</li>
+            {!work && <li>{t("許可・拒否・都度承認のコマンドは、下の Command Policy で編集できます。")}</li>}
+            {bedrock && <li>{t("コンテナ内の Claude Code で拒否するコマンドは、Sandbox タブの settings.json(permissions.deny)で決めます。")}</li>}
           </ul>
         </Heading>
         <p className="text-xs text-muted-foreground">{t("依頼を承認すると、AIがコマンドを実行して作業します。")}</p>
@@ -217,8 +221,11 @@ const toLines = (list: string[]) => list.join("\n");
 const fromLines = (text: string) => text.split("\n");
 const cleanLines = (text: string) => text.trim().replace(/\n{2,}/g, "\n");
 
-/** コマンド権限の編集。1行1項目。入力欄を離れると自動で保存し、次のコマンドから使われる。rm・sudo・機密の拒否なども初期値として入っており、すべて編集できる。 */
-function CommandPolicyEditor() {
+/**
+ * コマンド権限の編集。1行1項目。入力欄を離れると自動で保存し、次のコマンドから使われる。rm・sudo・機密の拒否なども初期値として入っており、すべて編集できる。
+ * アプリ自身がコマンドを実行するときだけ使う。`bedrock`(個人の Bedrock 方式)では、端末内のモデルを選んだときだけ使われる旨を出す。
+ */
+function CommandPolicyEditor({ bedrock }: { bedrock: boolean }) {
   const t = useT();
   const [saved, setSaved] = useState<CommandPolicy | null>(null);
   const [draft, setDraft] = useState<CommandPolicy | null>(null);
@@ -290,6 +297,11 @@ function CommandPolicyEditor() {
           <li>{t("ナレッジ内の")} <strong>.my-assistant/command-policy.json</strong> {t("に保存されます。")}</li>
         </ul>
       </Heading>
+      {bedrock && (
+        <p className="border border-amber-500/40 bg-amber-500/5 p-2 text-xs">
+          {t("Bedrock 方式では、端末内のモデルを選んだときだけ使われます。コンテナ内の Claude Code の拒否は、Sandbox タブの settings.json(permissions.deny)で決めます。")}
+        </p>
+      )}
       <div className="grid gap-3 md:grid-cols-3">
         {POLICY_FIELDS.map(({ key, title, hint }) => (
           <label key={key} className="space-y-1 text-xs">
@@ -1537,8 +1549,9 @@ export default function Setup() {
           {active.id !== LEADER_ID && (
             <TabsContent value="access" className="flex flex-col gap-6">
               <WebAccess />
-              <ShellAccess />
-              <CommandPolicyEditor />
+              <ShellAccess work={workAgent} bedrock={bedrockMode} />
+              {/* ワークは常にコンテナ内の Claude Code で動き、コマンド権限は使わない */}
+              {!workAgent && <CommandPolicyEditor bedrock={bedrockMode} />}
             </TabsContent>
           )}
           <TabsContent value="sandbox" className="flex flex-col gap-6">

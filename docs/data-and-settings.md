@@ -114,6 +114,7 @@ erDiagram
 | `sandbox_claude_settings` | 貼り付けた Claude Code の settings.json(JSON。空は未設定=全体設定を利用。全体設定と同じ内容も空として保存) | 未設定 | Sandbox タブ(ワークのエージェント) |
 | `sandbox_llm` | 接続先(Bedrock 固定)・上限時間(分)(JSON)。旧版のモデル・許可するツールは settings.json へ移る | Bedrock・30分 | Sandbox(ワークのエージェント) |
 | `sandbox_claude_sessions` | 会話 ID と Claude Code のセッション ID の対応(JSON、直近 50 件) | なし | なし(端末の会話と対なので対象外) |
+| `sandbox_claude_settings_deny_migrated` | settings.json へ既定の拒否を足す移行を済ませた印(全体設定の側は `sandbox_claude_settings_shared_deny_migrated`) | なし | なし(書き出しの対象外) |
 | `stt_engine` | `local` / `google` | `local` | Voice Link |
 | `stt_language` | `auto` / `ja` / `en` / `zh` / `ko` | `auto` | Voice Link |
 | `tts_engine` | `google` / `voicevox` | `voicevox` | Voice Link |

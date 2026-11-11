@@ -371,6 +371,8 @@ export const getSandboxClaudeSettings = () => invoke<ClaudeSettings>("get_sandbo
 export const getSharedClaudeSettings = () => invoke<string>("get_shared_claude_settings");
 export const setSharedClaudeSettings = (content: string) => invoke<void>("set_shared_claude_settings", { content });
 export const setSandboxClaudeSettings = (content: string) => invoke<void>("set_sandbox_claude_settings", { content });
+/** settings.json の雛形(標準のツールの許可と、既定の拒否)。 */
+export const getClaudeSettingsTemplate = () => invoke<string>("get_claude_settings_template");
 export const getSandboxLlm = () => invoke<SandboxLlm>("get_sandbox_llm");
 export const setSandboxLlm = (config: SandboxLlm) => invoke<SandboxLlm>("set_sandbox_llm", { config });
 
