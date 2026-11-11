@@ -212,20 +212,9 @@ pub const KNOWLEDGE_DIR_KEY: &str = "knowledge_dir";
 /// 整理バッチに使うモデル指定(`Route`のJSON)のキー。未設定・使用不可なら`llm_router::effective`の既定。
 pub const BATCH_ROUTE_KEY: &str = "batch_route";
 
-/// 整理バッチの実行間隔(分)のキー。
-pub const BATCH_INTERVAL_KEY: &str = "batch_interval_minutes";
-/// 間隔の既定値(分)。
-pub const DEFAULT_INTERVAL_MINUTES: u32 = 30;
-/// 設定できる間隔(分)の範囲。
-pub const INTERVAL_RANGE: std::ops::RangeInclusive<u32> = 5..=1440;
-
-/// 保存済みの間隔(分)。未設定・範囲外なら既定値。
-pub fn interval_minutes(db: &impl SettingsStore) -> Result<u32, AppError> {
-    Ok(db
-        .get_setting(BATCH_INTERVAL_KEY)?
-        .and_then(|v| v.parse().ok())
-        .filter(|m| INTERVAL_RANGE.contains(m))
-        .unwrap_or(DEFAULT_INTERVAL_MINUTES))
+/// 保存されている整理のモデル指定(使えるかは確かめない)。
+pub fn saved_route(ctx: &WorkspaceCtx) -> Result<Option<Route>, AppError> {
+    Ok(ctx.db.get_setting(BATCH_ROUTE_KEY)?.and_then(|v| serde_json::from_str(&v).ok()))
 }
 
 /// 保存されている整理のモデル指定(使えるかは確かめない)。

@@ -16,7 +16,6 @@ pub mod download_progress;
 pub mod global_settings;
 pub mod graph;
 pub mod skills_migration;
-pub mod scheduler;
 pub mod secrets;
 pub mod settings_registry;
 pub mod settings_transfer;

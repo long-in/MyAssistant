@@ -323,6 +323,7 @@ export default function Knowledge() {
         />
         <div className="hud-panel hud-accent m-3 px-4 py-3">
           <p className="hud-heading mb-2">Organize</p>
+          <p className="text-xs text-muted-foreground">{t("自動では整理されません。会話ログは、ここから手動で整理します。")}</p>
           <Button size="sm" className="mt-2 w-full" disabled={running} onClick={organize}>
             {running ? <Loader2 className="animate-spin" /> : <Sparkles />}
             {running ? t("整理中…") : t("今すぐ整理")}

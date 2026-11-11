@@ -922,8 +922,6 @@ export const importKnowledge = (src: string) => invoke<TransferReport>("import_k
 /** ナレッジのMarkdownをすべて削除する(元に戻せない)。 */
 export const resetKnowledge = () => invoke<TransferReport>("reset_knowledge");
 /** 実行中・対象ログなし・キー未登録の場合は null。 */
-export const getBatchInterval = () => invoke<number>("get_batch_interval");
-export const setBatchInterval = (minutes: number) => invoke<void>("set_batch_interval", { minutes });
 export const runBatch = () => invoke<BatchReport | null>("run_batch");
 
 /** 覚えておくこと1件。 */

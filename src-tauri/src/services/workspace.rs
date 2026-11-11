@@ -346,12 +346,6 @@ impl Workspaces {
         self.loaded.read().unwrap_or_else(|p| p.into_inner()).get(id).cloned()
     }
 
-    /// 読み込み済みのすべて。ワークが無効のあいだは、パーソナルだけ(終了時のバッチの対象)。
-    pub fn all(&self) -> Vec<Arc<WorkspaceCtx>> {
-        let enabled = self.work_enabled();
-        self.loaded.read().unwrap_or_else(|p| p.into_inner()).values().filter(|c| enabled || c.id == PERSONAL_ID).cloned().collect()
-    }
-
     fn shared_for(&self, id: &str) -> Arc<Shared> {
         self.shared.lock().unwrap_or_else(|p| p.into_inner()).entry(id.to_owned()).or_default().clone()
     }
@@ -390,7 +384,7 @@ impl Workspaces {
     }
 
     /// 切り替えずにナレッジを操作するために開く。パーソナルは常に、ほかはワークが有効なときだけ。
-    /// 未読み込みのエージェントは一時的に開くだけで、読み込んだままにしない(終了時のバッチの対象を変えない)。
+    /// 未読み込みのエージェントは一時的に開くだけで、読み込んだままにしない。
     pub fn open_for_knowledge(&self, id: &str) -> Result<Arc<WorkspaceCtx>, AppError> {
         let _op = self.op();
         if id == PERSONAL_ID {
@@ -399,12 +393,6 @@ impl Workspaces {
         if !self.work_enabled() {
             return Err(AppError::WorkDisabled);
         }
-        self.open_transient_locked(id)
-    }
-
-    /// 整理バッチなど、選択していないワークスペースの処理のために開く。未読み込みのエージェントは一時的に開くだけで、読み込んだままにしない。
-    pub fn open_for_batch(&self, id: &str) -> Result<Arc<WorkspaceCtx>, AppError> {
-        let _op = self.op();
         self.open_transient_locked(id)
     }
 
@@ -753,7 +741,6 @@ mod tests {
         assert!(matches!(ws.switch(LEADER_ID), Err(AppError::WorkDisabled)));
         assert!(matches!(ws.ensure_leader(), Err(AppError::WorkDisabled)));
         assert_eq!(ws.batch_ids(), vec![PERSONAL_ID.to_owned()]);
-        assert!(ws.all().iter().all(|c| c.id == PERSONAL_ID));
         // データは残り、再起動後も無効のまま。有効に戻せば元どおり使える
         drop(ws);
         let again = workspaces(d.path());
@@ -784,7 +771,6 @@ mod tests {
         assert_eq!(ws.label(LEADER_ID), Some((LEADER_NAME.into(), LEADER_COLOR.into())));
         assert_eq!(ws.label(PERSONAL_ID), None);
         assert!(ws.batch_ids().contains(&LEADER_ID.to_owned()), "整理バッチの対象に入る");
-        assert!(ws.all().iter().any(|c| c.id == LEADER_ID), "終了時のバッチの対象に入る");
         ws.switch(PERSONAL_ID).unwrap();
         // 専用のDBとキーを持ち、パーソナルと混ざらない
         leader.secrets.set_tts_key("leader-only").unwrap();
@@ -1203,32 +1189,23 @@ mod tests {
     }
 
     #[test]
-    fn background_work_opens_agents_transiently_and_shares_state() {
+    fn background_work_lists_agents_without_opening_them() {
         let d = tempfile::tempdir().unwrap();
         let id = workspaces(d.path()).create("A", PALETTE[0]).unwrap().id;
         let ws = workspaces(d.path()); // 再起動後: エージェントは未読み込み
         assert_eq!(ws.batch_ids(), vec![PERSONAL_ID.to_owned(), id.clone()], "開かずに一覧を返す");
         assert!(ws.get(&id).is_none());
 
-        // バッチのために開いても、読み込み済みの一覧には残らない
-        let transient = ws.open_for_batch(&id).unwrap();
-        transient.db.set_setting("k", "v").unwrap();
-        assert!(ws.get(&id).is_none(), "開いたままにしない");
         // 保存先の確認も、他のエージェントを読み込んだままにしない
         let free = tempfile::tempdir().unwrap();
         assert!(ws.ensure_paths_free(PERSONAL_ID, free.path()).is_ok());
         assert!(ws.get(&id).is_none());
 
-        // 画面用に読み込んだものと、整理バッチの多重実行ガード・削除の印を共有する(二重に動かさない)
+        // 削除は、読み込み済みのものにも伝わる
         ws.switch(&id).unwrap();
         let loaded = ws.get(&id).unwrap();
-        assert!(Arc::ptr_eq(&transient.shared, &loaded.shared));
-        assert_eq!(loaded.db.get_setting("k").unwrap().as_deref(), Some("v"));
-
-        // 削除は、一時的に開かれたものにも伝わる
         ws.delete(&id, true).unwrap();
-        assert!(matches!(transient.ensure_alive(), Err(AppError::AgentNotFound)));
-        assert!(matches!(ws.open_for_batch(&id), Err(AppError::AgentNotFound)));
+        assert!(matches!(loaded.ensure_alive(), Err(AppError::AgentNotFound)));
     }
 
     #[test]
