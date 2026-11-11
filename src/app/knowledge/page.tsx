@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { splitFrontmatter } from "@/lib/knowledgeDoc";
 import { useWorkspace } from "@/lib/workspace";
 import KnowledgeTree, { type NodeKind } from "@/components/KnowledgeTree";
+import { isReadOnlyPath } from "@/lib/knowledgePaths";
 import MemoryPanel from "@/components/MemoryPanel";
 import ProposalsPanel from "@/components/ProposalsPanel";
 import NoteVersions, { versionLabel } from "@/components/NoteVersions";
@@ -373,7 +374,7 @@ export default function Knowledge() {
     }
   };
 
-  const readOnly = selected !== null && !isNote(selected);
+  const readOnly = selected !== null && (!isNote(selected) || isReadOnlyPath(selected));
   const doc = selected ? splitFrontmatter(draft) : null;
 
   // `e`で編集、Cmd/Ctrl+Sで保存

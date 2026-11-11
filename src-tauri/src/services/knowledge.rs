@@ -133,7 +133,7 @@ pub struct Entry<'a> {
 #[cfg(test)]
 pub fn upsert(root: &Path, e: &Entry, now: &str) -> Result<String, AppError> {
     let parts = category_parts(e.category);
-    reject_data(&parts[0])?;
+    reject_read_only(&parts[0])?;
     let dir = ensure_dir(root, &parts)?;
     let name = match slug(e.filename, 60) {
         s if s.is_empty() => "note".to_owned(),
@@ -305,7 +305,7 @@ fn history_section(now: &str, text: &str) -> String {
 /// 既存ノートの現在の内容を書き換え、経緯に追記する。書き換え前の版を退避する。
 /// 長い内容が半分未満に縮む書き換えは採らず、経緯への追記だけ行う。
 pub fn rewrite(root: &Path, rel: &str, u: &NoteUpdate, now: &str) -> Result<Written, AppError> {
-    reject_data(rel)?;
+    reject_read_only(rel)?;
     let path = resolve_existing(root, rel)?;
     if !rel.ends_with(".md") {
         return Err(AppError::PathNotAllowed);
@@ -366,7 +366,7 @@ pub fn would_shrink(old_current: &str, new_current: &str) -> bool {
 /// 新しいノートを作る。同じ場所に既にあれば、そのノートを書き換える(`rewrite`)。
 pub fn create_note(root: &Path, at: &NewNote, u: &NoteUpdate, now: &str) -> Result<Written, AppError> {
     let parts = category_parts(at.category);
-    reject_data(&parts[0])?;
+    reject_read_only(&parts[0])?;
     let dir = ensure_dir(root, &parts)?;
     let name = note_name(at.filename);
     let rel = note_rel(at);
@@ -474,7 +474,7 @@ pub fn read_version(root: &Path, rel: &str, version: &str) -> Result<String, App
 
 /// 退避済みの版へ戻す。今の内容も版として退避する。
 pub fn restore_version(root: &Path, rel: &str, version: &str, now: &str) -> Result<(), AppError> {
-    reject_data(rel)?;
+    reject_read_only(rel)?;
     let content = read_version(root, rel, version)?;
     let current = read(root, rel)?;
     save_version(root, rel, &current, now)?;
@@ -483,7 +483,7 @@ pub fn restore_version(root: &Path, rel: &str, version: &str, now: &str) -> Resu
 
 /// ノートを削除する前に版として退避する(統合で取り込んだノートを消すときに使う)。
 pub fn delete_with_version(root: &Path, rel: &str, now: &str) -> Result<(), AppError> {
-    reject_data(rel)?;
+    reject_read_only(rel)?;
     let content = read(root, rel)?;
     save_version(root, rel, &content, now)?;
     fs::remove_file(resolve_existing(root, rel)?).map_err(io)
@@ -522,32 +522,41 @@ fn head_meta(head: &str) -> Option<(String, String)> {
     parse(&format!("{complete}\n---\n")).map(meta)
 }
 
-/// 既存ファイル一覧(最大3階層)。シンボリックリンクは辿らない。
+/// ノート一覧(最大3階層)。シンボリックリンクは辿らない。整理・索引・提案が使う。
+/// `.`始まり(`.my-assistant`のコマンド権限など)と`data/`(ソースコードなど)はノートではないので除く。
 pub fn list(root: &Path) -> Result<Vec<KnowledgeFile>, AppError> {
+    list_md(root, false)
+}
+
+/// 画面に出すMarkdownの一覧。`list`と違い、`.`始まりと`data/`も含める(閲覧専用。`is_read_only`)。
+pub fn list_for_screen(root: &Path) -> Result<Vec<KnowledgeFile>, AppError> {
+    list_md(root, true)
+}
+
+fn list_md(root: &Path, all: bool) -> Result<Vec<KnowledgeFile>, AppError> {
     let mut out = Vec::new();
     if !root.exists() {
         return Ok(out);
     }
     let root = root.canonicalize().map_err(io)?;
-    walk(&root, &root, 0, &mut out)?;
+    walk(&root, &root, 0, all, &mut out)?;
     out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     Ok(out)
 }
 
-fn walk(root: &Path, dir: &Path, depth: u8, out: &mut Vec<KnowledgeFile>) -> Result<(), AppError> {
+fn walk(root: &Path, dir: &Path, depth: u8, all: bool, out: &mut Vec<KnowledgeFile>) -> Result<(), AppError> {
     if depth > 3 {
         return Ok(());
     }
     for entry in fs::read_dir(dir).map_err(io)? {
         let entry = entry.map_err(io)?;
-        // `.`始まり(`.my-assistant`のコマンド権限など)と`data/`(ソースコードなど)はノートではない
-        if entry.file_name().to_string_lossy().starts_with('.') || is_data_entry(depth, &entry.file_name()) {
+        if !all && (entry.file_name().to_string_lossy().starts_with('.') || is_data_entry(depth, &entry.file_name())) {
             continue;
         }
         let ft = entry.file_type().map_err(io)?;
         let path: PathBuf = entry.path();
         if ft.is_dir() {
-            walk(root, &path, depth + 1, out)?;
+            walk(root, &path, depth + 1, all, out)?;
         } else if ft.is_file() && path.extension().is_some_and(|x| x == "md") {
             let head = read_head(&path);
             let rel = path.strip_prefix(root).map_err(|_| AppError::PathNotAllowed)?;
@@ -563,7 +572,7 @@ fn walk(root: &Path, dir: &Path, depth: u8, out: &mut Vec<KnowledgeFile>) -> Res
     Ok(())
 }
 
-/// Markdown以外のファイル一覧(最大3階層)。閲覧専用。`.`始まりとシンボリックリンクは除く。
+/// Markdown以外のファイル一覧(最大3階層)。画面用で、閲覧専用。`.`始まりと`data/`も含め、シンボリックリンクは辿らない。
 pub fn list_other(root: &Path) -> Result<Vec<KnowledgeFile>, AppError> {
     fn walk_other(root: &Path, dir: &Path, depth: u8, out: &mut Vec<KnowledgeFile>) -> Result<(), AppError> {
         if depth > 3 {
@@ -572,9 +581,6 @@ pub fn list_other(root: &Path) -> Result<Vec<KnowledgeFile>, AppError> {
         for entry in fs::read_dir(dir).map_err(io)? {
             let entry = entry.map_err(io)?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') || is_data_entry(depth, &entry.file_name()) {
-                continue;
-            }
             let ft = entry.file_type().map_err(io)?;
             let path = entry.path();
             if ft.is_dir() {
@@ -605,11 +611,11 @@ pub fn list_other(root: &Path) -> Result<Vec<KnowledgeFile>, AppError> {
 /// バイナリかどうかを調べるために、先頭から読む長さ。
 const BINARY_PROBE_BYTES: usize = 8 * 1024;
 
-/// Markdown以外のファイルの本文(閲覧専用)。バイナリは拒否し、大きい場合は新しい側の末尾だけを行の区切りから返す。
+/// Markdown以外のファイルの本文(閲覧専用。`.`始まりと`data/`も読める)。バイナリは拒否し、大きい場合は新しい側の末尾だけを行の区切りから返す。
 /// 巨大なファイルでもメモリを使い切らないよう、全体は読まず、先頭(バイナリ判定)と末尾の`MAX_EDIT_BYTES`だけを読む。
 pub fn read_other(root: &Path, rel: &str) -> Result<String, AppError> {
     use std::io::{Read, Seek, SeekFrom};
-    if rel.ends_with(".md") || rel.split('/').any(|p| p.starts_with('.')) || is_data(rel) {
+    if rel.ends_with(".md") {
         return Err(AppError::PathNotAllowed);
     }
     let binary = || AppError::Io("バイナリファイルは表示できません".to_owned());
@@ -810,9 +816,14 @@ fn same_entry(path: &Path, target: &Path) -> bool {
     }
 }
 
-/// 画面から渡されたパスが`data/`配下なら拒否する。
-fn reject_data(rel: &str) -> Result<(), AppError> {
-    if is_data(rel) { Err(AppError::PathNotAllowed) } else { Ok(()) }
+/// 画面では閲覧だけにする場所か(`data/`配下と、`.`始まりを含むパス)。
+pub fn is_read_only(rel: &str) -> bool {
+    is_data(rel) || rel.split(['/', '\\']).any(|p| p.starts_with('.'))
+}
+
+/// 書き込み先が閲覧専用の場所(`is_read_only`)なら拒否する。
+fn reject_read_only(rel: &str) -> Result<(), AppError> {
+    if is_read_only(rel) { Err(AppError::PathNotAllowed) } else { Ok(()) }
 }
 
 /// セッションのキャプチャファイル。ファイル名は`日付_セッションID先頭8文字.md`で、IDで探す。
@@ -1049,7 +1060,7 @@ const MAX_EDIT_BYTES: usize = 5 * 1024 * 1024;
 
 /// 既存ノートの本文を丸ごと置き換える。
 pub fn write(root: &Path, rel: &str, content: &str) -> Result<(), AppError> {
-    reject_data(rel)?;
+    reject_read_only(rel)?;
     if !rel.ends_with(".md") || content.len() > MAX_EDIT_BYTES {
         return Err(AppError::PathNotAllowed);
     }
@@ -1063,7 +1074,7 @@ fn is_safe_dir_name(name: &str) -> bool {
 
 /// 新規フォルダの相対パスを検証し、親までを作成して実パスを返す。既存なら拒否する。
 fn resolve_new_dir(root: &Path, rel: &str) -> Result<PathBuf, AppError> {
-    reject_data(rel)?;
+    reject_read_only(rel)?;
     let names: Vec<String> = rel.split('/').map(str::to_lowercase).collect();
     if names.len() > 3 || !names.iter().all(|n| is_safe_dir_name(n)) {
         return Err(AppError::PathNotAllowed);
@@ -1081,7 +1092,7 @@ pub fn create_file(root: &Path, rel: &str, now: &str) -> Result<String, AppError
     let Some(stem) = rel.strip_suffix(".md") else {
         return Err(AppError::PathNotAllowed);
     };
-    reject_data(rel)?;
+    reject_read_only(rel)?;
     let rel = &lower_dirs(rel);
     let path = resolve_new_file(root, rel)?;
     if path.symlink_metadata().is_ok() {
@@ -1108,8 +1119,8 @@ pub fn create_dir(root: &Path, rel: &str) -> Result<(), AppError> {
 
 /// ファイルまたはフォルダの名前変更・移動。移動先が既存なら拒否する。
 pub fn rename(root: &Path, from: &str, to: &str) -> Result<(), AppError> {
-    reject_data(from)?;
-    reject_data(to)?;
+    reject_read_only(from)?;
+    reject_read_only(to)?;
     let src = resolve_existing(root, from)?;
     let dst = if src.is_dir() {
         let dst = resolve_new_dir(root, to)?;
@@ -1132,7 +1143,7 @@ pub fn rename(root: &Path, from: &str, to: &str) -> Result<(), AppError> {
 
 /// ファイルまたはフォルダ(中身ごと)を削除する。ルート自体は削除できない。
 pub fn delete(root: &Path, rel: &str) -> Result<(), AppError> {
-    reject_data(rel)?;
+    reject_read_only(rel)?;
     let target = resolve_existing(root, rel)?;
     if target.is_dir() {
         fs::remove_dir_all(target).map_err(io)
@@ -1143,7 +1154,7 @@ pub fn delete(root: &Path, rel: &str) -> Result<(), AppError> {
     }
 }
 
-/// フォルダ一覧(空フォルダ含む、最大3階層)。`.`始まりとシンボリックリンクは除く。
+/// フォルダ一覧(空フォルダ含む、最大3階層)。画面用で、`.`始まりと`data/`も含め、シンボリックリンクは辿らない。
 pub fn list_dirs(root: &Path) -> Result<Vec<String>, AppError> {
     fn walk_dirs(root: &Path, dir: &Path, depth: u8, out: &mut Vec<String>) -> Result<(), AppError> {
         if depth >= 3 {
@@ -1151,7 +1162,7 @@ pub fn list_dirs(root: &Path) -> Result<Vec<String>, AppError> {
         }
         for entry in fs::read_dir(dir).map_err(io)? {
             let entry = entry.map_err(io)?;
-            if !entry.file_type().map_err(io)?.is_dir() || entry.file_name().to_string_lossy().starts_with('.') || is_data_entry(depth, &entry.file_name()) {
+            if !entry.file_type().map_err(io)?.is_dir() {
                 continue;
             }
             let path = entry.path();
@@ -1198,12 +1209,13 @@ mod tests {
         fs::write(root.join("debug-logs/bin.dat"), [0u8, 1, 2]).unwrap();
         create_file(&root, "debug-logs/note.md", "2026-10-29T00:00:00Z").unwrap();
         let paths: Vec<_> = list_other(&root).unwrap().into_iter().map(|f| f.path).collect();
-        assert_eq!(paths, ["debug-logs/2026-01-01.jsonl", "debug-logs/bin.dat"]);
+        assert_eq!(paths, ["debug-logs/.hidden", "debug-logs/2026-01-01.jsonl", "debug-logs/bin.dat"], "`.`始まりも画面に出す");
         assert!(list(&root).unwrap().iter().all(|f| f.path.ends_with(".md")));
         assert!(read_other(&root, "debug-logs/2026-01-01.jsonl").unwrap().contains("\"a\":1"));
         assert!(read_other(&root, "debug-logs/bin.dat").is_err());
         assert!(read_other(&root, "debug-logs/note.md").is_err());
-        assert!(read_other(&root, "debug-logs/.hidden").is_err());
+        assert_eq!(read_other(&root, "debug-logs/.hidden").unwrap(), "x");
+        assert!(write(&root, "debug-logs/.hidden.md", "x").is_err() && delete(&root, "debug-logs/.hidden").is_err(), "`.`始まりは閲覧だけ");
         assert!(read_other(&root, "../x.txt").is_err());
         assert!(write(&root, "debug-logs/2026-01-01.jsonl", "x").is_err());
         assert!(delete(&root, "debug-logs/2026-01-01.jsonl").is_err());
@@ -1221,6 +1233,8 @@ mod tests {
         let mut paths: Vec<_> = list(&root).unwrap().into_iter().map(|f| f.path).collect();
         paths.sort();
         assert_eq!(paths, ["dev/a.md", "skills/daily/SKILL.md"], "`.`始まりはノートではなく、スキルはノートとして見える");
+        assert!(list_for_screen(&root).unwrap().iter().any(|f| f.path == ".my-assistant/note.md"), "画面には出す");
+        assert!(write(&root, ".my-assistant/note.md", "y").is_err(), "画面からは書き換えない");
         reset(&root).unwrap();
         assert!(root.join(".my-assistant/note.md").is_file());
         assert!(root.join("skills/daily/SKILL.md").is_file(), "初期化はスキルを消さない");
@@ -1589,13 +1603,15 @@ mod tests {
         fs::create_dir_all(root.join("dev/data")).unwrap();
         fs::write(root.join("dev/data/x.md"), "# x").unwrap();
 
-        // 一覧・フォルダ一覧・その他のファイルに出ない(ナレッジ直下の data だけが対象)
+        // 整理・索引が使うノート一覧には出ない(ナレッジ直下の data だけが対象)
         let notes: Vec<String> = list(&root).unwrap().into_iter().map(|f| f.path).collect();
         assert!(notes.contains(&"dev/note.md".to_owned()) && notes.contains(&"dev/data/x.md".to_owned()));
         assert!(notes.iter().all(|p| !is_data(p)), "{notes:?}");
-        assert!(list_dirs(&root).unwrap().iter().all(|p| !is_data(p)));
-        assert!(list_other(&root).unwrap().is_empty());
-        assert!(read_other(&root, "data/app/main.rs").is_err());
+        // 画面の一覧には出し、読める
+        assert!(list_for_screen(&root).unwrap().iter().any(|f| f.path == "data/README.md"));
+        assert!(list_dirs(&root).unwrap().iter().any(|p| p == "data/app/empty"));
+        assert_eq!(list_other(&root).unwrap().into_iter().map(|f| f.path).collect::<Vec<_>>(), ["data/app/main.rs"]);
+        assert_eq!(read_other(&root, "data/app/main.rs").unwrap(), "fn main() {}");
 
         // 画面からの書き換え・作成・移動・削除は拒否する
         assert!(write(&root, "data/README.md", "x").is_err());

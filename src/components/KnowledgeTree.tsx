@@ -13,6 +13,7 @@ import {
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { KnowledgeFile } from "@/lib/api";
+import { isReadOnlyPath } from "@/lib/knowledgePaths";
 
 type Dir = { key: string; name: string; dirs: Dir[]; files: KnowledgeFile[] };
 export type NodeKind = "file" | "dir";
@@ -65,7 +66,7 @@ const parentOf = (path: string) => path.split("/").slice(0, -1).join("/");
 const INDENT = 12;
 const BASE = 8;
 
-/** VSCodeのエクスプローラ風のフォルダツリー。作成・名前変更・削除に対応する。 */
+/** VSCodeのエクスプローラ風のフォルダツリー。作成・名前変更・削除に対応する(`data/`と`.`始まりは閲覧だけ)。 */
 export default function KnowledgeTree({
   files,
   dirs,
@@ -174,10 +175,10 @@ export default function KnowledgeTree({
                   e.preventDefault();
                   e.stopPropagation(); // 親のルート用メニューで上書きされないようにする
                   setFocusDir(d.key);
-                  setMenu({ x: e.clientX, y: e.clientY, kind: "dir", path: d.key });
+                  if (!isReadOnlyPath(d.key)) setMenu({ x: e.clientX, y: e.clientY, kind: "dir", path: d.key });
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === "F2") setEditing({ mode: "rename", path: d.key, kind: "dir" });
+                  if (e.key === "F2" && !isReadOnlyPath(d.key)) setEditing({ mode: "rename", path: d.key, kind: "dir" });
                 }}
                 aria-expanded={isOpen}
               >
@@ -221,10 +222,10 @@ export default function KnowledgeTree({
                 e.preventDefault();
                 e.stopPropagation();
                 setFocusDir(dir.key);
-                if (f.path.endsWith(".md")) setMenu({ x: e.clientX, y: e.clientY, kind: "file", path: f.path });
+                if (f.path.endsWith(".md") && !isReadOnlyPath(f.path)) setMenu({ x: e.clientX, y: e.clientY, kind: "file", path: f.path });
               }}
               onKeyDown={(e) => {
-                if (!f.path.endsWith(".md")) return;
+                if (!f.path.endsWith(".md") || isReadOnlyPath(f.path)) return;
                 if (e.key === "F2") setEditing({ mode: "rename", path: f.path, kind: "file" });
               }}
               title={f.title ? `${f.title} (${f.path})` : f.path}
@@ -239,7 +240,9 @@ export default function KnowledgeTree({
   );
 
   const depthOf = (path: string) => (path ? path.split("/").length : 0);
-  const canNestDir = (parent: string) => depthOf(parent) < MAX_DEPTH;
+  const canNestDir = (parent: string) => depthOf(parent) < MAX_DEPTH && !isReadOnlyPath(parent);
+  // 閲覧専用のフォルダ(`data/`・`.`始まり)の中には作らない。ルートは`""`で、閲覧専用ではない
+  const canCreateIn = (parent: string) => !parent || !isReadOnlyPath(parent);
   const menuItem = "block w-full px-3 py-1 text-left text-[13px] hover:bg-muted";
 
   return (
@@ -252,8 +255,9 @@ export default function KnowledgeTree({
     >
       <div className="flex items-center justify-end gap-0.5 px-2 pb-1">
         <button
-          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
           title={t("新規ノート")}
+          disabled={!canCreateIn(focusDir)}
           onClick={() => startNew("new-file", focusDir)}
         >
           <FilePlus className="size-4" />

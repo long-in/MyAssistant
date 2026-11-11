@@ -46,7 +46,7 @@ fn collect(ws: &Workspaces, ctx: &WorkspaceCtx, id: &str) -> AgentKnowledge {
     };
     let load = || -> Result<(Vec<KnowledgeFile>, Vec<String>), AppError> {
         let root = root?;
-        let mut files = knowledge::list(&root)?;
+        let mut files = knowledge::list_for_screen(&root)?;
         files.extend(knowledge::list_other(&root)?);
         let dirs = if root.exists() { knowledge::list_dirs(&root)? } else { Vec::new() };
         Ok((files, dirs))
