@@ -24,6 +24,7 @@ use crate::{
     db::schema,
     services::{
         batch::KNOWLEDGE_DIR_KEY,
+        knowledge,
         pronunciation::DICTIONARY_FILE,
         sandbox_env,
         workspace::{DB_FILE, DIR_NAME as WORKSPACES_DIR_NAME, KEPT_DIR_NAME, PERSONAL_ID, REGISTRY_FILE},
@@ -299,6 +300,9 @@ fn create_inner(root: &Path, dest: &Path, part: &Path, work: &Path, now: String,
         // アプリデータごと含んでしまう保存先(モデル等まで入る)は取り込まない
         let encloses_root = knowledge.canonicalize().is_ok_and(|k| root_canon.starts_with(&k));
         if knowledge.is_absolute() && !encloses_root {
+            // 担当システムのフォルダ(`data/`。ソースコードなど)は含めない(以前の`/workspace`のフォルダも含めていなかった)
+            let data = std::fs::read_dir(&knowledge).into_iter().flatten().flatten().map(|e| e.path());
+            p.exclude.extend(data.filter(|path| path.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(knowledge::DATA_DIR))));
             p.add_tree(&format!("ws/{id}/{KNOWLEDGE_DIR}"), &knowledge)?;
         } else {
             log::warn!("backup skipped knowledge of {id}: {}", knowledge.display());
@@ -616,6 +620,11 @@ mod tests {
         let agent = root.join(WORKSPACES_DIR_NAME).join("agent-a");
         std::fs::create_dir_all(agent.join(KNOWLEDGE_DIR)).unwrap();
         std::fs::write(agent.join(KNOWLEDGE_DIR).join("a.md"), marker).unwrap();
+        // 担当システムのフォルダ(ソースコードなど)はバックアップに含めない
+        std::fs::create_dir_all(agent.join(KNOWLEDGE_DIR).join("data/src")).unwrap();
+        std::fs::write(agent.join(KNOWLEDGE_DIR).join("data/src/main.rs"), marker).unwrap();
+        std::fs::create_dir_all(external.join("Data")).unwrap();
+        std::fs::write(external.join("Data/README.md"), marker).unwrap();
         std::fs::write(agent.join(SANDBOX_ENV_FILE), format!("TOKEN={marker}\n")).unwrap();
         std::fs::create_dir_all(agent.join(SANDBOX_DIR)).unwrap();
         std::fs::write(agent.join(SANDBOX_DIR).join("Dockerfile"), format!("FROM {marker}\n")).unwrap();
@@ -677,6 +686,8 @@ mod tests {
         // 取り込まれたのはモデル以外
         let names: Vec<_> = ZipArchive::new(File::open(&zip).unwrap()).unwrap().file_names().map(str::to_owned).collect();
         assert!(names.iter().all(|n| !n.contains("models")));
+        assert!(names.iter().all(|n| !n.contains("/knowledge/data/") && !n.contains("/knowledge/Data/")), "{names:?}");
+        assert!(names.iter().any(|n| n.ends_with("/knowledge/a.md")));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

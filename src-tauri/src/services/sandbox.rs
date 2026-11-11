@@ -1,7 +1,7 @@
 //! エージェントごとのDockerサンドボックス。`run_command`をそのエージェント専用のコンテナの中で実行する。
 //!
-//! - コンテナ・ボリューム・ネットワークはエージェントごとに別で、見えるのはそのエージェントのナレッジ(`/workspace`)と
-//!   専用ボリューム(`/home/agent`)だけ。アプリのデータ・`~/.aws`・他エージェントのフォルダはマウントしない。
+//! - コンテナ・ボリューム・ネットワークはエージェントごとに別で、見えるのはそのエージェントのナレッジ(`/knowledge`。
+//!   担当システムのフォルダ`/knowledge/data`を含む)と専用ボリューム(`/home/agent`)だけ。アプリのデータ・`~/.aws`・他エージェントのフォルダはマウントしない。
 //! - イメージはエージェントのワークスペースにある`sandbox/Dockerfile`からビルドする(内容のハッシュをタグにして、変更で自動再ビルド)。
 //! - 環境変数(`sandbox.env`とAWSの一時キー)は実行のたびに`docker exec -e NAME`で渡す。値はdocker CLIの環境にだけ置き、引数には出さない。
 //! - Dockerが使えないときはホスト実行に切り替えず、エラーにする。
@@ -25,6 +25,7 @@ use tokio::{
 use super::{
     aws,
     cancel::CancelToken,
+    knowledge::DATA_DIR,
     sandbox_agent, sandbox_env,
     shell::{self, Output, Stream},
     workspace::{LEADER_ID, PERSONAL_ID, WorkspaceCtx},
@@ -57,13 +58,12 @@ const LABEL_MOUNTS: &str = "myassistant.mounts";
 const DOCKERFILE_DIR: &str = "sandbox";
 const DOCKERFILE_NAME: &str = "Dockerfile";
 const DOCKERIGNORE: &str = "# ビルドの文脈に含めないものを書きます。\n.dockerignore\nDockerfile\n";
-/// コンテナ内の作業フォルダ(担当システムのソースコードなどを置く)の場所。
-pub const WORKSPACE_MOUNT: &str = "/workspace";
-/// コンテナ内のナレッジの場所。
+/// コンテナ内のナレッジの場所。マウントするのはナレッジだけ(ワークスペースのフォルダ全体は、キーやDBがあるのでマウントしない)。
 pub const KNOWLEDGE_MOUNT: &str = "/knowledge";
-/// `/workspace`にマウントするフォルダの名前。ワークスペースのフォルダ(パーソナルはアプリデータ直下)の中に決まった場所として置く。
-/// ワークスペースのフォルダ全体(`secrets.json`・`timeline.db`・`sandbox.env`がある階層)はマウントしない。
-pub const WORKSPACE_DIR_NAME: &str = "workspace";
+/// コンテナ内の担当システムのフォルダ(ソースコードなどを置く、ナレッジ直下の`data/`)の場所。作業ディレクトリの既定。
+pub const DATA_MOUNT: &str = "/knowledge/data";
+/// 以前`/workspace`にマウントしていたフォルダの名前(ワークスペースのフォルダ直下)。見つかれば`data/`へ移す。
+const LEGACY_WORKSPACE_DIR: &str = "workspace";
 const REAP_INTERVAL: Duration = Duration::from_secs(60);
 /// docker CLIの短い操作(inspect・rm・startなど)の待ち時間。
 const CLI_TIMEOUT: Duration = Duration::from_secs(60);
@@ -315,50 +315,36 @@ pub fn dockerfile_state(app_dir: &Path) -> DockerfileState {
 pub struct Mounts {
     /// ナレッジ(`/knowledge`)。
     pub knowledge: PathBuf,
-    /// 担当システムのフォルダ(`/workspace`)。`None`ならマウントしない(テスト用。実行時は常に`Some`)。
-    pub workspace: Option<PathBuf>,
+    /// 既定の作業ディレクトリを`/knowledge/data`にするか。偽なら`/knowledge`(テスト用。実行時は常に真で、フォルダは用意済み)。
+    pub data: bool,
 }
 
 impl Mounts {
-    /// コンテナ内の既定の作業ディレクトリ。`/workspace`があればそこ、なければ`/knowledge`。
+    /// コンテナ内の既定の作業ディレクトリ。
     pub fn default_dir(&self) -> &'static str {
-        if self.workspace.is_some() { WORKSPACE_MOUNT } else { KNOWLEDGE_MOUNT }
-    }
-
-    /// (コンテナ内の場所, ホストのフォルダ)の一覧。
-    fn pairs(&self) -> Vec<(&'static str, &Path)> {
-        let mut v = Vec::new();
-        if let Some(w) = &self.workspace {
-            v.push((WORKSPACE_MOUNT, w.as_path()));
-        }
-        v.push((KNOWLEDGE_MOUNT, self.knowledge.as_path()));
-        v
+        if self.data { DATA_MOUNT } else { KNOWLEDGE_MOUNT }
     }
 
     /// コンテナのラベルに残す値。マウント元が変わったかどうかの比較に使う。
     fn label(&self) -> String {
-        format!("knowledge={};workspace={}", self.knowledge.display(), self.workspace.as_deref().map(|p| p.display().to_string()).unwrap_or_default())
+        format!("knowledge={}", self.knowledge.display())
     }
 }
 
-/// `cwd`を、マウントしたフォルダ配下のホストのパスと、コンテナ内のパスへ解決する。省略時は既定の作業ディレクトリ。
-/// 受け付けるのは、`/workspace`・`/knowledge`始まり、マウント元配下の絶対パス、`~/`始まり、既定の作業ディレクトリからの相対パス。
+/// `cwd`を、ナレッジ配下のホストのパスと、コンテナ内のパスへ解決する。省略時は既定の作業ディレクトリ。
+/// 受け付けるのは、`/knowledge`始まり、ナレッジ配下の絶対パス、`~/`始まり、既定の作業ディレクトリからの相対パス。
 pub fn map_cwd(mounts: &Mounts, arg: Option<&str>) -> Result<(PathBuf, String), String> {
-    let outside = || "サンドボックスでは、作業ディレクトリを /workspace か /knowledge の中にしてください。".to_owned();
-    let mut roots = Vec::new();
-    for (inner, host) in mounts.pairs() {
-        let host = host.canonicalize().map_err(|_| format!("{inner} にマウントするフォルダが見つかりません。"))?;
-        roots.push((inner, host));
-    }
-    let base = roots.iter().find(|(i, _)| *i == mounts.default_dir()).map(|(_, h)| h.clone()).ok_or_else(outside)?;
+    let outside = || "サンドボックスでは、作業ディレクトリを /knowledge の中にしてください。".to_owned();
+    let root = mounts.knowledge.canonicalize().map_err(|_| format!("{KNOWLEDGE_MOUNT} にマウントするフォルダが見つかりません。"))?;
+    let base = if mounts.data { root.join(DATA_DIR) } else { root.clone() };
     let arg = arg.map(str::trim).filter(|s| !s.is_empty());
     let candidate = match arg {
-        None => base.clone(),
+        None => base,
+        Some(p) if p == KNOWLEDGE_MOUNT || p.starts_with(&format!("{KNOWLEDGE_MOUNT}/")) => {
+            root.join(p[KNOWLEDGE_MOUNT.len()..].trim_start_matches('/'))
+        }
         Some(p) => {
-            let inner = roots.iter().find(|(i, _)| p == *i || p.starts_with(&format!("{i}/")));
-            if let Some((i, host)) = inner {
-                host.join(p[i.len()..].trim_start_matches('/'))
-            } else if let Some(rest) = p.strip_prefix("~/") {
+            if let Some(rest) = p.strip_prefix("~/") {
                 PathBuf::from(std::env::var_os("HOME").ok_or_else(outside)?).join(rest)
             } else if p == "~" {
                 PathBuf::from(std::env::var_os("HOME").ok_or_else(outside)?)
@@ -370,14 +356,11 @@ pub fn map_cwd(mounts: &Mounts, arg: Option<&str>) -> Result<(PathBuf, String), 
         }
     };
     let host = candidate.canonicalize().map_err(|_| "指定された作業ディレクトリが見つかりません。".to_owned())?;
-    let (inner_root, rel) = roots
-        .iter()
-        .find_map(|(i, root)| host.strip_prefix(root).ok().map(|rel| (*i, rel.to_owned())))
-        .ok_or_else(outside)?;
+    let rel = host.strip_prefix(&root).map_err(|_| outside())?.to_owned();
     if !host.is_dir() {
         return Err("作業ディレクトリがディレクトリではありません。".into());
     }
-    let mut inner = inner_root.to_owned();
+    let mut inner = KNOWLEDGE_MOUNT.to_owned();
     for part in rel.components() {
         inner.push('/');
         inner.push_str(part.as_os_str().to_str().ok_or("作業ディレクトリの名前をUTF-8で扱えません。")?);
@@ -385,21 +368,39 @@ pub fn map_cwd(mounts: &Mounts, arg: Option<&str>) -> Result<(PathBuf, String), 
     Ok((host, inner))
 }
 
-/// `/workspace`にマウントするフォルダ(エージェントごとに決まった場所)。
-pub fn workspace_dir(ctx: &WorkspaceCtx) -> PathBuf {
-    ctx.dir.join(WORKSPACE_DIR_NAME)
+/// 担当システムのフォルダ(`/knowledge/data`)を、無ければ作って返す。以前の場所(`<ワークスペースのフォルダ>/workspace`)にあれば移す。
+pub fn ensure_data_dir(ctx: &WorkspaceCtx, knowledge: &Path) -> Result<PathBuf, String> {
+    migrate_legacy_workspace(&ctx.dir, knowledge)?;
+    std::fs::create_dir_all(knowledge).map_err(|e| format!("ナレッジのフォルダを作れません: {e}"))?;
+    let link = knowledge.join(DATA_DIR);
+    if link.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(format!("{} をシンボリックリンクにはできません(コンテナから辿れません)。フォルダにしてください。", link.display()));
+    }
+    crate::utils::path::ensure_dir(knowledge, &[DATA_DIR.to_owned()]).map_err(|e| format!("{DATA_MOUNT} のフォルダを作れません: {e}"))
 }
 
-/// `/workspace`にマウントするフォルダを、無ければ作って返す。
-pub fn ensure_workspace_dir(ctx: &WorkspaceCtx) -> Result<PathBuf, String> {
-    let dir = workspace_dir(ctx);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("/workspace のフォルダを作れません: {e}"))?;
-    Ok(dir)
+/// 以前`/workspace`にマウントしていたフォルダを、ナレッジの`data/`へ移す。空なら消すだけ。
+/// 移動先がすでにある、または移せない(別のボリュームなど)ときは何も変えずにエラーにし、手動で移してもらう。
+fn migrate_legacy_workspace(ws_dir: &Path, knowledge: &Path) -> Result<(), String> {
+    let old = ws_dir.join(LEGACY_WORKSPACE_DIR);
+    if old.symlink_metadata().is_err() || std::fs::remove_dir(&old).is_ok() {
+        return Ok(());
+    }
+    let manual = "中身を手動で移してから、以前のフォルダを削除してください。";
+    std::fs::create_dir_all(knowledge).map_err(|e| format!("ナレッジのフォルダを作れません: {e}"))?;
+    let new = knowledge.canonicalize().map_err(|e| format!("ナレッジのフォルダが見つかりません: {e}"))?.join(DATA_DIR);
+    if new.symlink_metadata().is_ok() {
+        return Err(format!("以前の /workspace のフォルダ({})を {} へ移せません(移動先がすでにあります)。{manual}", old.display(), new.display()));
+    }
+    std::fs::rename(&old, &new).map_err(|e| format!("以前の /workspace のフォルダ({})を {} へ移せません: {e}。{manual}", old.display(), new.display()))?;
+    log::info!("moved legacy sandbox workspace into knowledge: {}", new.display());
+    Ok(())
 }
 
 /// コンテナにマウントするフォルダ。
 pub fn mounts_for(ctx: &WorkspaceCtx, knowledge: &Path) -> Result<Mounts, String> {
-    Ok(Mounts { knowledge: knowledge.to_owned(), workspace: Some(ensure_workspace_dir(ctx)?) })
+    ensure_data_dir(ctx, knowledge)?;
+    Ok(Mounts { knowledge: knowledge.to_owned(), data: true })
 }
 
 // ------------------------------------------------------------------ 出力の伏せ字
@@ -811,7 +812,7 @@ async fn remove_containers(bin: &Path, id: &str) {
     }
 }
 
-/// `docker run`の引数。マウントは、ナレッジ・`/workspace`のフォルダ(設定時)・専用ボリュームだけ。
+/// `docker run`の引数。マウントは、ナレッジと専用ボリュームだけ。
 fn run_args(id: &str, name: &str, tag: &str, mounts: &Mounts) -> Vec<String> {
     let mut a: Vec<String> = ["run", "-d", "--init", "--name"].iter().map(|s| (*s).to_owned()).collect();
     a.push(name.to_owned());
@@ -828,9 +829,7 @@ fn run_args(id: &str, name: &str, tag: &str, mounts: &Mounts) -> Vec<String> {
     push(&["--pids-limit", "512"]);
     push(&["--memory", "2g"]);
     push(&["--cpus", "2"]);
-    for (inner, host) in mounts.pairs() {
-        push(&["--mount", &format!("type=bind,source={},target={inner}", host.display())]);
-    }
+    push(&["--mount", &format!("type=bind,source={},target={KNOWLEDGE_MOUNT}", mounts.knowledge.display())]);
     push(&["--mount", &format!("type=volume,source={},target=/home/agent", volume_name(id))]);
     push(&["-u", "agent", "-w", mounts.default_dir(), "-e", "HOME=/home/agent"]);
     push(&[tag, "sleep", "infinity"]);
@@ -842,10 +841,8 @@ async fn ensure_container(bin: &Path, id: &str, spec: &ImageSpec, mounts: &Mount
     let tag = spec.tag.as_str();
     let lock = ws_lock(id);
     let _held = lock.lock().await;
-    for (inner, host) in mounts.pairs() {
-        if host.display().to_string().contains(',') {
-            return Err(format!("{inner} のフォルダ名に「,」を含むため、サンドボックスにマウントできません。"));
-        }
+    if mounts.knowledge.display().to_string().contains(',') {
+        return Err(format!("{KNOWLEDGE_MOUNT} のフォルダ名に「,」を含むため、サンドボックスにマウントできません。"));
     }
     let label = mounts.label();
     match find_container(bin, id).await {
@@ -1380,12 +1377,12 @@ mod tests {
     }
 
     #[test]
-    fn cwd_maps_into_the_knowledge_mount_without_a_workspace() {
+    fn cwd_maps_into_the_knowledge_mount_without_the_data_dir() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("knowledge");
         std::fs::create_dir_all(root.join("a/b")).unwrap();
         let canon = root.canonicalize().unwrap();
-        let m = Mounts { knowledge: root.clone(), workspace: None };
+        let m = Mounts { knowledge: root.clone(), data: false };
         assert_eq!(map_cwd(&m, None).unwrap(), (canon.clone(), "/knowledge".into()));
         assert_eq!(map_cwd(&m, Some("a/b")).unwrap().1, "/knowledge/a/b");
         assert_eq!(map_cwd(&m, Some("/knowledge/a")).unwrap().1, "/knowledge/a");
@@ -1399,23 +1396,24 @@ mod tests {
     }
 
     #[test]
-    fn cwd_defaults_to_the_workspace_and_reaches_both_mounts() {
+    fn cwd_defaults_to_the_data_dir_and_reaches_the_whole_knowledge() {
         let dir = tempfile::tempdir().unwrap();
         let knowledge = dir.path().join("knowledge");
-        let src = dir.path().join("src");
         std::fs::create_dir_all(knowledge.join("notes")).unwrap();
-        std::fs::create_dir_all(src.join("app/lib")).unwrap();
-        let m = Mounts { knowledge: knowledge.clone(), workspace: Some(src.clone()) };
-        assert_eq!(map_cwd(&m, None).unwrap().1, "/workspace");
-        assert_eq!(map_cwd(&m, Some("app/lib")).unwrap().1, "/workspace/app/lib");
+        std::fs::create_dir_all(knowledge.join("data/app/lib")).unwrap();
+        let m = Mounts { knowledge: knowledge.clone(), data: true };
+        assert_eq!(map_cwd(&m, None).unwrap().1, "/knowledge/data");
+        assert_eq!(map_cwd(&m, Some("app/lib")).unwrap().1, "/knowledge/data/app/lib");
         assert_eq!(map_cwd(&m, Some("/knowledge/notes")).unwrap().1, "/knowledge/notes");
-        assert_eq!(map_cwd(&m, Some(src.canonicalize().unwrap().join("app").to_str().unwrap())).unwrap().1, "/workspace/app");
-        assert!(map_cwd(&m, Some("/workspace/../..")).is_err());
+        assert_eq!(map_cwd(&m, Some("..")).unwrap().1, "/knowledge");
+        assert_eq!(map_cwd(&m, Some(knowledge.canonicalize().unwrap().join("data/app").to_str().unwrap())).unwrap().1, "/knowledge/data/app");
+        // 以前の /workspace はもうマウントしない
+        assert!(map_cwd(&m, Some("/workspace")).is_err());
+        assert!(map_cwd(&m, Some("/knowledge/data/../..")).is_err());
+        assert_eq!(m.default_dir(), DATA_MOUNT);
         // マウント元が変われば、コンテナのラベルも変わる(作り直しの判定)
-        let other = Mounts { knowledge, workspace: None };
+        let other = Mounts { knowledge: dir.path().join("other"), data: true };
         assert_ne!(m.label(), other.label());
-        assert_eq!(m.default_dir(), WORKSPACE_MOUNT);
-        assert_eq!(other.default_dir(), KNOWLEDGE_MOUNT);
     }
 
     #[cfg(unix)]
@@ -1427,20 +1425,52 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
         std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
-        let m = Mounts { knowledge: root, workspace: None };
+        let m = Mounts { knowledge: root, data: false };
         assert!(map_cwd(&m, Some("link")).is_err());
     }
 
     #[test]
-    fn workspace_is_a_fixed_folder_inside_the_workspace_dir() {
+    fn data_dir_is_a_fixed_folder_inside_the_knowledge() {
         let dir = tempfile::tempdir().unwrap();
         let ctx = WorkspaceCtx::open("0b9c3f5e-1d2a-4c6b-8e7f-123456789abc", dir.path()).unwrap();
         let knowledge = dir.path().join("knowledge");
         let m = mounts_for(&ctx, &knowledge).unwrap();
-        // ワークスペースのフォルダ全体ではなく、その中の workspace/ だけをマウントする(キーやDBは見えない)
-        assert_eq!(m.workspace.as_deref(), Some(dir.path().join("workspace").as_path()));
-        assert!(dir.path().join("workspace").is_dir());
-        assert_eq!(m.default_dir(), WORKSPACE_MOUNT);
+        // マウントするのはナレッジだけ(ワークスペースのフォルダにあるキーやDBは見えない)
+        assert_eq!(m.knowledge, knowledge);
+        assert!(knowledge.join("data").is_dir());
+        assert_eq!(m.default_dir(), DATA_MOUNT);
+        assert!(!dir.path().join("workspace").exists());
+    }
+
+    #[test]
+    fn legacy_workspace_is_moved_into_the_knowledge() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = WorkspaceCtx::open("0b9c3f5e-1d2a-4c6b-8e7f-123456789abc", dir.path()).unwrap();
+        let knowledge = dir.path().join("knowledge");
+        std::fs::create_dir_all(dir.path().join("workspace/app")).unwrap();
+        std::fs::write(dir.path().join("workspace/app/main.rs"), "fn main() {}").unwrap();
+        let data = ensure_data_dir(&ctx, &knowledge).unwrap();
+        assert_eq!(std::fs::read_to_string(data.join("app/main.rs")).unwrap(), "fn main() {}");
+        assert!(!dir.path().join("workspace").exists());
+        // 空の以前のフォルダは、消すだけ
+        std::fs::create_dir_all(dir.path().join("workspace")).unwrap();
+        ensure_data_dir(&ctx, &knowledge).unwrap();
+        assert!(!dir.path().join("workspace").exists());
+    }
+
+    #[test]
+    fn legacy_workspace_is_left_alone_when_data_already_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = WorkspaceCtx::open("0b9c3f5e-1d2a-4c6b-8e7f-123456789abc", dir.path()).unwrap();
+        let knowledge = dir.path().join("knowledge");
+        std::fs::create_dir_all(knowledge.join("data")).unwrap();
+        std::fs::write(knowledge.join("data/a.txt"), "new").unwrap();
+        std::fs::create_dir_all(dir.path().join("workspace")).unwrap();
+        std::fs::write(dir.path().join("workspace/a.txt"), "old").unwrap();
+        let err = ensure_data_dir(&ctx, &knowledge).unwrap_err();
+        assert!(err.contains("手動"), "{err}");
+        assert_eq!(std::fs::read_to_string(dir.path().join("workspace/a.txt")).unwrap(), "old");
+        assert_eq!(std::fs::read_to_string(knowledge.join("data/a.txt")).unwrap(), "new");
     }
 
     #[test]
@@ -1472,21 +1502,15 @@ mod tests {
         let mount_args = |args: &[String]| -> Vec<String> {
             args.iter().enumerate().filter(|(i, _)| *i > 0 && args[i - 1] == "--mount").map(|(_, a)| a.clone()).collect()
         };
-        // /workspace が未設定なら、ナレッジと専用ボリュームだけ。作業ディレクトリは /knowledge
-        let m = Mounts { knowledge: PathBuf::from("/data/knowledge"), workspace: None };
+        // マウントはナレッジと専用ボリュームだけ。作業ディレクトリは /knowledge/data
+        let m = Mounts { knowledge: PathBuf::from("/data/knowledge"), data: true };
         let args = run_args(ID, "myassistant-1a2b3c4d", "img:1", &m);
         let mounts = mount_args(&args);
         assert_eq!(mounts.len(), 2);
         assert!(mounts[0].contains("source=/data/knowledge,target=/knowledge"));
         assert!(mounts[1].contains(&format!("source=myassistant-home-{ID},target=/home/agent")));
-        assert!(args.windows(2).any(|w| w[0] == "-w" && w[1] == "/knowledge"));
-        // 設定されていれば /workspace も加わり、作業ディレクトリは /workspace
-        let m2 = Mounts { workspace: Some(PathBuf::from("/src/system-a")), ..m };
-        let args2 = run_args(ID, "myassistant-1a2b3c4d", "img:1", &m2);
-        let mounts2 = mount_args(&args2);
-        assert_eq!(mounts2.len(), 3);
-        assert!(mounts2[0].contains("source=/src/system-a,target=/workspace"));
-        assert!(args2.windows(2).any(|w| w[0] == "-w" && w[1] == "/workspace"));
+        assert!(args.windows(2).any(|w| w[0] == "-w" && w[1] == "/knowledge/data"));
+        assert!(!args.iter().any(|a| a.contains("target=/workspace")));
         for flag in ["--read-only", "--cap-drop", "no-new-privileges", "--init"] {
             assert!(args.iter().any(|a| a == flag), "{flag}");
         }
@@ -1580,7 +1604,7 @@ mod tests {
         std::fs::write(root2.join("other.txt"), "x").unwrap();
         let cancel = CancelToken::default();
         let req = |c: &'static str, ctx: &'static WorkspaceCtx, root: &'static Path| {
-            let mounts: &'static Mounts = Box::leak(Box::new(Mounts { knowledge: root.to_owned(), workspace: None }));
+            let mounts: &'static Mounts = Box::leak(Box::new(Mounts { knowledge: root.to_owned(), data: false }));
             Request { ctx, mounts, command: c, cwd: KNOWLEDGE_MOUNT, timeout: Duration::from_secs(60) }
         };
         // テストの間だけ生きるよう、リークさせて'staticにする
