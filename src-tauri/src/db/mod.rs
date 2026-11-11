@@ -1,4 +1,4 @@
-//! SQLite(timeline.db): 時系列の一次ログ・要約・使用量・アプリ設定と、リーダーの台帳。
+//! SQLite(timeline.db): 時系列の一次ログ・要約・使用量・アプリ設定・学びの提案と、リーダーの台帳。
 //!
 //! 表ごとの読み書きは下位のモジュールに分け、どれも`Db`のメソッドとして使う。スキーマと版の管理は`schema`。
 use std::{path::Path, sync::Mutex};
@@ -9,6 +9,7 @@ use crate::utils::error::AppError;
 
 mod ledger;
 mod logs;
+mod proposals;
 pub mod schema;
 mod settings;
 mod summaries;
@@ -16,6 +17,7 @@ mod turns;
 
 pub use ledger::LedgerRow;
 pub use logs::{LogRow, PendingLog};
+pub use proposals::Proposal;
 pub use schema::Role;
 pub use summaries::Summary;
 

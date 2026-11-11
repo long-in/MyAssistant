@@ -7,8 +7,10 @@ use crate::{
         knowledge::{self, KnowledgeFile, TransferReport},
         llm_router::{self, Route},
         memory::{self, Forgot, MemoryView},
+        proposals,
         workspace::{Ctx, Workspaces},
     },
+    db::Proposal,
     utils::error::AppError,
 };
 
@@ -161,6 +163,50 @@ pub fn memory_view(ctx: Ctx) -> Result<MemoryView, AppError> {
 #[tauri::command]
 pub fn memory_forget(ctx: Ctx, text: String) -> Result<bool, AppError> {
     Ok(matches!(memory::forget(&batch::knowledge_root(&ctx)?, &text, &now())?, Forgot::Removed(_)))
+}
+
+/// 未決の学びの提案(古い順)。
+#[tauri::command]
+pub fn list_proposals(ctx: Ctx) -> Result<Vec<Proposal>, AppError> {
+    proposals::list(&ctx.db)
+}
+
+/// 提案を承認(`accept`)または却下する。承認は記憶・スキル・ノートへ反映し、統合はLLMを使う。
+/// 反映できなかったときは未決のまま残してエラーを返す。
+#[tauri::command]
+pub async fn decide_proposal(ctx: Ctx, id: String, accept: bool) -> Result<(), AppError> {
+    if !accept {
+        return proposals::reject(&ctx.db, &id);
+    }
+    if proposals::take_pending(&ctx.db, &id)?.kind == proposals::KIND_MERGE {
+        return batch::accept_merge(&ctx, &id).await;
+    }
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    proposals::accept_simple(&ctx.db, &batch::knowledge_root(&ctx)?, &id, &today, &now())
+}
+
+/// 棚卸し(LLMは使わない)。似たノートの統合・長く更新されていないノート・Inboxのノートを提案にし、足した件数を返す。
+#[tauri::command]
+pub fn run_maintenance(ctx: Ctx) -> Result<usize, AppError> {
+    proposals::maintenance(&ctx.db, &batch::knowledge_root(&ctx)?, chrono::Local::now().date_naive())
+}
+
+/// ノートの退避済みの版(新しい順)。
+#[tauri::command]
+pub fn knowledge_versions(ctx: Ctx, path: String) -> Result<Vec<String>, AppError> {
+    knowledge::versions(&batch::knowledge_root(&ctx)?, &path)
+}
+
+/// 退避済みの版の内容。
+#[tauri::command]
+pub fn read_knowledge_version(ctx: Ctx, path: String, version: String) -> Result<String, AppError> {
+    knowledge::read_version(&batch::knowledge_root(&ctx)?, &path, &version)
+}
+
+/// 退避済みの版へ戻す。今の内容も版として退避する。
+#[tauri::command]
+pub fn restore_knowledge_version(ctx: Ctx, path: String, version: String) -> Result<(), AppError> {
+    knowledge::restore_version(&batch::knowledge_root(&ctx)?, &path, &version, &now())
 }
 
 /// 絶対パスのフォルダのみ受け付ける(ダイアログで選ばれたフォルダを想定)。

@@ -155,6 +155,9 @@ pub enum AppError {
     /// サンドボックス(Docker)の不備。メッセージは利用者に見せる文面。
     #[error("{0}")]
     Sandbox(String),
+    /// 学びの提案を反映できない(記憶の上限、スキルの同名など)。メッセージは利用者に見せる文面。
+    #[error("{0}")]
+    Proposal(String),
 }
 
 impl AppError {
@@ -227,6 +230,7 @@ impl AppError {
             Self::WorkDisabled => "work_disabled",
             Self::WorkBusy => "work_busy",
             Self::Sandbox(_) => "sandbox_error",
+            Self::Proposal(_) => "proposal_error",
             Self::ProviderRejected(_) => "provider_rejected",
             Self::ApiDisabled => "api_disabled",
             Self::KeyRestricted => "key_restricted",
