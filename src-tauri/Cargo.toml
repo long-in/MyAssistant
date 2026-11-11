@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.2"
+version = "0.2.0"
 description = "MyAssistant: 音声で対話できるデスクトップ AI エージェント"
 license = "MIT"
 repository = "https://github.com/long-in/MyAssistant"
