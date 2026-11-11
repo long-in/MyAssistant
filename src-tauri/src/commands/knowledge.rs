@@ -8,7 +8,7 @@ use crate::{
         debug_log,
         global_settings::SettingsStore,
         knowledge::{self, KnowledgeFile, TransferReport},
-        llm_router::Route,
+        llm_router::{self, Route},
         memory::{self, Forgot, MemoryView},
         workspace::{Ctx, Workspaces},
     },
@@ -151,11 +151,21 @@ pub fn set_batch_interval(ctx: Ctx, minutes: u32) -> Result<(), AppError> {
 /// 整理バッチのモデル指定。未設定・使用不可なら既定(Claudeが使えればSonnet)を返す。
 #[tauri::command]
 pub fn load_batch_route(ctx: Ctx) -> Result<Option<Route>, AppError> {
+    // ワークは常にコンテナ内の Claude Code で整理する。選べるのはそのモデルだけ
+    if crate::services::sandbox::runs_in_sandbox(&ctx.id) {
+        let model = batch::saved_route(&ctx)?.filter(llm_router::is_sandbox).map(|r| r.model).unwrap_or_default();
+        return Ok(Some(llm_router::sandbox_route(&model)));
+    }
     batch::effective_route(&ctx, &batch::available_providers(&ctx.secrets))
 }
 
 #[tauri::command]
 pub fn save_batch_route(ctx: Ctx, route: Route) -> Result<(), AppError> {
+    if llm_router::is_sandbox(&route) {
+        crate::services::sandbox_agent::check_route_model(&ctx.db, &*ctx.global, &route.model)?;
+    } else if crate::services::sandbox::runs_in_sandbox(&ctx.id) {
+        return Err(AppError::Sandbox("ワークの整理は、コンテナ内の Claude Code だけで行います。".into()));
+    }
     ctx.db.set_setting(batch::BATCH_ROUTE_KEY, &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?)
 }
 

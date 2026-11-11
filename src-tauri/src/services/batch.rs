@@ -228,6 +228,11 @@ pub fn interval_minutes(db: &impl SettingsStore) -> Result<u32, AppError> {
         .unwrap_or(DEFAULT_INTERVAL_MINUTES))
 }
 
+/// 保存されている整理のモデル指定(使えるかは確かめない)。
+pub fn saved_route(ctx: &WorkspaceCtx) -> Result<Option<Route>, AppError> {
+    Ok(ctx.db.get_setting(BATCH_ROUTE_KEY)?.and_then(|v| serde_json::from_str(&v).ok()))
+}
+
 /// 保存済みの指定、使えなければ既定を返す。
 pub fn effective_route(ctx: &WorkspaceCtx, available: &[Provider]) -> Result<Option<Route>, AppError> {
     let saved = ctx.db.get_setting(BATCH_ROUTE_KEY)?.and_then(|v| serde_json::from_str(&v).ok());
@@ -268,6 +273,10 @@ pub async fn run_guarded(ctx: &WorkspaceCtx) -> Result<Option<BatchReport>, AppE
         // 個人・リーダーは、整理のモデルにコンテナ内の Claude Code を選んだときだけコンテナで行う
         let in_sandbox = sandbox::runs_in_sandbox(&ctx.id);
         let route = if in_sandbox { None } else { effective_route(ctx, &available)? };
+        // コンテナで整理するときの`--model`。ワークは保存済みの指定、個人・リーダーは選んだ経路のモデル
+        let sandbox_model = if in_sandbox { saved_route(ctx)? } else { route.clone() }
+            .filter(llm_router::is_sandbox)
+            .and_then(|r| sandbox_agent::route_model(db, &*ctx.global, &r.model));
         let in_sandbox = in_sandbox || route.as_ref().is_some_and(llm_router::is_sandbox);
         let mut ran = false;
         let mut report = BatchReport::default();
@@ -280,7 +289,7 @@ pub async fn run_guarded(ctx: &WorkspaceCtx) -> Result<Option<BatchReport>, AppE
             let cancel = CancelToken::default();
             report = run(db, &*ctx.global, &root, |prompt| {
                 let target = target.as_ref();
-                let (root, cancel) = (&root, &cancel);
+                let (root, cancel, sandbox_model) = (&root, &cancel, sandbox_model.as_deref());
                 async move {
                     // LLMの呼び出しの前後で削除を確かめ、削除されたエージェントへ整理結果を書かせない
                     ctx.ensure_alive()?;
@@ -289,7 +298,7 @@ pub async fn run_guarded(ctx: &WorkspaceCtx) -> Result<Option<BatchReport>, AppE
                             let msg = [ChatMessage { role: "user".into(), content: prompt }];
                             llm_client::complete(ctx, t.provider, &t.model, None, &msg).await?.text
                         }
-                        None => sandbox_agent::complete(ctx, root, None, &prompt, None, cancel).await.map_err(AppError::Sandbox)?,
+                        None => sandbox_agent::complete(ctx, root, None, &prompt, sandbox_model, None, cancel).await.map_err(AppError::Sandbox)?,
                     };
                     ctx.ensure_alive()?;
                     Ok(text)

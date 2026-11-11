@@ -549,10 +549,30 @@ pub async fn run_turn(turn: Turn<'_>, cancel: &CancelToken, mut on_event: impl F
     Ok(r)
 }
 
+/// 機能ごとのモデル指定(`Route.model`)から、`--model`で渡すモデルを取り出す。
+/// 空・`default`・許可するモデルに無いもの(settings.json から消えたもの)は`None`(settings.json の`model`に任せる)。
+pub fn route_model(db: &impl SettingsStore, global: &impl SettingsStore, model: &str) -> Option<String> {
+    let model = model.trim();
+    if model.is_empty() || model == "default" {
+        return None;
+    }
+    available_models(db, global).into_iter().find(|m| m == model)
+}
+
+/// 機能ごとのモデル指定として保存してよいか確かめる。空・`default`か、許可するモデルだけ通す。
+pub fn check_route_model(db: &impl SettingsStore, global: &impl SettingsStore, model: &str) -> Result<(), AppError> {
+    let model = model.trim();
+    if model.is_empty() || model == "default" || available_models(db, global).iter().any(|m| m == model) {
+        return Ok(());
+    }
+    Err(AppError::Sandbox("そのモデルは、Sandbox タブの settings.json で許可されていません。".into()))
+}
+
 /// ツールを使わない単発の呼び出し(ナレッジ整理・校正)。会話のセッションは作らず、応答のテキストだけを返す。
+/// `model`は`--model`で指定するモデル(`None`なら settings.json の`model`)。
 /// Claude Code がエラーで終えた・中断・時間切れは`Err`。
-pub async fn complete(ctx: &WorkspaceCtx, knowledge_root: &Path, system: Option<&str>, prompt: &str, timeout: Option<Duration>, cancel: &CancelToken) -> Result<String, String> {
-    let turn = Turn { ctx, knowledge_root, prompt, system: system.unwrap_or(""), resume: None, model: None, deny: Vec::new(), no_tools: true, timeout };
+pub async fn complete(ctx: &WorkspaceCtx, knowledge_root: &Path, system: Option<&str>, prompt: &str, model: Option<&str>, timeout: Option<Duration>, cancel: &CancelToken) -> Result<String, String> {
+    let turn = Turn { ctx, knowledge_root, prompt, system: system.unwrap_or(""), resume: None, model, deny: Vec::new(), no_tools: true, timeout };
     let r = run_turn(turn, cancel, |_| {}).await?;
     if r.cancelled {
         return Err("中断されました。".into());
@@ -662,6 +682,14 @@ mod tests {
         save_settings(&db, r#"{"availableModels":["c"]}"#).unwrap();
         assert_eq!(selected_model(&db, &db), None);
         save_selected_model(&db, &db, None).unwrap();
+        // 機能ごとのモデル指定
+        save_settings(&db, r#"{"model":"a","availableModels":["b"]}"#).unwrap();
+        assert_eq!(route_model(&db, &db, " b ").as_deref(), Some("b"));
+        assert_eq!(route_model(&db, &db, "default"), None);
+        assert_eq!(route_model(&db, &db, ""), None);
+        assert_eq!(route_model(&db, &db, "x"), None);
+        assert!(check_route_model(&db, &db, "b").is_ok() && check_route_model(&db, &db, "").is_ok());
+        assert!(check_route_model(&db, &db, "x").is_err());
         assert!(CLAUDE_COMMAND.contains(r#"${MYASSISTANT_MODEL:+--model "$MYASSISTANT_MODEL"}"#));
     }
 

@@ -1,3 +1,4 @@
+use crate::services::sandbox_agent;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
@@ -216,7 +217,7 @@ pub fn save_proofread_route(ctx: Ctx, route: Option<Route>) -> Result<(), AppErr
     if sandbox::runs_in_sandbox(&ctx.id) {
         // ワークは、コンテナ(Claude Code)か端末内のQwenだけ
         if route.provider == proofread::SANDBOX_PROVIDER {
-            let route = Route { provider: route.provider, model: String::new() };
+            sandbox_agent::check_route_model(&ctx.db, &*ctx.global, &route.model)?;
             return ctx.db.set_setting(proofread::ROUTE_KEY, &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?);
         }
         if route.provider != secrets::Provider::Local.as_str() {
@@ -228,7 +229,8 @@ pub fn save_proofread_route(ctx: Ctx, route: Option<Route>) -> Result<(), AppErr
         if !llm_router::offers_sandbox(&ctx) {
             return Err(AppError::InvalidProvider(route.provider));
         }
-        let route = llm_router::sandbox_route("");
+        sandbox_agent::check_route_model(&ctx.db, &*ctx.global, &route.model)?;
+        let route = llm_router::sandbox_route(&route.model);
         return ctx.db.set_setting(proofread::ROUTE_KEY, &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?);
     }
     llm_router::resolve(&ctx, &route, &batch::available_providers(&ctx.secrets))?;
