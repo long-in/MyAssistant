@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::utils::{
     error::AppError,
-    path::{category_parts, ensure_dir, resolve_existing, resolve_new_file, slug},
+    path::{category_parts, ensure_dir, lower_dirs, resolve_existing, resolve_new_file, slug},
 };
 
 fn io(e: impl std::fmt::Display) -> AppError {
@@ -68,7 +68,7 @@ fn inline_list(v: &str) -> Vec<String> {
     }
 }
 
-/// Frontmatterと本文に分ける。Obsidian等で手編集されても読めるよう、
+/// Frontmatterと本文に分ける。手編集されても読めるよう、
 /// 引用符なしの値やブロック形式のリスト(`- item`)も受け付け、未知のキーは無視する。
 /// Frontmatter自体がなければ`None`。
 pub fn parse(text: &str) -> Option<(Frontmatter, &str)> {
@@ -540,7 +540,7 @@ fn walk(root: &Path, dir: &Path, depth: u8, out: &mut Vec<KnowledgeFile>) -> Res
     }
     for entry in fs::read_dir(dir).map_err(io)? {
         let entry = entry.map_err(io)?;
-        // `.`始まり(`.my-assistant`のコマンド権限、Obsidianの設定など)と`data/`(ソースコードなど)はノートではない
+        // `.`始まり(`.my-assistant`のコマンド権限など)と`data/`(ソースコードなど)はノートではない
         if entry.file_name().to_string_lossy().starts_with('.') || is_data_entry(depth, &entry.file_name()) {
             continue;
         }
@@ -693,7 +693,7 @@ pub fn import(root: &Path, src: &Path) -> Result<TransferReport, AppError> {
 }
 
 /// ナレッジ内のMarkdownをすべて削除し、空になったフォルダを片付ける。
-/// 保存先がObsidianのvault等でも、Markdown以外のファイルや設定には触れない。スキル(`Skills/`)は残す。
+/// Markdown以外のファイルや設定には触れない。スキル(`skills/`)は残す。
 pub fn reset(root: &Path) -> Result<TransferReport, AppError> {
     let mut report = TransferReport::default();
     if !root.exists() {
@@ -728,7 +728,7 @@ fn remove_empty_dirs(dir: &Path, depth: u8) {
 }
 
 /// 会話をそのまま書き出すキャプチャのカテゴリ。整理でカテゴライズされたナレッジとは分けて扱う。
-pub const CAPTURE_CATEGORY: &str = "Captures";
+pub const CAPTURE_CATEGORY: &str = "captures";
 
 /// 担当システムのソースコードなどを置くフォルダ(ナレッジ直下)。サンドボックスでは`/knowledge/data`として見え、作業ディレクトリの既定になる。
 /// ノートではないので、一覧・索引・整理・初期化・書き出し・バックアップの対象にせず、画面やLLMのツールからも書き換えさせない。
@@ -742,6 +742,56 @@ pub fn is_data(path: &str) -> bool {
 /// ナレッジ直下の要素が`data/`か(走査で飛ばす判定)。
 fn is_data_entry(depth: u8, name: &std::ffi::OsStr) -> bool {
     depth == 0 && name.to_string_lossy().eq_ignore_ascii_case(DATA_DIR)
+}
+
+/// ナレッジ配下のフォルダ名を、すべて小文字に改名する(起動・ワークスペースを開くたびに呼ぶ。済んでいれば何もしない)。
+/// `.`始まりのフォルダ・シンボリックリンク・`data/`(担当システムのフォルダ)は触らない。
+/// 小文字の名前の別のフォルダがすでにあるとき(大文字小文字を区別するボリューム)は、何も変えずに飛ばして警告する。
+/// 大文字小文字を区別しないボリュームでも改名できるよう、いったん仮の名前を挟む。改名した数を返す。
+pub fn lowercase_dirs(root: &Path) -> usize {
+    fn walk(dir: &Path, depth: u8) -> usize {
+        let Ok(entries) = fs::read_dir(dir) else { return 0 };
+        let mut names: Vec<std::ffi::OsString> = entries.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).map(|e| e.file_name()).collect();
+        names.sort();
+        let mut renamed = 0;
+        for name in names {
+            let Some(name_s) = name.to_str() else { continue };
+            if name_s.starts_with('.') || is_data_entry(depth, &name) {
+                continue;
+            }
+            let lower = name_s.to_lowercase();
+            let mut path = dir.join(&name);
+            if lower != name_s {
+                let target = dir.join(&lower);
+                if !same_entry(&path, &target) {
+                    log::warn!("knowledge folder not lowercased (already exists): {}", path.display());
+                    continue;
+                }
+                let tmp = dir.join(format!(".{lower}.lowercase-tmp"));
+                if tmp.symlink_metadata().is_ok() || fs::rename(&path, &tmp).and_then(|()| fs::rename(&tmp, &target)).is_err() {
+                    log::warn!("knowledge folder not lowercased: {}", path.display());
+                    continue;
+                }
+                renamed += 1;
+                path = target;
+            }
+            if depth < 8 {
+                renamed += walk(&path, depth + 1);
+            }
+        }
+        renamed
+    }
+    walk(root, 0)
+}
+
+/// `target`が無い、または`path`と同じ実体(大文字小文字を区別しないボリュームでの別名)か。
+fn same_entry(path: &Path, target: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (path.symlink_metadata(), target.symlink_metadata()) {
+        (_, Err(_)) => true,
+        (Ok(a), Ok(b)) => (a.dev(), a.ino()) == (b.dev(), b.ino()),
+        _ => false,
+    }
 }
 
 /// 画面から渡されたパスが`data/`配下なら拒否する。
@@ -872,7 +922,8 @@ pub fn recent_context(root: &Path, max_files: usize, max_chars: usize) -> Result
 }
 
 /// 音声認識の訂正履歴を書き込むファイル(ナレッジルートからの相対パス)。
-pub const CORRECTIONS_PATH: &str = "Preferences/stt_corrections.md";
+const CORRECTIONS_DIR: &str = "preferences";
+pub const CORRECTIONS_PATH: &str = "preferences/stt_corrections.md";
 const CORRECTIONS_LINE: &str = "- 「";
 
 /// 先頭・末尾の共通部分を除いた、異なる区間(聞き取り, 正しい)を返す。
@@ -888,9 +939,9 @@ fn one_line(s: &str, max_chars: usize) -> String {
     s.replace(['\n', '\r'], " ").trim().chars().take(max_chars).collect()
 }
 
-/// 聞き取り間違いの訂正を`Preferences/stt_corrections.md`へ追記する。
+/// 聞き取り間違いの訂正を`preferences/stt_corrections.md`へ追記する。
 /// 発話全体(`heard`→`correct`)の差分区間を「誤→正」として残し、元の文を例として添える。
-/// 差分がない・すでに同じ訂正がある場合は書かずに`false`を返す。Obsidianで直接編集しても読み戻せる。
+/// 差分がない・すでに同じ訂正がある場合は書かずに`false`を返す。直接編集しても読み戻せる。
 pub fn add_correction(root: &Path, heard: &str, correct: &str, now: &str) -> Result<bool, AppError> {
     let (h, c) = diff_span(heard.trim(), correct.trim());
     let (h, c) = (one_line(&h, 100), one_line(&c, 100));
@@ -900,13 +951,13 @@ pub fn add_correction(root: &Path, heard: &str, correct: &str, now: &str) -> Res
     let key = format!("{CORRECTIONS_LINE}{h}」→「{c}」");
     let line = format!("{key} — 例: {} ({})", one_line(correct, 200), now.get(..10).unwrap_or(now));
 
-    let dir = ensure_dir(root, &["Preferences".to_owned()])?;
+    let dir = ensure_dir(root, &[CORRECTIONS_DIR.to_owned()])?;
     let path = dir.join("stt_corrections.md");
     let doc = match fs::read_to_string(&path) {
         Ok(existing) => {
             let (mut fm, body) = parse(&existing).unwrap_or_else(|| {
                 (
-                    Frontmatter { title: "音声認識の訂正履歴".into(), category: "Preferences".into(), created_at: now.to_owned(), ..Default::default() },
+                    Frontmatter { title: "音声認識の訂正履歴".into(), category: CORRECTIONS_DIR.into(), created_at: now.to_owned(), ..Default::default() },
                     existing.as_str(),
                 )
             });
@@ -919,7 +970,7 @@ pub fn add_correction(root: &Path, heard: &str, correct: &str, now: &str) -> Res
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             let fm = Frontmatter {
                 title: "音声認識の訂正履歴".into(),
-                category: "Preferences".into(),
+                category: CORRECTIONS_DIR.into(),
                 tags: vec!["stt".into(), "correction".into()],
                 created_at: now.to_owned(),
                 updated_at: now.to_owned(),
@@ -997,7 +1048,7 @@ fn is_safe_dir_name(name: &str) -> bool {
 /// 新規フォルダの相対パスを検証し、親までを作成して実パスを返す。既存なら拒否する。
 fn resolve_new_dir(root: &Path, rel: &str) -> Result<PathBuf, AppError> {
     reject_data(rel)?;
-    let names: Vec<String> = rel.split('/').map(str::to_owned).collect();
+    let names: Vec<String> = rel.split('/').map(str::to_lowercase).collect();
     if names.len() > 3 || !names.iter().all(|n| is_safe_dir_name(n)) {
         return Err(AppError::PathNotAllowed);
     }
@@ -1015,6 +1066,7 @@ pub fn create_file(root: &Path, rel: &str, now: &str) -> Result<String, AppError
         return Err(AppError::PathNotAllowed);
     };
     reject_data(rel)?;
+    let rel = &lower_dirs(rel);
     let path = resolve_new_file(root, rel)?;
     if path.symlink_metadata().is_ok() {
         return Err(AppError::Io("already_exists".to_owned()));
@@ -1145,42 +1197,42 @@ mod tests {
     fn dot_folders_are_not_notes_and_skills_survive_reset() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("knowledge");
-        create_file(&root, "Dev/a.md", "2026-10-29T00:00:00Z").unwrap();
+        create_file(&root, "dev/a.md", "2026-10-29T00:00:00Z").unwrap();
         fs::create_dir_all(root.join(".my-assistant")).unwrap();
         fs::write(root.join(".my-assistant/note.md"), "x").unwrap();
-        fs::create_dir_all(root.join("Skills/daily")).unwrap();
-        fs::write(root.join("Skills/daily/SKILL.md"), "---\ndescription: \"d\"\n---\n手順").unwrap();
+        fs::create_dir_all(root.join("skills/daily")).unwrap();
+        fs::write(root.join("skills/daily/SKILL.md"), "---\ndescription: \"d\"\n---\n手順").unwrap();
         let mut paths: Vec<_> = list(&root).unwrap().into_iter().map(|f| f.path).collect();
         paths.sort();
-        assert_eq!(paths, ["Dev/a.md", "Skills/daily/SKILL.md"], "`.`始まりはノートではなく、スキルはノートとして見える");
+        assert_eq!(paths, ["dev/a.md", "skills/daily/SKILL.md"], "`.`始まりはノートではなく、スキルはノートとして見える");
         reset(&root).unwrap();
         assert!(root.join(".my-assistant/note.md").is_file());
-        assert!(root.join("Skills/daily/SKILL.md").is_file(), "初期化はスキルを消さない");
-        assert!(!root.join("Dev").exists());
+        assert!(root.join("skills/daily/SKILL.md").is_file(), "初期化はスキルを消さない");
+        assert!(!root.join("dev").exists());
     }
 
     #[test]
     fn crud_roundtrip_and_rejects_unsafe() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("knowledge");
-        create_dir(&root, "Dev").unwrap();
-        assert!(create_dir(&root, "Dev").is_err());
+        create_dir(&root, "dev").unwrap();
+        assert!(create_dir(&root, "dev").is_err());
         assert!(create_dir(&root, "../x").is_err());
         assert!(create_dir(&root, "a b").is_err());
-        let rel = create_file(&root, "Dev/memo.md", "2026-10-29T00:00:00Z").unwrap();
-        assert!(create_file(&root, "Dev/memo.md", "x").is_err());
-        assert!(create_file(&root, "Dev/memo.txt", "x").is_err());
+        let rel = create_file(&root, "dev/memo.md", "2026-10-29T00:00:00Z").unwrap();
+        assert!(create_file(&root, "dev/memo.md", "x").is_err());
+        assert!(create_file(&root, "dev/memo.txt", "x").is_err());
         write(&root, &rel, "# edited\n").unwrap();
         assert_eq!(read(&root, &rel).unwrap(), "# edited\n");
         assert!(write(&root, "../x.md", "x").is_err());
-        rename(&root, "Dev/memo.md", "Dev/note.md").unwrap();
-        create_dir(&root, "Ops").unwrap();
-        rename(&root, "Dev/note.md", "Ops/note.md").unwrap();
-        assert_eq!(list(&root).unwrap()[0].category, "Ops");
-        assert!(rename(&root, "Ops", "Ops/Sub").is_err());
-        rename(&root, "Ops", "Ops2").unwrap();
-        assert_eq!(list_dirs(&root).unwrap(), ["Dev", "Ops2"]);
-        delete(&root, "Ops2").unwrap();
+        rename(&root, "dev/memo.md", "dev/note.md").unwrap();
+        create_dir(&root, "ops").unwrap();
+        rename(&root, "dev/note.md", "ops/note.md").unwrap();
+        assert_eq!(list(&root).unwrap()[0].category, "ops");
+        assert!(rename(&root, "ops", "ops/Sub").is_err());
+        rename(&root, "ops", "ops2").unwrap();
+        assert_eq!(list_dirs(&root).unwrap(), ["dev", "ops2"]);
+        delete(&root, "ops2").unwrap();
         assert!(list(&root).unwrap().is_empty());
         assert!(delete(&root, "").is_err());
         assert!(delete(&root, "..").is_err());
@@ -1196,7 +1248,7 @@ mod tests {
         let root = dir.path().join("knowledge");
         let ids1 = vec!["a".to_owned()];
         let rel = upsert(&root, &Entry { tags: &["Rust".to_owned()], ..entry("Development", "tauri_setup", "first", &ids1) }, "2026-10-27T00:00:00Z").unwrap();
-        assert_eq!(rel, "Development/tauri_setup.md");
+        assert_eq!(rel, "development/tauri_setup.md");
         let ids2 = vec!["a".to_owned(), "b".to_owned()];
         upsert(&root, &Entry { tags: &["Rust".to_owned(), "Tauri".to_owned()], ..entry("Development", "tauri_setup", "second", &ids2) }, "2026-10-27T01:00:00Z").unwrap();
         let text = read(&root, &rel).unwrap();
@@ -1226,9 +1278,9 @@ mod tests {
         let root = dir.path();
         let ids = vec!["a".to_owned()];
         let u = NoteUpdate { title: "Tauri", summary: "要約1", tags: &["rust".to_owned()], current: "- npm", history: "- 作成", source_log_ids: &ids };
-        let w = create_note(root, &NewNote { category: "Dev", filename: "tauri" }, &u, "2026-11-01T00:00:00Z").unwrap();
-        assert_eq!(w, Written { path: "Dev/tauri.md".into(), created: true, rewrite_skipped: false });
-        assert_eq!(note_rel(&NewNote { category: "Dev", filename: "tauri" }), w.path);
+        let w = create_note(root, &NewNote { category: "dev", filename: "tauri" }, &u, "2026-11-01T00:00:00Z").unwrap();
+        assert_eq!(w, Written { path: "dev/tauri.md".into(), created: true, rewrite_skipped: false });
+        assert_eq!(note_rel(&NewNote { category: "dev", filename: "tauri" }), w.path);
         // LLMが経緯の見出しを書いても、構造は壊さない
         let ids2 = vec!["b".to_owned()];
         let u2 = NoteUpdate { summary: "要約2", ..update("- pnpm\n## 経緯\nx", "- 変更", &ids2) };
@@ -1242,7 +1294,7 @@ mod tests {
         assert_eq!(n.fm.source_log_ids, ["a", "b"]);
         assert_eq!(n.fm.created_at, "2026-11-01T00:00:00Z");
         // 同じ場所への作成は書き換えになる
-        let w3 = create_note(root, &NewNote { category: "Dev", filename: "tauri" }, &update("- yarn", "", &[]), "2026-11-03T00:00:00Z").unwrap();
+        let w3 = create_note(root, &NewNote { category: "dev", filename: "tauri" }, &update("- yarn", "", &[]), "2026-11-03T00:00:00Z").unwrap();
         assert!(!w3.created);
         assert_eq!(read_note(root, &w.path).unwrap().current, "- yarn");
     }
@@ -1251,18 +1303,18 @@ mod tests {
     fn legacy_notes_move_their_dated_sections_into_history() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        upsert(root, &entry("Dev", "old", "最初のメモ", &[]), "2026-10-01T00:00:00Z").unwrap();
-        upsert(root, &entry("Dev", "old", "追記", &[]), "2026-10-02T00:00:00Z").unwrap();
-        let n = read_note(root, "Dev/old.md").unwrap();
+        upsert(root, &entry("dev", "old", "最初のメモ", &[]), "2026-10-01T00:00:00Z").unwrap();
+        upsert(root, &entry("dev", "old", "追記", &[]), "2026-10-02T00:00:00Z").unwrap();
+        let n = read_note(root, "dev/old.md").unwrap();
         assert_eq!(n.current, "");
         assert!(n.history.starts_with("### 2026-10-01T00:00:00Z") && n.history.contains("追記"));
-        rewrite(root, "Dev/old.md", &update("- まとめ", "- 統合", &[]), "2026-11-01T00:00:00Z").unwrap();
-        let text = read(root, "Dev/old.md").unwrap();
+        rewrite(root, "dev/old.md", &update("- まとめ", "- 統合", &[]), "2026-11-01T00:00:00Z").unwrap();
+        let text = read(root, "dev/old.md").unwrap();
         let body = parse(&text).unwrap().1;
         assert!(body.contains("\n\n- まとめ\n\n## 経緯\n\n### 2026-10-01T00:00:00Z"), "{body}");
         // 手書きのノート(Frontmatterなし)も読める
-        fs::write(root.join("Dev/hand.md"), "# 手書き\n\n自由に書いた本文\n\n## 節\n内容").unwrap();
-        let n = read_note(root, "Dev/hand.md").unwrap();
+        fs::write(root.join("dev/hand.md"), "# 手書き\n\n自由に書いた本文\n\n## 節\n内容").unwrap();
+        let n = read_note(root, "dev/hand.md").unwrap();
         assert_eq!((n.fm.title.as_str(), n.current.as_str(), n.history.as_str()), ("hand", "自由に書いた本文\n\n## 節\n内容", ""));
     }
 
@@ -1271,7 +1323,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let long = "- 大事な情報\n".repeat(80);
-        let w = create_note(root, &NewNote { category: "Dev", filename: "x" }, &NoteUpdate { summary: "元の要約", ..update(&long, "", &[]) }, "t1").unwrap();
+        let w = create_note(root, &NewNote { category: "dev", filename: "x" }, &NoteUpdate { summary: "元の要約", ..update(&long, "", &[]) }, "t1").unwrap();
         let r = rewrite(root, &w.path, &NoteUpdate { summary: "新しい要約", ..update("- 短い", "- 変更", &[]) }, "t2").unwrap();
         assert!(r.rewrite_skipped);
         let n = read_note(root, &w.path).unwrap();
@@ -1285,7 +1337,7 @@ mod tests {
     fn versions_are_kept_up_to_ten_and_can_be_restored() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let w = create_note(root, &NewNote { category: "Dev", filename: "v" }, &update("- v0", "", &[]), "2026-11-01T00:00:00Z").unwrap();
+        let w = create_note(root, &NewNote { category: "dev", filename: "v" }, &update("- v0", "", &[]), "2026-11-01T00:00:00Z").unwrap();
         for i in 1..=12 {
             // 同じ時刻の書き換えでも、前の版を潰さない
             rewrite(root, &w.path, &update(&format!("- v{i}"), "", &[]), "2026-11-02T00:00:00Z").unwrap();
@@ -1309,6 +1361,23 @@ mod tests {
     }
 
     #[test]
+    fn lowercase_dirs_renames_nested_folders_but_not_data_or_hidden() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path();
+        for p in ["Skills/Daily", "Dev/Rust", "Inbox", "data/Src/Lib", ".Hidden/Keep", "ok"] {
+            fs::create_dir_all(root.join(p)).unwrap();
+        }
+        fs::write(root.join("Dev/Rust/Note.md"), "x").unwrap();
+        assert_eq!(lowercase_dirs(root), 5);
+        let mut names: Vec<String> = fs::read_dir(root).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        assert_eq!(names, [".Hidden", "data", "dev", "inbox", "ok", "skills"]);
+        assert!(root.join("skills/daily").is_dir() && root.join("data/Src/Lib").is_dir() && root.join(".Hidden/Keep").is_dir());
+        assert_eq!(fs::read_to_string(root.join("dev/rust/Note.md")).unwrap(), "x");
+        assert_eq!(lowercase_dirs(root), 0);
+    }
+
+    #[test]
     fn parses_obsidian_style_frontmatter() {
         let text = "---\ntitle: Tauri memo\ncategory: 'Development'\ntags:\n  - Rust\n  - \"Tauri\"\nupdated_at: 2026-10-27T01:00:00Z\naliases: [x]\n---\n\n# Body\nhello\n";
         let (fm, body) = parse(text).unwrap();
@@ -1328,7 +1397,7 @@ mod tests {
         upsert(&root, &entry("Ideas", "old", "old note", &ids), "2026-10-01T00:00:00Z").unwrap();
         upsert(&root, &entry("Development", "new", &"あ".repeat(500), &ids), "2026-10-02T00:00:00Z").unwrap();
         let ctx = recent_context(&root, 5, 100).unwrap().unwrap();
-        assert!(ctx.find("Development").unwrap() < ctx.find("Ideas").unwrap_or(usize::MAX));
+        assert!(ctx.find("development").unwrap() < ctx.find("ideas").unwrap_or(usize::MAX));
         assert!(ctx.chars().count() < 200);
     }
 
@@ -1385,20 +1454,20 @@ mod tests {
     fn export_import_reset_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("knowledge");
-        upsert(&root, &entry("Dev", "a", "x", &[]), "now").unwrap();
-        upsert(&root, &entry("Dev/Rust", "b", "y", &[]), "now").unwrap();
+        upsert(&root, &entry("dev", "a", "x", &[]), "now").unwrap();
+        upsert(&root, &entry("dev/Rust", "b", "y", &[]), "now").unwrap();
         fs::write(root.join("keep.txt"), "not markdown").unwrap();
 
         let dest = dir.path().join("out");
         let r = export(&root, &dest, "t").unwrap();
         assert_eq!(r.files, 2);
         let exported = dest.join("MyAssistant-knowledge-t");
-        assert!(exported.join("Dev/Rust/b.md").exists());
+        assert!(exported.join("dev/Rust/b.md").exists());
 
         let r = reset(&root).unwrap();
         assert_eq!(r.files, 2);
         assert!(list(&root).unwrap().is_empty());
-        assert!(!root.join("Dev").exists());
+        assert!(!root.join("dev").exists());
         assert!(root.join("keep.txt").exists());
 
         let r = import(&root, &exported).unwrap();
@@ -1417,7 +1486,7 @@ mod tests {
         append_capture(&root, "abcdef123456", "次", "はい", "2026-10-27T12:05:00Z").unwrap();
         let files = list(&root).unwrap();
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "Captures/2026-10-27_abcdef12.md");
+        assert_eq!(files[0].path, "captures/2026-10-27_abcdef12.md");
         let text = read(&root, &files[0].path).unwrap();
         assert!(text.contains("## 12:00") && text.contains("## 12:05"));
 
@@ -1430,7 +1499,7 @@ mod tests {
         assert_eq!(sweep_captures(&root, &done).unwrap(), 0);
         // 削除後の発話は新しいキャプチャになる
         append_capture(&root, "abcdef123456", "さらに", "うん", "2026-10-28T09:00:00Z").unwrap();
-        assert_eq!(list(&root).unwrap()[0].path, "Captures/2026-10-28_abcdef12.md");
+        assert_eq!(list(&root).unwrap()[0].path, "captures/2026-10-28_abcdef12.md");
     }
 
     #[test]
@@ -1499,14 +1568,14 @@ mod tests {
         fs::create_dir_all(root.join("data/app/empty")).unwrap();
         fs::write(root.join("data/README.md"), "# readme").unwrap();
         fs::write(root.join("data/app/main.rs"), "fn main() {}").unwrap();
-        fs::create_dir_all(root.join("Dev")).unwrap();
-        fs::write(root.join("Dev/note.md"), "# note").unwrap();
-        fs::create_dir_all(root.join("Dev/data")).unwrap();
-        fs::write(root.join("Dev/data/x.md"), "# x").unwrap();
+        fs::create_dir_all(root.join("dev")).unwrap();
+        fs::write(root.join("dev/note.md"), "# note").unwrap();
+        fs::create_dir_all(root.join("dev/data")).unwrap();
+        fs::write(root.join("dev/data/x.md"), "# x").unwrap();
 
         // 一覧・フォルダ一覧・その他のファイルに出ない(ナレッジ直下の data だけが対象)
         let notes: Vec<String> = list(&root).unwrap().into_iter().map(|f| f.path).collect();
-        assert!(notes.contains(&"Dev/note.md".to_owned()) && notes.contains(&"Dev/data/x.md".to_owned()));
+        assert!(notes.contains(&"dev/note.md".to_owned()) && notes.contains(&"dev/data/x.md".to_owned()));
         assert!(notes.iter().all(|p| !is_data(p)), "{notes:?}");
         assert!(list_dirs(&root).unwrap().iter().all(|p| !is_data(p)));
         assert!(list_other(&root).unwrap().is_empty());
@@ -1517,7 +1586,7 @@ mod tests {
         assert!(create_file(&root, "data/new.md", "2026-01-01T00:00:00Z").is_err());
         assert!(create_dir(&root, "Data").is_err());
         assert!(rename(&root, "data", "moved").is_err());
-        assert!(rename(&root, "Dev/note.md", "data/note.md").is_err());
+        assert!(rename(&root, "dev/note.md", "data/note.md").is_err());
         assert!(delete(&root, "data").is_err());
         assert!(delete(&root, "DATA/README.md").is_err());
 
@@ -1525,6 +1594,6 @@ mod tests {
         reset(&root).unwrap();
         assert!(root.join("data/README.md").is_file() && root.join("data/app/main.rs").is_file());
         assert!(root.join("data/app/empty").is_dir());
-        assert!(!root.join("Dev/note.md").exists());
+        assert!(!root.join("dev/note.md").exists());
     }
 }

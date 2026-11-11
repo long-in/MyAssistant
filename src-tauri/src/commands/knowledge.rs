@@ -14,7 +14,7 @@ use crate::{
     utils::error::AppError,
 };
 
-/// ナレッジの保存先。Obsidianのvaultとして開く、外部ツールから直接読み書きするために表示する。
+/// ナレッジの保存先。外部ツールから直接読み書きするために表示する。
 #[tauri::command]
 pub fn knowledge_dir(ctx: Ctx) -> Result<String, AppError> {
     let root = batch::knowledge_root(&ctx)?;
@@ -185,7 +185,7 @@ pub async fn decide_proposal(ctx: Ctx, id: String, accept: bool) -> Result<(), A
     proposals::accept_simple(&ctx.db, &batch::knowledge_root(&ctx)?, &id, &today, &now())
 }
 
-/// 棚卸し(LLMは使わない)。似たノートの統合・長く更新されていないノート・Inboxのノートを提案にし、足した件数を返す。
+/// 棚卸し(LLMは使わない)。似たノートの統合・長く更新されていないノート・inboxのノートを提案にし、足した件数を返す。
 #[tauri::command]
 pub fn run_maintenance(ctx: Ctx) -> Result<usize, AppError> {
     proposals::maintenance(&ctx.db, &batch::knowledge_root(&ctx)?, chrono::Local::now().date_naive())

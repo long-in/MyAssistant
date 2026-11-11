@@ -314,7 +314,7 @@ fn apply(root: &Path, topic: &str, items: &[Item], out: &Consolidated, cands: &[
     // 候補に無いパスは信用せず、新しいノートとして扱う
     let target = out.target.as_deref().filter(|t| cands.iter().any(|c| c.path == *t));
     let place = out.new.as_ref();
-    let category = place.map(|p| p.category.trim()).filter(|c| !c.is_empty() && !is_reserved(c)).unwrap_or("Inbox");
+    let category = place.map(|p| p.category.trim()).filter(|c| !c.is_empty() && !is_reserved(c)).unwrap_or("inbox");
     let filename = place.map(|p| p.filename.trim()).filter(|f| !f.is_empty()).unwrap_or(topic);
     let at = NewNote { category, filename };
     let rel = match target {
@@ -786,7 +786,7 @@ mod tests {
         let root = root.path();
         let id = db.insert_log("s", "user", "x", None, None).unwrap();
         let extract = format!("{{\"items\":[{{\"topic\":\"t\",\"text\":\"y\",\"log_ids\":[\"{id}\"]}}]}}");
-        let reply = r#"{"target":"Memory/pinned.md","new":{"category":"Memory","filename":"pinned"},"title":"t","current":"c"}"#;
+        let reply = r#"{"target":"memory/pinned.md","new":{"category":"memory","filename":"pinned"},"title":"t","current":"c"}"#;
         let report = run(&db, &db, root, fake(extract, |_| Ok(reply.to_owned()))).await.unwrap();
         assert_eq!(report.notes_created, 1);
         assert!(!root.join("Memory").exists());

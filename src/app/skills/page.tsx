@@ -269,7 +269,7 @@ export default function Skills() {
             {t("会話から作ることもできます。「〜をスキルにして」のように「スキル」と言って頼んでください。")}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {t("定義はナレッジの「Skills」フォルダの SKILL.md です。ナレッジ画面から直接編集もできます。")}
+            {t("定義はナレッジの「skills」フォルダの SKILL.md です。ナレッジ画面から直接編集もできます。")}
           </p>
         </div>
       </aside>

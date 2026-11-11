@@ -394,7 +394,7 @@ export default function Knowledge() {
             {running ? <Loader2 className="animate-spin" /> : <Sparkles />}
             {running ? t("整理中…") : t("今すぐ整理")}
           </Button>
-          <Button size="sm" variant="outline" className="mt-2 w-full" disabled={maintaining} onClick={maintain} title={t("似たノート・長く更新されていないノート・Inboxのノートを探します(AIは使いません)")}>
+          <Button size="sm" variant="outline" className="mt-2 w-full" disabled={maintaining} onClick={maintain} title={t("似たノート・長く更新されていないノート・inboxのノートを探します(AIは使いません)")}>
             {maintaining ? <Loader2 className="animate-spin" /> : <ListChecks />}
             {t("棚卸し")}
           </Button>
@@ -446,7 +446,7 @@ export default function Knowledge() {
         {dir && (
           <div className="border-t px-4 py-3 text-xs text-muted-foreground">
             <p className="hud-label mb-1">Location</p>
-            <p className="break-all" title={t("Obsidianのvaultとして開けます")}>
+            <p className="break-all">
               {t("保存先:")} {dir}
             </p>
             <div className="mt-2 flex gap-2">

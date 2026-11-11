@@ -1,6 +1,6 @@
 //! スキル(決まった依頼に対する、あらかじめ登録した対応手順)。
 //!
-//! 保存先はナレッジ直下の`Skills/<名前>/SKILL.md`で、エージェントごとに持つ。形式はClaude Code・GitHub Copilotと同じAgent Skills標準
+//! 保存先はナレッジ直下の`skills/<名前>/SKILL.md`で、エージェントごとに持つ。形式はClaude Code・GitHub Copilotと同じAgent Skills標準
 //! (Frontmatterの`name`と`description`、本文はMarkdown。`name`はフォルダ名と同じ小文字英数字とハイフン)。
 //! 通常のナレッジなので画面から直接編集できるが、整理バッチ・グラフ・直近の文脈・初期化の対象にはしない(`is_skill`)。
 //! 読むのは各フォルダの`SKILL.md`だけで、補助ファイルは読まない。パスは`utils::path`のサンドボックスを通す。
@@ -31,7 +31,7 @@ use crate::utils::{error::AppError, path::ensure_dir};
 /// 選定に使うモデル指定(`Route`のJSON)のキー。未設定なら既定(Haiku)。
 pub const ROUTE_KEY: &str = "skills_route";
 /// スキルを置くフォルダ(ナレッジ直下)。
-pub const DIR: &str = "Skills";
+pub const DIR: &str = "skills";
 /// スキル1件のフォルダ内で、定義として読むファイル名。
 const FILE_NAME: &str = "SKILL.md";
 /// 名前の最大文字数(標準は64)。
@@ -273,7 +273,7 @@ pub fn from_input(input: &Value) -> Result<Skill, String> {
 
 // ---------- 保存 ----------
 
-/// スキルのファイル(`Skills/`配下)か。大文字小文字を区別しないファイルシステムに合わせ、区別せずに比べる。
+/// スキルのファイル(`skills/`配下)か。大文字小文字を区別しないファイルシステムに合わせ、区別せずに比べる。
 pub fn is_skill(path: &str) -> bool {
     path.trim_start_matches("./").split(['/', '\\']).next().is_some_and(|p| p.eq_ignore_ascii_case(DIR))
 }
@@ -289,7 +289,7 @@ fn existing_dir(root: &Path) -> Option<PathBuf> {
     (dir.starts_with(&root) && dir.is_dir()).then_some(dir)
 }
 
-/// 書き込み先の`Skills/<名前>/SKILL.md`。フォルダが無ければ作る。途中にシンボリックリンクがあれば拒否する。
+/// 書き込み先の`skills/<名前>/SKILL.md`。フォルダが無ければ作る。途中にシンボリックリンクがあれば拒否する。
 fn write_path(root: &Path, name: &str) -> Result<PathBuf, AppError> {
     if !valid_name(name) {
         return Err(AppError::PathNotAllowed);
@@ -926,7 +926,7 @@ mod tests {
         assert!(list(&root).is_empty());
         create(&root, skill("b-skill")).unwrap();
         create(&root, skill("a-skill")).unwrap();
-        let file = root.join("Skills/a-skill/SKILL.md");
+        let file = root.join("skills/a-skill/SKILL.md");
         assert!(file.is_file());
         assert!(std::fs::read_to_string(&file).unwrap().starts_with("---\nname: a-skill\n"), "標準どおりnameを書く");
         let names: Vec<_> = list(&root).into_iter().map(|s| s.name).collect();
@@ -945,7 +945,7 @@ mod tests {
 
         delete(&root, "a-skill").unwrap();
         assert!(get(&root, "a-skill").is_none());
-        assert!(!root.join("Skills/a-skill").exists(), "空になったフォルダは消す");
+        assert!(!root.join("skills/a-skill").exists(), "空になったフォルダは消す");
         assert!(delete(&root, "a-skill").is_err());
     }
 
@@ -953,23 +953,23 @@ mod tests {
     fn delete_keeps_auxiliary_files_and_only_skill_md_is_read() {
         let (_d, root) = root();
         create(&root, skill("with-aux")).unwrap();
-        std::fs::write(root.join("Skills/with-aux/reference.md"), "補助").unwrap();
+        std::fs::write(root.join("skills/with-aux/reference.md"), "補助").unwrap();
         // SKILL.mdの無いフォルダ・直下のファイルはスキルとして読まない
-        std::fs::create_dir_all(root.join("Skills/empty")).unwrap();
-        std::fs::write(root.join("Skills/loose.md"), "---\ndescription: \"x\"\n---\n本文").unwrap();
+        std::fs::create_dir_all(root.join("skills/empty")).unwrap();
+        std::fs::write(root.join("skills/loose.md"), "---\ndescription: \"x\"\n---\n本文").unwrap();
         let names: Vec<_> = list(&root).into_iter().map(|s| s.name).collect();
         assert_eq!(names, ["with-aux"]);
 
         delete(&root, "with-aux").unwrap();
         assert!(get(&root, "with-aux").is_none());
-        assert!(root.join("Skills/with-aux/reference.md").is_file(), "補助ファイルは消さない");
+        assert!(root.join("skills/with-aux/reference.md").is_file(), "補助ファイルは消さない");
     }
 
     #[test]
     fn standard_skill_files_are_read_with_the_folder_name() {
         let (_d, root) = root();
-        std::fs::create_dir_all(root.join("Skills/pdf")).unwrap();
-        std::fs::write(root.join("Skills/pdf/SKILL.md"), "---\nname: other-name\ndescription: Extract text from PDFs\n---\n\n# PDF\n手順").unwrap();
+        std::fs::create_dir_all(root.join("skills/pdf")).unwrap();
+        std::fs::write(root.join("skills/pdf/SKILL.md"), "---\nname: other-name\ndescription: Extract text from PDFs\n---\n\n# PDF\n手順").unwrap();
         let s = get(&root, "pdf").unwrap();
         assert_eq!((s.name.as_str(), s.description.as_str(), s.body.as_str()), ("pdf", "Extract text from PDFs", "# PDF\n手順"));
     }
@@ -1001,12 +1001,12 @@ mod tests {
         let outside = d.path().join("outside.md");
         std::fs::write(&outside, "---\ndescription: \"x\"\n---\n外").unwrap();
         // SKILL.mdがシンボリックリンク
-        std::fs::create_dir_all(root.join("Skills/linked")).unwrap();
-        std::os::unix::fs::symlink(&outside, root.join("Skills/linked/SKILL.md")).unwrap();
+        std::fs::create_dir_all(root.join("skills/linked")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("skills/linked/SKILL.md")).unwrap();
         // スキルのフォルダがシンボリックリンク
         std::fs::create_dir_all(d.path().join("elsewhere-skill")).unwrap();
         std::fs::write(d.path().join("elsewhere-skill/SKILL.md"), "---\ndescription: \"x\"\n---\n外").unwrap();
-        std::os::unix::fs::symlink(d.path().join("elsewhere-skill"), root.join("Skills/dirlink")).unwrap();
+        std::os::unix::fs::symlink(d.path().join("elsewhere-skill"), root.join("skills/dirlink")).unwrap();
         let names: Vec<_> = list(&root).into_iter().map(|s| s.name).collect();
         assert_eq!(names, ["real"]);
         assert!(update(&root, skill("linked")).is_err());
@@ -1018,7 +1018,7 @@ mod tests {
         std::fs::create_dir_all(&root2).unwrap();
         std::fs::create_dir_all(d2.path().join("elsewhere/x")).unwrap();
         std::fs::write(d2.path().join("elsewhere/x/SKILL.md"), "手順").unwrap();
-        std::os::unix::fs::symlink(d2.path().join("elsewhere"), root2.join("Skills")).unwrap();
+        std::os::unix::fs::symlink(d2.path().join("elsewhere"), root2.join("skills")).unwrap();
         assert!(list(&root2).is_empty());
         assert!(create(&root2, skill("y")).is_err());
     }

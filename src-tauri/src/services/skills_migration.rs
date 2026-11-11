@@ -1,8 +1,8 @@
-//! 旧形式のスキルと、廃止したハーネスを標準形式の`Skills/<名前>/SKILL.md`(`services::skills`)へ移す。
+//! 旧形式のスキルと、廃止したハーネスを標準形式の`skills/<名前>/SKILL.md`(`services::skills`)へ移す。
 //!
 //! 1. `.my-assistant/skills/<名前>.md`(旧形式のスキル)。
 //! 2. `Harness/<名前>.md`(ハーネス)。`output`は本文の末尾へ「出力形式」として足し、`paths` `tools` `max_steps`は捨てる。
-//! 3. `Skills/`にある旧書式のスキル。独自の`triggers`(呼び出し語)は説明の末尾へ統合して消し、標準のFrontmatterにする。
+//! 3. `skills/`にある旧書式のスキル。独自の`triggers`(呼び出し語)は説明の末尾へ統合して消し、標準のFrontmatterにする。
 //!
 //! 名前が標準の規約(小文字英数字とハイフン)に合わない日本語名などは、軽量モデルで英訳した名前へ変える(本文は変えない)。
 //! 英訳は非同期(`migrate_with_names`)で、できなければそのスキルは元のまま残し、次回に再試行する。
@@ -131,7 +131,7 @@ pub fn migrate(root: &Path, names: &NameMap) {
     convert_existing(root, names);
 }
 
-/// 旧形式の`<名前>.md`を、`Skills/`の1件にする(呼び出し語は説明へ統合)。
+/// 旧形式の`<名前>.md`を、`skills/`の1件にする(呼び出し語は説明へ統合)。
 fn skills_from_legacy(name: &str, text: &str) -> Skill {
     let mut skill = skills::parse(name, text);
     skill.description = skills::merge_triggers(&skill.description, &skills::legacy_triggers(text));
@@ -162,7 +162,7 @@ fn migrate_dir(root: &Path, dir: &Path, names: &NameMap, convert: impl Fn(&str, 
     moved
 }
 
-/// `Skills/`にある旧書式(`triggers`あり)のスキルを標準のFrontmatterへ書き換え、規約に合わない名前のフォルダは改名する。
+/// `skills/`にある旧書式(`triggers`あり)のスキルを標準のFrontmatterへ書き換え、規約に合わない名前のフォルダは改名する。
 /// 標準のスキルは、名前が合っていれば触れない(他のキーも消さない)。
 fn convert_existing(root: &Path, names: &NameMap) {
     let Some(dir) = skills_dir(root) else { return };
@@ -358,45 +358,45 @@ mod tests {
     fn japanese_names_wait_for_a_translation_then_move_with_the_body_unchanged() {
         let (_d, root) = root();
         write(&root, "Harness/週報.md", HARNESS);
-        write(&root, "Skills/天気確認/SKILL.md", "---\nname: \"天気確認\"\ndescription: \"天気を調べる\"\ntriggers: []\n---\n\n手順です");
-        fs::write(root.join("Skills/天気確認/memo.md"), "補助").unwrap();
+        write(&root, "skills/天気確認/SKILL.md", "---\nname: \"天気確認\"\ndescription: \"天気を調べる\"\ntriggers: []\n---\n\n手順です");
+        fs::write(root.join("skills/天気確認/memo.md"), "補助").unwrap();
         let pending: Vec<String> = pending_names(&root).into_iter().map(|p| p.0).collect();
         assert_eq!(pending, ["天気確認", "週報"]);
 
         migrate(&root, &NameMap::new());
-        assert!(root.join("Harness/週報.md").is_file() && root.join("Skills/天気確認").is_dir(), "訳が無ければ元のまま");
+        assert!(root.join("Harness/週報.md").is_file() && root.join("skills/天気確認").is_dir(), "訳が無ければ元のまま");
 
         migrate(&root, &map(&[("週報", "weekly-report"), ("天気確認", "check-weather")]));
         assert_eq!(skills::get(&root, "weekly-report").unwrap().description, "週報を作る 呼び出し語は「週報」");
         let s = skills::get(&root, "check-weather").unwrap();
         assert_eq!((s.description.as_str(), s.body.as_str()), ("天気を調べる", "手順です"));
-        assert!(!root.join("Skills/天気確認").exists() && !root.join("Harness").exists());
-        assert!(root.join("Skills/check-weather/memo.md").is_file(), "補助ファイルも一緒に移る");
+        assert!(!root.join("skills/天気確認").exists() && !root.join("Harness").exists());
+        assert!(root.join("skills/check-weather/memo.md").is_file(), "補助ファイルも一緒に移る");
         assert!(pending_names(&root).is_empty());
     }
 
     #[test]
     fn existing_skills_are_converted_to_standard_frontmatter() {
         let (_d, root) = root();
-        write(&root, "Skills/daily/SKILL.md", OLD);
+        write(&root, "skills/daily/SKILL.md", OLD);
         migrate(&root, &NameMap::new());
-        let text = fs::read_to_string(root.join("Skills/daily/SKILL.md")).unwrap();
+        let text = fs::read_to_string(root.join("skills/daily/SKILL.md")).unwrap();
         assert_eq!(text, "---\nname: daily\ndescription: 日報 呼び出し語は「日報」「report」\n---\n\n手順\n");
         migrate(&root, &NameMap::new());
-        assert_eq!(fs::read_to_string(root.join("Skills/daily/SKILL.md")).unwrap(), text, "2回目は何も変えない");
+        assert_eq!(fs::read_to_string(root.join("skills/daily/SKILL.md")).unwrap(), text, "2回目は何も変えない");
     }
 
     #[test]
     fn standard_skills_and_their_extra_keys_are_left_alone() {
         let (_d, root) = root();
         let std = "---\nname: pdf\ndescription: >\n  PDFを扱う\nlicense: MIT\n---\n本文";
-        write(&root, "Skills/pdf/SKILL.md", std);
+        write(&root, "skills/pdf/SKILL.md", std);
         migrate(&root, &NameMap::new());
-        assert_eq!(fs::read_to_string(root.join("Skills/pdf/SKILL.md")).unwrap(), std);
+        assert_eq!(fs::read_to_string(root.join("skills/pdf/SKILL.md")).unwrap(), std);
         // 改名のときは他のキーを残して書き換える
-        write(&root, "Skills/メモ/SKILL.md", "---\nname: メモ\ndescription: x\nallowed-tools: Read\ntriggers: [\"a\"]\n---\n本文");
+        write(&root, "skills/メモ/SKILL.md", "---\nname: メモ\ndescription: x\nallowed-tools: Read\ntriggers: [\"a\"]\n---\n本文");
         migrate(&root, &map(&[("メモ", "memo")]));
-        let text = fs::read_to_string(root.join("Skills/memo/SKILL.md")).unwrap();
+        let text = fs::read_to_string(root.join("skills/memo/SKILL.md")).unwrap();
         assert_eq!(text, "---\nname: memo\ndescription: x 呼び出し語は「a」\nallowed-tools: Read\n---\n\n本文\n");
     }
 
@@ -404,10 +404,10 @@ mod tests {
     fn rename_never_overwrites_an_existing_skill() {
         let (_d, root) = root();
         skills::create(&root, Skill { name: "memo".into(), description: "既存".into(), body: "既存の手順".into() }).unwrap();
-        write(&root, "Skills/メモ/SKILL.md", "---\ndescription: x\n---\n別");
+        write(&root, "skills/メモ/SKILL.md", "---\ndescription: x\n---\n別");
         migrate(&root, &map(&[("メモ", "memo")]));
         assert_eq!(skills::get(&root, "memo").unwrap().body, "既存の手順");
-        assert!(root.join("Skills/メモ/SKILL.md").is_file());
+        assert!(root.join("skills/メモ/SKILL.md").is_file());
     }
 
     #[test]

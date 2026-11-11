@@ -27,7 +27,7 @@ use super::{
 };
 use crate::utils::{
     error::AppError,
-    path::{resolve_existing, resolve_new_file},
+    path::{lower_dirs, resolve_existing, resolve_new_file},
 };
 
 /// 1回の依頼でLLMを呼ぶ回数の上限。コマンド実行を有効にしているときは作業が長くなるので多めにする。
@@ -476,10 +476,10 @@ fn validate_create(input: &Value) -> Result<(&str, &str), String> {
         return Err("作成できるのは.mdまたは.txtのみです。".into());
     }
     if memory::is_memory(path) {
-        return Err("Memoryフォルダには作成できません。覚えておくことはrememberで記録してください。".into());
+        return Err("memoryフォルダには作成できません。覚えておくことはrememberで記録してください。".into());
     }
     if skills::is_skill(path) {
-        return Err("Skillsフォルダには作成できません。スキルはcreate_skillで作成してください。".into());
+        return Err("skillsフォルダには作成できません。スキルはcreate_skillで作成してください。".into());
     }
     if knowledge::is_data(path) {
         return Err("dataフォルダには作成できません。".into());
@@ -492,6 +492,8 @@ fn validate_create(input: &Value) -> Result<(&str, &str), String> {
 
 fn create_file(root: &Path, input: &Value) -> Result<String, String> {
     let (path, content) = validate_create(input)?;
+    let path = lower_dirs(path);
+    let path = path.as_str();
     let full = resolve_new_file(root, path).map_err(path_error)?;
     let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&full).map_err(|e| {
         if e.kind() == std::io::ErrorKind::AlreadyExists {
@@ -1496,9 +1498,9 @@ mod tests {
     #[test]
     fn create_file_refuses_the_skills_folder() {
         let (_d, root) = knowledge();
-        let r = execute_tool(&root, "create_file", &json!({ "path": "Skills/x/SKILL.md", "content": "y" }));
+        let r = execute_tool(&root, "create_file", &json!({ "path": "skills/x/SKILL.md", "content": "y" }));
         assert!(r.unwrap_err().contains("create_skill"));
-        assert!(!root.join("Skills").exists());
+        assert!(!root.join("skills").exists());
     }
 
     // ---- コマンド実行 ----

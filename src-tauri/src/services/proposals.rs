@@ -31,7 +31,7 @@ const MERGE_MAX: usize = 10;
 /// これより長く更新されていないノートを見直しの候補にする(日)。
 const STALE_DAYS: i64 = 90;
 /// 新しいノートの既定の置き場。カテゴリ未設定として見直しの候補にする。
-const INBOX: &str = "Inbox";
+const INBOX: &str = "inbox";
 
 /// 記憶の候補を足す。使えない文面・すでに覚えているもの・提案済みのものは足さない。足したら`true`。
 pub fn propose_memory(db: &Db, root: &Path, text: &str, source_log_ids: &[String]) -> Result<bool, AppError> {
@@ -121,7 +121,7 @@ pub fn reject(db: &Db, id: &str) -> Result<(), AppError> {
     db.decide_proposal(id, "rejected")
 }
 
-/// 棚卸し(LLMは使わない)。似たノートの統合・長く更新されていないノート・Inboxのノートを提案にする。足した件数を返す。
+/// 棚卸し(LLMは使わない)。似たノートの統合・長く更新されていないノート・inboxのノートを提案にする。足した件数を返す。
 pub fn maintenance(db: &Db, root: &Path, today: chrono::NaiveDate) -> Result<usize, AppError> {
     let files: Vec<_> = knowledge::list(root)?
         .into_iter()
@@ -153,7 +153,7 @@ pub fn maintenance(db: &Db, root: &Path, today: chrono::NaiveDate) -> Result<usi
             }
         }
         if f.category == INBOX {
-            let text = "カテゴリが未設定(Inbox)です。適切なフォルダへ移すか、似たノートへまとめてください。".to_owned();
+            let text = "カテゴリが未設定(inbox)です。適切なフォルダへ移すか、似たノートへまとめてください。".to_owned();
             if db.add_proposal(KIND_REVIEW, &format!("inbox:{}", f.path), &text, Some(&json!({ "path": f.path })), &[])? {
                 added += 1;
             }
@@ -240,14 +240,14 @@ mod tests {
         note(root, "Development", "tauri_build", "Tauri build", body, "2026-11-01T00:00:00Z");
         note(root, "Development", "tauri_release", "Tauri build", body, "2026-11-05T00:00:00Z");
         note(root, "Ideas", "old", "古いアイデア", "音声でメモを取る", "2026-01-01T00:00:00Z");
-        note(root, "Inbox", "misc", "雑多", "あとで分類する", "2026-11-10T00:00:00Z");
+        note(root, "inbox", "misc", "雑多", "あとで分類する", "2026-11-10T00:00:00Z");
         let today = chrono::NaiveDate::from_ymd_opt(2026, 11, 11).unwrap();
         assert_eq!(maintenance(&db, root, today).unwrap(), 3);
         let list = list(&db).unwrap();
         let merge = list.iter().find(|p| p.kind == KIND_MERGE).unwrap();
-        assert_eq!(merge_paths(merge).unwrap(), ("Development/tauri_release.md".into(), "Development/tauri_build.md".into()), "新しい方を残す");
-        assert!(list.iter().any(|p| p.kind == KIND_REVIEW && payload_str(p, "path") == Some("Ideas/old.md")));
-        assert!(list.iter().any(|p| p.kind == KIND_REVIEW && payload_str(p, "path") == Some("Inbox/misc.md")));
+        assert_eq!(merge_paths(merge).unwrap(), ("development/tauri_release.md".into(), "development/tauri_build.md".into()), "新しい方を残す");
+        assert!(list.iter().any(|p| p.kind == KIND_REVIEW && payload_str(p, "path") == Some("ideas/old.md")));
+        assert!(list.iter().any(|p| p.kind == KIND_REVIEW && payload_str(p, "path") == Some("inbox/misc.md")));
         assert_eq!(maintenance(&db, root, today).unwrap(), 0, "同じ提案は重ねない");
     }
 }

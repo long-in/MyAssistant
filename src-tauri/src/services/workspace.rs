@@ -100,7 +100,7 @@ impl WorkspaceCtx {
         if let Err(e) = global.purge_legacy(&db) {
             log::warn!("legacy global settings not purged for {id}: {e}");
         }
-        Ok(Self {
+        let ctx = Self {
             id: id.to_owned(),
             dir: dir.to_owned(),
             db,
@@ -108,7 +108,26 @@ impl WorkspaceCtx {
             debug: DebugLog::default(),
             global,
             shared,
-        })
+        };
+        ctx.prepare_knowledge();
+        Ok(ctx)
+    }
+
+    /// ナレッジのフォルダ構成を整える(失敗しても開くのは止めず、ログだけ残す)。
+    /// フォルダ名を小文字にそろえ、ワークのエージェントには担当システムのフォルダ`data/`を(無ければ)作る。
+    fn prepare_knowledge(&self) {
+        let Ok(root) = super::batch::knowledge_root(self) else { return };
+        if root.is_dir() {
+            let n = super::knowledge::lowercase_dirs(&root);
+            if n > 0 {
+                log::info!("lowercased {n} knowledge folder(s) of {}", self.id);
+            }
+        }
+        if self.id != PERSONAL_ID && self.id != LEADER_ID
+            && let Err(e) = super::sandbox::ensure_data_dir(self, &root)
+        {
+            log::warn!("data folder not prepared for {}: {e}", self.id);
+        }
     }
 
     /// 削除されていないことを確かめる。バッチや会話が、削除済みのエージェントへ書き込まないようにする。
@@ -586,7 +605,7 @@ impl Workspaces {
     /// 既定の場所のナレッジを`kept-knowledge/<名称>-<ID先頭>/`へ移す。無ければ`None`。移す前と後の場所を返す。
     fn keep_knowledge(&self, agent: &Agent) -> Result<Option<(PathBuf, PathBuf)>, AppError> {
         let from = self.agent_dir(&agent.id).join("knowledge");
-        if !from.is_dir() {
+        if !from.is_dir() || is_empty_scaffold(&from) {
             return Ok(None);
         }
         let parent = self.root.join(KEPT_DIR_NAME);
@@ -599,6 +618,14 @@ impl Workspaces {
         std::fs::rename(&from, &to).map_err(|e| AppError::Io(e.to_string()))?;
         Ok(Some((from, to)))
     }
+}
+
+/// 空の`data/`だけがあるナレッジか(自動で作った枠だけで、残すものが無い)。
+fn is_empty_scaffold(knowledge: &Path) -> bool {
+    let is_empty_data = |p: &Path| std::fs::read_dir(p).is_ok_and(|mut d| d.next().is_none());
+    std::fs::read_dir(knowledge).is_ok_and(|d| {
+        d.flatten().all(|e| e.file_name() == super::knowledge::DATA_DIR && e.path().is_dir() && is_empty_data(&e.path()))
+    })
 }
 
 /// エージェントの削除の結果。
@@ -906,6 +933,24 @@ mod tests {
     }
 
     #[test]
+    fn opening_an_agent_creates_data_and_lowercases_the_knowledge_folders() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = workspaces(d.path());
+        let a = ws.create("A", PALETTE[0]).unwrap();
+        let knowledge = d.path().join(DIR_NAME).join(&a.id).join("knowledge");
+        assert!(knowledge.join("data").is_dir(), "作成時に data/ を作る");
+        // 大文字のフォルダは、開き直したときに小文字へ改名する。パーソナルには data/ を作らない
+        std::fs::create_dir_all(knowledge.join("Dev/Rust")).unwrap();
+        std::fs::remove_dir(knowledge.join("data")).unwrap();
+        let ctx = ws.open_for_knowledge(&a.id).unwrap();
+        drop(ctx);
+        let ws2 = workspaces(d.path());
+        let _ = ws2.open_for_knowledge(&a.id).unwrap();
+        assert!(knowledge.join("data").is_dir() && knowledge.join("dev/rust").is_dir());
+        assert!(!d.path().join("knowledge/data").exists());
+    }
+
+    #[test]
     fn delete_removes_the_knowledge_when_asked_and_keeps_nothing() {
         let d = tempfile::tempdir().unwrap();
         let ws = workspaces(d.path());
@@ -927,7 +972,7 @@ mod tests {
         let ws = workspaces(d.path());
         let a = ws.create("A", PALETTE[0]).unwrap();
         let knowledge = d.path().join(DIR_NAME).join(&a.id).join("knowledge");
-        std::fs::create_dir_all(&knowledge).unwrap();
+        std::fs::create_dir_all(knowledge.join("notes")).unwrap();
         let id8: String = a.id.chars().take(8).collect();
         std::fs::create_dir_all(d.path().join(KEPT_DIR_NAME).join(format!("A-{id8}"))).unwrap();
         assert!(matches!(ws.delete(&a.id, false), Err(AppError::PathInUse)));

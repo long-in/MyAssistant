@@ -450,7 +450,7 @@ pub fn render(hits: &[Hit], max_chars: usize) -> String {
     out
 }
 
-/// 索引のキャッシュ。ナレッジの指紋が変わったときだけ作り直す(Obsidian等での直接編集にも追従する)。
+/// 索引のキャッシュ。ナレッジの指紋が変わったときだけ作り直す(外部での直接編集にも追従する)。
 #[derive(Default)]
 pub struct GraphCache(Mutex<Option<(u64, Arc<Graph>)>>);
 
@@ -492,7 +492,7 @@ mod tests {
 
     #[test]
     fn wikilinks_strip_alias_and_heading() {
-        assert_eq!(wikilinks("see [[Dev/a|A]] and [[b#h]] [[ ]] [[x"), ["Dev/a", "b"]);
+        assert_eq!(wikilinks("see [[dev/a|A]] and [[b#h]] [[ ]] [[x"), ["dev/a", "b"]);
     }
 
     #[test]
@@ -507,14 +507,14 @@ mod tests {
         let g = Graph::build(&root).unwrap();
         let hits = g.recall("Tauriのビルドでつまずいた", 5);
         let paths: Vec<&str> = hits.iter().map(|h| h.path.as_str()).collect();
-        assert_eq!(paths[0], "Development/tauri_setup.md");
+        assert_eq!(paths[0], "development/tauri_setup.md");
         assert!(hits[0].reason.starts_with("キーワード一致"));
         // 1ホップ(タグ rust)と2ホップ(タグ error)
-        assert!(paths.contains(&"Development/rust_errors.md"));
-        assert!(hits.iter().any(|h| h.path == "Development/rust_errors.md" && h.reason.contains("rust")));
-        assert!(paths.contains(&"Research/error_logging.md"));
+        assert!(paths.contains(&"development/rust_errors.md"));
+        assert!(hits.iter().any(|h| h.path == "development/rust_errors.md" && h.reason.contains("rust")));
+        assert!(paths.contains(&"research/error_logging.md"));
         // つながりのないノートは出さない
-        assert!(!paths.contains(&"Ideas/cooking.md"));
+        assert!(!paths.contains(&"ideas/cooking.md"));
         assert!(g.recall("全然関係ない話題", 5).is_empty());
         assert_eq!(g.recall("Tauriのビルド", 1).len(), 1);
     }
@@ -523,14 +523,14 @@ mod tests {
     fn links_and_conversations_connect_notes() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("k");
-        note(&root, "Development", "deploy", "デプロイ手順", &[], "[[Research/ci]] を参照", &[]);
+        note(&root, "Development", "deploy", "デプロイ手順", &[], "[[research/ci]] を参照", &[]);
         note(&root, "Research", "ci", "CIの比較", &[], "GitHub Actions を採用", &["log1"]);
         note(&root, "Ideas", "release_note", "リリースノート案", &[], "毎週まとめる", &["log1"]);
         let g = Graph::build(&root).unwrap();
         let hits = g.recall("デプロイ手順を見直したい", 5);
-        let ci = hits.iter().find(|h| h.path == "Research/ci.md").unwrap();
+        let ci = hits.iter().find(|h| h.path == "research/ci.md").unwrap();
         assert!(ci.reason.contains("リンク"));
-        let rel = hits.iter().find(|h| h.path == "Ideas/release_note.md").unwrap();
+        let rel = hits.iter().find(|h| h.path == "ideas/release_note.md").unwrap();
         assert!(rel.reason.contains("同じ会話"));
     }
 
@@ -571,7 +571,7 @@ mod tests {
         note(root, "Ideas", "d", "旅行", &[], "京都の寺を巡る計画", &[]);
         let pairs = Graph::build(root).unwrap().similar_pairs(0.6, 10);
         assert_eq!(pairs.len(), 1, "{pairs:?}");
-        assert_eq!((pairs[0].0.as_str(), pairs[0].1.as_str()), ("Dev/a.md", "Dev/b.md"));
+        assert_eq!((pairs[0].0.as_str(), pairs[0].1.as_str()), ("dev/a.md", "dev/b.md"));
     }
 
     #[test]
@@ -586,11 +586,11 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert!(hits[0].summary.chars().count() <= SUMMARY_CHARS + 1);
         assert!(render(&hits, 10).is_empty());
-        assert!(render(&hits, 1000).starts_with("- Dev/a.md | Alpha"));
+        assert!(render(&hits, 1000).starts_with("- dev/a.md | Alpha"));
 
         note(&root, "Dev", "b", "Beta", &[], "x", &[]);
         let g2 = cache.get(&root).unwrap();
         assert!(!Arc::ptr_eq(&g1, &g2));
-        assert_eq!(g2.recall("Beta", 5)[0].path, "Dev/b.md");
+        assert_eq!(g2.recall("Beta", 5)[0].path, "dev/b.md");
     }
 }
