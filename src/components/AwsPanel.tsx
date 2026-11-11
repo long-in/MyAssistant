@@ -115,8 +115,10 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
   const usable = (status?.profiles ?? []).filter((p) => p.usable);
   const current = usable.find((p) => p.name === status?.selected);
   const pasted = !!config.trim() || !!credentials.trim();
-  const labelOf = (p: AwsProfile) =>
-    p.role ? `${p.name} (${p.mfa ? "AssumeRole + MFA" : "AssumeRole"})` : p.name;
+  const labelOf = (p: AwsProfile) => {
+    const kinds = [p.sso && "SSO", p.role && "AssumeRole", p.mfa && "MFA"].filter(Boolean);
+    return kinds.length ? `${p.name} (${kinds.join(" + ")})` : p.name;
+  };
   const items = usable.map((p) => ({ value: p.name, label: labelOf(p) }));
   const unusable = pasted ? preview.filter((p) => !p.usable && p.reason) : [];
   const candidates = (pasted ? preview : []).filter((p) => p.usable).map((p) => ({ value: p.name, label: labelOf(p) }));
@@ -135,7 +137,7 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
         />
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium">Amazon Bedrock (Claude)</div>
-          <div className="text-xs text-muted-foreground">{t("AWSのスイッチロール(MFA対応)で接続")}</div>
+          <div className="text-xs text-muted-foreground">{t("AWSのスイッチロール(MFA対応)または IAM Identity Center(SSO)で接続")}</div>
         </div>
         <span className="hidden sm:inline" aria-live="polite">
           {registered && <StatusPill on>linked</StatusPill>}
@@ -200,7 +202,7 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
             {current?.region && <>{current.region} · </>}
             {expires
               ? t("一時認証の期限: {time}", { time: expires.toLocaleTimeString() })
-              : current?.role
+              : current?.role || current?.sso
                 ? t("一時認証: 未取得(初回の利用時に取得)")
                 : ""}
           </span>
@@ -209,7 +211,7 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
 
       {registered && (
         <p className="mt-3 pl-5 text-xs text-muted-foreground">
-          {t("Bedrockのモデルは、Sandbox タブの Claude Code の settings.json で決めます。接続テストは、AWSの認証(MFA・ロールの引き受け)が通るかを確かめます。")}
+          {t("Bedrockのモデルは、Sandbox タブの Claude Code の settings.json で決めます。接続テストは、AWSの認証(MFA・SSO・ロールの引き受け)が通るかを確かめます。")}
         </p>
       )}
 
@@ -283,7 +285,7 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
                 </Select>
               ) : (
                 <span className="text-destructive">
-                  {t("使えるプロファイルがありません。アクセスキーを持つプロファイル、またはそれを source_profile にした role_arn のプロファイルが必要です。")}
+                  {t("使えるプロファイルがありません。アクセスキーまたは SSO の設定を持つプロファイルか、それを source_profile にした role_arn のプロファイルが必要です。")}
                 </span>
               )}
               {unusable.length > 0 && (

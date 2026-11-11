@@ -8,6 +8,7 @@ import { Bug, BookOpen, Library, ClipboardList, Globe, Keyboard, MessageSquare, 
 import Chat from "@/components/Chat";
 import AttentionToasts from "@/components/AttentionToasts";
 import MfaModal from "@/components/MfaModal";
+import SsoModal from "@/components/SsoModal";
 import AgentPalette from "@/components/AgentPalette";
 import AgentRail from "@/components/AgentRail";
 import { DEBUG_MODE_EVENT, LEADER_COLOR, LEADER_ID, LEADER_NAME, PERSONAL_ID, getDebugMode, getKeyStatus } from "@/lib/api";
@@ -227,6 +228,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       </main>
       {paletteOpen && <AgentPalette onClose={() => setPaletteOpen(false)} />}
       <MfaModal />
+      <SsoModal />
       <AttentionToasts />
     </div>
   );

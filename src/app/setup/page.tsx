@@ -1337,7 +1337,7 @@ export default function Setup() {
                 <ul>
                   <li>{t("各カードの「使用中の機能」は、AI Settingsでそのプロバイダーのモデルを選んでいる機能です。チャットと会話の要約は、チャット画面で選んだモデルを使うため含みません。")}</li>
                   <li>{t("ローカル(Qwen)は、キーの代わりにモデルをこの端末へダウンロードして使います。取得したモデルは全エージェントで共通です。")}</li>
-                  <li>{t("Amazon Bedrockは、APIキーではなく~/.aws/configと~/.aws/credentialsの中身を貼り付けて登録します。MFA付きのスイッチロール(role_arn + source_profile)に対応し、コードが必要なときは入力欄が開きます。")}</li>
+                  <li>{t("Amazon Bedrockは、APIキーではなく~/.aws/configと~/.aws/credentialsの中身を貼り付けて登録します。MFA付きのスイッチロール(role_arn + source_profile)と IAM Identity Center(SSO)に対応し、コードの入力やブラウザでの承認が必要なときは案内が開きます。")}</li>
                   <li>{bedrockMode ? t("Bedrockのモデルは、Sandbox タブの Claude Code の settings.json で決めます。校正以外の機能(チャット・整理・スキル名の英訳・宛先の提案)は、コンテナ内の Claude Code で実行します。Sandbox タブでコンテナを準備してください。") : t("API 方式では、アプリが Anthropic の API を直接呼びます。")}</li>
                   <li>{t("キーは疎通確認に成功した場合のみ、この端末のアプリデータ内に保存されます。")}</li>
                   {active.id !== LEADER_ID && active.id !== PERSONAL_ID && <li>{t("ワークのエージェントでは、登録した AWS の設定から発行した一時キーが、コンテナ内の Claude Code へ指示ごとの環境変数で渡されます(接続先は Bedrock 固定です)。")}</li>}
