@@ -1,7 +1,7 @@
 //! エージェントの記憶(覚えておくこと)。PM(ユーザー)から頼まれたことを、毎回の発話で必ず渡す。
 //!
-//! 覚えておくこと(`Memory/pinned.md`)は、会話中の「覚えておいて」「忘れて」を対話のモデルが
-//! `remember`/`forget`ツールでその場で反映するほか、画面とObsidianでの手編集で更新する。
+//! 覚えておくこと(`memory/pinned.md`)は、会話中の「覚えておいて」「忘れて」を対話のモデルが
+//! `remember`/`forget`ツールでその場で反映するほか、画面での手編集で更新する。
 //! 会話から推測して自動で足すことはしない。
 use std::{path::Path, sync::Mutex};
 
@@ -11,8 +11,8 @@ use super::knowledge::{self, Frontmatter};
 use crate::utils::{error::AppError, path::ensure_dir};
 
 /// 記憶を置くフォルダ。グラフ索引・直近の文脈・整理の追記先からは除く(専用の節で渡す)。
-pub const MEMORY_CATEGORY: &str = "Memory";
-pub const PINNED_PATH: &str = "Memory/pinned.md";
+pub const MEMORY_CATEGORY: &str = "memory";
+pub const PINNED_PATH: &str = "memory/pinned.md";
 const PINNED_FILE: &str = "pinned.md";
 
 /// 覚えておくことの上限(件数・合計文字数・1件の文字数)。
@@ -30,7 +30,7 @@ fn lock() -> std::sync::MutexGuard<'static, ()> {
     FILE_LOCK.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-/// 記憶のファイル(`Memory/`配下)か。大文字小文字を区別しないファイルシステムに合わせ、区別せずに比べる。
+/// 記憶のファイル(`memory/`配下)か。大文字小文字を区別しないファイルシステムに合わせ、区別せずに比べる。
 pub fn is_memory(path: &str) -> bool {
     path.trim_start_matches("./").split(['/', '\\']).next().is_some_and(|p| p.eq_ignore_ascii_case(MEMORY_CATEGORY))
 }

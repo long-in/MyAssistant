@@ -913,7 +913,7 @@ export const deleteKnowledgeIn = (agentId: string, path: string) =>
 export const revealKnowledgeInFinder = (agentId: string, path?: string) =>
   invoke<void>("reveal_knowledge_in_finder", { agentId, path: path ?? null });
 
-/** ナレッジ(Markdown)の保存先フォルダ。Obsidianのvaultとして開ける。 */
+/** ナレッジ(Markdown)の保存先フォルダ。 */
 export const knowledgeDir = () => invoke<string>("knowledge_dir");
 /** 保存先を変更する(nullで既定に戻す)。既存ファイルは移動されない。変更後のパスを返す。 */
 /** ナレッジの保存先を Finder で開く。 */
@@ -965,7 +965,7 @@ export const importKnowledge = (src: string) => invoke<TransferReport>("import_k
 export const resetKnowledge = () => invoke<TransferReport>("reset_knowledge");
 /** 実行中・対象ログなし・キー未登録の場合は null。 */
 export const runBatch = () => invoke<BatchReport | null>("run_batch");
-/** 棚卸し(LLMは使わない)。似たノート・古いノート・Inboxのノートを提案にし、足した件数を返す。 */
+/** 棚卸し(LLMは使わない)。似たノート・古いノート・inboxのノートを提案にし、足した件数を返す。 */
 export const runMaintenance = () => invoke<number>("run_maintenance");
 
 /** 学びの提案の種類。memory: 記憶の候補、skill: スキルの下書き、merge: ノートの統合、review: 見直し。 */
@@ -995,7 +995,7 @@ export type MemoryPin = { text: string; date: string };
 /** エージェントの記憶(覚えておくこと)。 */
 export type MemoryView = { pins: MemoryPin[] };
 /** 記憶のファイル(ナレッジ内の相対パス)。編集は通常のノートと同じ画面で行う。 */
-export const MEMORY_PINNED_PATH = "Memory/pinned.md";
+export const MEMORY_PINNED_PATH = "memory/pinned.md";
 export const memoryView = () => invoke<MemoryView>("memory_view");
 export const memoryForget = (text: string) => invoke<boolean>("memory_forget", { text });
 

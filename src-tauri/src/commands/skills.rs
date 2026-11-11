@@ -1,4 +1,4 @@
-//! スキル画面から呼ぶコマンド。保存先は、そのエージェントのナレッジ直下の`Skills/`(`services::skills`)。
+//! スキル画面から呼ぶコマンド。保存先は、そのエージェントのナレッジ直下の`skills/`(`services::skills`)。
 use serde::Serialize;
 
 use super::settings_transfer::json_path;

@@ -87,8 +87,8 @@ sequenceDiagram
 | --- | --- |
 | ベース指示 | 音声対話向けの既定文。設定の Base Prompt で上書きでき、空にすると既定へ戻る。一問一答で終わらせず会話を重ねること、結論から一〜三文で答えること、読み上げに不要な記号(Markdown・URL・絵文字)を使わないことなどを指示する |
 | `<user_profile>` | 設定の内容から**毎回**生成する(変更を次の発話から反映するためキャッシュしない)。[user-profile.md](user-profile.md) |
-| `<stt_corrections>` | `Preferences/stt_corrections.md` の直近 30 件(「誤」→「正」)。会話の最初の発話で 1 回だけ読んで使い回す。訂正を保存すると次の発話から反映される |
-| `<pinned_memory>` | 記憶。発話のたびに `Memory/` から読む(会話中のツール・画面での編集を次の発話から反映する)。[memory.md](memory.md) |
+| `<stt_corrections>` | `preferences/stt_corrections.md` の直近 30 件(「誤」→「正」)。会話の最初の発話で 1 回だけ読んで使い回す。訂正を保存すると次の発話から反映される |
+| `<pinned_memory>` | 記憶。発話のたびに `memory/` から読む(会話中のツール・画面での編集を次の発話から反映する)。[memory.md](memory.md) |
 | 関連ナレッジ | 発話ごとに想起する(後述) |
 | `<conversation_summary>` | 要約があるときだけ。[後述](#長い会話の要約compactrs) |
 | `<skill>` | 入力欄で指定したスキルの手順。ユーザーが登録して指定した手順なので従わせる(承認・制限は変わらない)。指定したときは候補の選定を行わない。[skills.md](skills.md) |

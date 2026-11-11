@@ -15,15 +15,28 @@ pub fn slug(s: &str, max_chars: usize) -> String {
     cleaned.trim_matches('_').to_owned()
 }
 
-/// `a/b`形式のカテゴリを最大2階層の安全なパス要素へ分解する。空なら`Inbox`。
+/// フォルダ名はすべて小文字にそろえる。
+pub fn dir_slug(s: &str, max_chars: usize) -> String {
+    slug(s, max_chars).to_lowercase()
+}
+
+/// 相対パスのフォルダ部分(最後の要素を除く)を小文字にする。ファイル名は変えない。
+pub fn lower_dirs(rel: &str) -> String {
+    match rel.rsplit_once('/') {
+        Some((dirs, leaf)) => format!("{}/{leaf}", dirs.to_lowercase()),
+        None => rel.to_owned(),
+    }
+}
+
+/// `a/b`形式のカテゴリを最大2階層の安全なパス要素へ分解する。フォルダ名は小文字にそろえる。空なら`inbox`。
 pub fn category_parts(category: &str) -> Vec<String> {
     let parts: Vec<String> = category
         .split(['/', '\\'])
-        .map(|p| slug(p, 40))
+        .map(|p| dir_slug(p, 40))
         .filter(|p| !p.is_empty())
         .take(2)
         .collect();
-    if parts.is_empty() { vec!["Inbox".to_owned()] } else { parts }
+    if parts.is_empty() { vec!["inbox".to_owned()] } else { parts }
 }
 
 /// `root`配下の相対パスのみ許可する。絶対パス・`..`・シンボリックリンク経由の脱出を拒否する。
@@ -79,7 +92,7 @@ pub fn resolve_new_file(root: &Path, rel: &str) -> Result<PathBuf, AppError> {
     if !is_safe_leaf(leaf) || dirs.iter().any(|d| slug(d, 40) != *d) {
         return Err(AppError::PathNotAllowed);
     }
-    let parts: Vec<String> = dirs.iter().map(|d| (*d).to_owned()).collect();
+    let parts: Vec<String> = dirs.iter().map(|d| d.to_lowercase()).collect();
     let file = ensure_dir(root, &parts)?.join(leaf);
     if file.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
         return Err(AppError::PathNotAllowed);
@@ -98,6 +111,8 @@ mod tests {
         let ok = resolve_new_file(&root, "Dev/Rust/memo.md").unwrap();
         assert!(ok.starts_with(root.canonicalize().unwrap()));
         assert!(ok.parent().unwrap().is_dir());
+        assert!(ok.ends_with("dev/rust/memo.md"), "フォルダは小文字で作る: {ok:?}");
+        assert_eq!(lower_dirs("Dev/Rust/Memo.md"), "dev/rust/Memo.md");
         assert!(resolve_new_file(&root, "memo.md").is_ok());
         for bad in ["", "/etc/x.md", "../x.md", "A/../x.md", ".hidden", "A/..md", "A B/x.md"] {
             assert!(matches!(resolve_new_file(&root, bad), Err(AppError::PathNotAllowed)), "{bad}");
@@ -128,9 +143,9 @@ mod tests {
 
     #[test]
     fn category_defaults_and_limits_depth() {
-        assert_eq!(category_parts(""), ["Inbox"]);
-        assert_eq!(category_parts("../.."), ["Inbox"]);
-        assert_eq!(category_parts("Dev/Rust/Async"), ["Dev", "Rust"]);
+        assert_eq!(category_parts(""), ["inbox"]);
+        assert_eq!(category_parts("../.."), ["inbox"]);
+        assert_eq!(category_parts("Dev/Rust/Async"), ["dev", "rust"]);
     }
 
     #[test]
