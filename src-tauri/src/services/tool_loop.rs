@@ -17,6 +17,7 @@ use super::{
     cancel::CancelToken,
     command_policy::{self, Verdict},
     docs,
+    knowledge,
     llm_client::{ToolCall, ToolTurn},
     memory::{self, Forgot, Remembered},
     sandbox,
@@ -89,7 +90,7 @@ pub fn shell_guide() -> String {
 pub const SANDBOX_GUIDE: &str = "\
 作業実行ツール(サンドボックス)\n\
 - コマンドはこのエージェント専用のLinuxコンテナ(Debian)の中で、/bin/shで実行される。macOSのコマンド(brew、open、osascriptなど)とホームのファイルは使えない。\n\
-- ナレッジはコンテナ内の/knowledgeにある。担当システムのフォルダが設定されていれば/workspaceにある。cwdの既定は/workspace(無ければ/knowledge)で、cwdには/workspaceか/knowledgeの配下だけを指定できる。\n\
+- ナレッジはコンテナ内の/knowledgeにあり、担当システムのフォルダ(ソースコードなど)は/knowledge/dataにある。cwdの既定は/knowledge/dataで、cwdには/knowledgeの配下だけを指定できる。\n\
 - awsコマンド、git、jq、python3、nodeなどが入っている。認証情報は環境変数としてすでに渡されているので、読み取ったり出力したりしない。\n\
 - 状態を変える作業は、先にpropose_planで手順を示して承認を得る。承認済みの手順はrun_commandのstepに番号を指定すれば都度の承認なしで実行でき、計画外や破壊的なコマンドには都度承認が入る。\n\
 - 読み取り系(ls、cat、grepなど)は承認なしで実行できる。rm・sudoは拒否される。拒否されたら理由を伝えて別の方法を相談する。\n\
@@ -479,6 +480,9 @@ fn validate_create(input: &Value) -> Result<(&str, &str), String> {
     }
     if skills::is_skill(path) {
         return Err("Skillsフォルダには作成できません。スキルはcreate_skillで作成してください。".into());
+    }
+    if knowledge::is_data(path) {
+        return Err("dataフォルダには作成できません。".into());
     }
     if content.len() > WRITE_MAX_BYTES {
         return Err(format!("内容が大きすぎます(上限{WRITE_MAX_BYTES}バイト)。"));

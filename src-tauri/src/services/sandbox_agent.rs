@@ -774,13 +774,12 @@ pub fn remember_session(db: &impl SettingsStore, app_session: &str, claude: &str
 
 /// コンテナ内の作業環境の説明。システムプロンプトの末尾に加える。
 pub fn guide() -> String {
-    let workspace = "- /workspace: 担当システムのフォルダ(ソースコードなど)。作業ディレクトリの既定。";
-    format!(
+    String::from(
         "作業環境(サンドボックス)\n\
 - このエージェント専用のLinuxコンテナ(Debian)の中で動いている。macOSのコマンド(brew、open、osascriptなど)は使えない。\n\
-{workspace}\n\
-- /knowledge: このエージェントのナレッジ(Markdown)。調べた結果や覚えておくべきことは、既存の構成に合わせてここへ書く。\n\
-- /workspace と /knowledge はホストのフォルダで、変更はそのままホストに反映される。消す・上書きする前によく確かめる。\n\
+- /knowledge/data: 担当システムのフォルダ(ソースコードなど)。作業ディレクトリの既定。ノートは置かない。\n\
+- /knowledge: このエージェントのナレッジ(Markdown)。調べた結果や覚えておくべきことは、data 以外の既存の構成に合わせてここへ書く。\n\
+- /knowledge はホストのフォルダで、変更はそのままホストに反映される。消す・上書きする前によく確かめる。\n\
 - 認証情報(APIキー・AWS)は環境変数として渡されている。値を読み取ったり出力したりしない。AWSのリソースは aws コマンドで扱える。\n\
 - 最終回答は、何をしてどうなったかを短く伝える。音声で読み上げられることがある。"
     )
@@ -1051,7 +1050,7 @@ mod tests {
 
     #[test]
     fn guide_describes_the_mounts() {
-        assert!(guide().contains("/workspace: 担当システム") && guide().contains("/knowledge"));
+        assert!(guide().contains("/knowledge/data: 担当システム") && !guide().contains("/workspace"));
     }
 
     #[test]

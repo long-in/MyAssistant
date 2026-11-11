@@ -133,6 +133,7 @@ pub struct Entry<'a> {
 #[cfg(test)]
 pub fn upsert(root: &Path, e: &Entry, now: &str) -> Result<String, AppError> {
     let parts = category_parts(e.category);
+    reject_data(&parts[0])?;
     let dir = ensure_dir(root, &parts)?;
     let name = match slug(e.filename, 60) {
         s if s.is_empty() => "note".to_owned(),
@@ -304,6 +305,7 @@ fn history_section(now: &str, text: &str) -> String {
 /// 既存ノートの現在の内容を書き換え、経緯に追記する。書き換え前の版を退避する。
 /// 長い内容が半分未満に縮む書き換えは採らず、経緯への追記だけ行う。
 pub fn rewrite(root: &Path, rel: &str, u: &NoteUpdate, now: &str) -> Result<Written, AppError> {
+    reject_data(rel)?;
     let path = resolve_existing(root, rel)?;
     if !rel.ends_with(".md") {
         return Err(AppError::PathNotAllowed);
@@ -364,6 +366,7 @@ pub fn would_shrink(old_current: &str, new_current: &str) -> bool {
 /// 新しいノートを作る。同じ場所に既にあれば、そのノートを書き換える(`rewrite`)。
 pub fn create_note(root: &Path, at: &NewNote, u: &NoteUpdate, now: &str) -> Result<Written, AppError> {
     let parts = category_parts(at.category);
+    reject_data(&parts[0])?;
     let dir = ensure_dir(root, &parts)?;
     let name = note_name(at.filename);
     let rel = note_rel(at);
@@ -471,6 +474,7 @@ pub fn read_version(root: &Path, rel: &str, version: &str) -> Result<String, App
 
 /// 退避済みの版へ戻す。今の内容も版として退避する。
 pub fn restore_version(root: &Path, rel: &str, version: &str, now: &str) -> Result<(), AppError> {
+    reject_data(rel)?;
     let content = read_version(root, rel, version)?;
     let current = read(root, rel)?;
     save_version(root, rel, &current, now)?;
@@ -479,6 +483,7 @@ pub fn restore_version(root: &Path, rel: &str, version: &str, now: &str) -> Resu
 
 /// ノートを削除する前に版として退避する(統合で取り込んだノートを消すときに使う)。
 pub fn delete_with_version(root: &Path, rel: &str, now: &str) -> Result<(), AppError> {
+    reject_data(rel)?;
     let content = read(root, rel)?;
     save_version(root, rel, &content, now)?;
     fs::remove_file(resolve_existing(root, rel)?).map_err(io)
@@ -535,8 +540,8 @@ fn walk(root: &Path, dir: &Path, depth: u8, out: &mut Vec<KnowledgeFile>) -> Res
     }
     for entry in fs::read_dir(dir).map_err(io)? {
         let entry = entry.map_err(io)?;
-        // `.`始まり(`.my-assistant`のコマンド権限、Obsidianの設定など)はノートではない
-        if entry.file_name().to_string_lossy().starts_with('.') {
+        // `.`始まり(`.my-assistant`のコマンド権限、Obsidianの設定など)と`data/`(ソースコードなど)はノートではない
+        if entry.file_name().to_string_lossy().starts_with('.') || is_data_entry(depth, &entry.file_name()) {
             continue;
         }
         let ft = entry.file_type().map_err(io)?;
@@ -567,7 +572,7 @@ pub fn list_other(root: &Path) -> Result<Vec<KnowledgeFile>, AppError> {
         for entry in fs::read_dir(dir).map_err(io)? {
             let entry = entry.map_err(io)?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') {
+            if name.starts_with('.') || is_data_entry(depth, &entry.file_name()) {
                 continue;
             }
             let ft = entry.file_type().map_err(io)?;
@@ -604,7 +609,7 @@ const BINARY_PROBE_BYTES: usize = 8 * 1024;
 /// 巨大なファイルでもメモリを使い切らないよう、全体は読まず、先頭(バイナリ判定)と末尾の`MAX_EDIT_BYTES`だけを読む。
 pub fn read_other(root: &Path, rel: &str) -> Result<String, AppError> {
     use std::io::{Read, Seek, SeekFrom};
-    if rel.ends_with(".md") || rel.split('/').any(|p| p.starts_with('.')) {
+    if rel.ends_with(".md") || rel.split('/').any(|p| p.starts_with('.')) || is_data(rel) {
         return Err(AppError::PathNotAllowed);
     }
     let binary = || AppError::Io("バイナリファイルは表示できません".to_owned());
@@ -708,14 +713,14 @@ pub fn reset(root: &Path) -> Result<TransferReport, AppError> {
     Ok(report)
 }
 
-/// ルート自身は残し、空のサブフォルダだけ削除する(失敗は無視)。
+/// ルート自身は残し、空のサブフォルダだけ削除する(失敗は無視)。`data/`には触れない。
 fn remove_empty_dirs(dir: &Path, depth: u8) {
     if depth > 4 {
         return;
     }
     let Ok(entries) = fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
-        if entry.file_type().is_ok_and(|t| t.is_dir()) {
+        if entry.file_type().is_ok_and(|t| t.is_dir()) && !is_data_entry(depth, &entry.file_name()) {
             remove_empty_dirs(&entry.path(), depth + 1);
             let _ = fs::remove_dir(entry.path());
         }
@@ -724,6 +729,25 @@ fn remove_empty_dirs(dir: &Path, depth: u8) {
 
 /// 会話をそのまま書き出すキャプチャのカテゴリ。整理でカテゴライズされたナレッジとは分けて扱う。
 pub const CAPTURE_CATEGORY: &str = "Captures";
+
+/// 担当システムのソースコードなどを置くフォルダ(ナレッジ直下)。サンドボックスでは`/knowledge/data`として見え、作業ディレクトリの既定になる。
+/// ノートではないので、一覧・索引・整理・初期化・書き出し・バックアップの対象にせず、画面やLLMのツールからも書き換えさせない。
+pub const DATA_DIR: &str = "data";
+
+/// `data/`配下(`data`自身を含む)か。
+pub fn is_data(path: &str) -> bool {
+    path.trim_start_matches("./").split(['/', '\\']).next().is_some_and(|p| p.eq_ignore_ascii_case(DATA_DIR))
+}
+
+/// ナレッジ直下の要素が`data/`か(走査で飛ばす判定)。
+fn is_data_entry(depth: u8, name: &std::ffi::OsStr) -> bool {
+    depth == 0 && name.to_string_lossy().eq_ignore_ascii_case(DATA_DIR)
+}
+
+/// 画面から渡されたパスが`data/`配下なら拒否する。
+fn reject_data(rel: &str) -> Result<(), AppError> {
+    if is_data(rel) { Err(AppError::PathNotAllowed) } else { Ok(()) }
+}
 
 /// セッションのキャプチャファイル。ファイル名は`日付_セッションID先頭8文字.md`で、IDで探す。
 fn capture_path(dir: &Path, sid: &str) -> Option<PathBuf> {
@@ -958,6 +982,7 @@ const MAX_EDIT_BYTES: usize = 5 * 1024 * 1024;
 
 /// 既存ノートの本文を丸ごと置き換える。
 pub fn write(root: &Path, rel: &str, content: &str) -> Result<(), AppError> {
+    reject_data(rel)?;
     if !rel.ends_with(".md") || content.len() > MAX_EDIT_BYTES {
         return Err(AppError::PathNotAllowed);
     }
@@ -971,6 +996,7 @@ fn is_safe_dir_name(name: &str) -> bool {
 
 /// 新規フォルダの相対パスを検証し、親までを作成して実パスを返す。既存なら拒否する。
 fn resolve_new_dir(root: &Path, rel: &str) -> Result<PathBuf, AppError> {
+    reject_data(rel)?;
     let names: Vec<String> = rel.split('/').map(str::to_owned).collect();
     if names.len() > 3 || !names.iter().all(|n| is_safe_dir_name(n)) {
         return Err(AppError::PathNotAllowed);
@@ -988,6 +1014,7 @@ pub fn create_file(root: &Path, rel: &str, now: &str) -> Result<String, AppError
     let Some(stem) = rel.strip_suffix(".md") else {
         return Err(AppError::PathNotAllowed);
     };
+    reject_data(rel)?;
     let path = resolve_new_file(root, rel)?;
     if path.symlink_metadata().is_ok() {
         return Err(AppError::Io("already_exists".to_owned()));
@@ -1013,6 +1040,8 @@ pub fn create_dir(root: &Path, rel: &str) -> Result<(), AppError> {
 
 /// ファイルまたはフォルダの名前変更・移動。移動先が既存なら拒否する。
 pub fn rename(root: &Path, from: &str, to: &str) -> Result<(), AppError> {
+    reject_data(from)?;
+    reject_data(to)?;
     let src = resolve_existing(root, from)?;
     let dst = if src.is_dir() {
         let dst = resolve_new_dir(root, to)?;
@@ -1035,6 +1064,7 @@ pub fn rename(root: &Path, from: &str, to: &str) -> Result<(), AppError> {
 
 /// ファイルまたはフォルダ(中身ごと)を削除する。ルート自体は削除できない。
 pub fn delete(root: &Path, rel: &str) -> Result<(), AppError> {
+    reject_data(rel)?;
     let target = resolve_existing(root, rel)?;
     if target.is_dir() {
         fs::remove_dir_all(target).map_err(io)
@@ -1053,7 +1083,7 @@ pub fn list_dirs(root: &Path) -> Result<Vec<String>, AppError> {
         }
         for entry in fs::read_dir(dir).map_err(io)? {
             let entry = entry.map_err(io)?;
-            if !entry.file_type().map_err(io)?.is_dir() || entry.file_name().to_string_lossy().starts_with('.') {
+            if !entry.file_type().map_err(io)?.is_dir() || entry.file_name().to_string_lossy().starts_with('.') || is_data_entry(depth, &entry.file_name()) {
                 continue;
             }
             let path = entry.path();
@@ -1460,5 +1490,41 @@ mod tests {
         tail_nul.push(0);
         fs::write(root.join("logs/tail.bin"), &tail_nul).unwrap();
         assert!(read_other(&root, "logs/tail.bin").is_err());
+    }
+
+    #[test]
+    fn data_folder_is_not_knowledge_and_survives_reset() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("knowledge");
+        fs::create_dir_all(root.join("data/app/empty")).unwrap();
+        fs::write(root.join("data/README.md"), "# readme").unwrap();
+        fs::write(root.join("data/app/main.rs"), "fn main() {}").unwrap();
+        fs::create_dir_all(root.join("Dev")).unwrap();
+        fs::write(root.join("Dev/note.md"), "# note").unwrap();
+        fs::create_dir_all(root.join("Dev/data")).unwrap();
+        fs::write(root.join("Dev/data/x.md"), "# x").unwrap();
+
+        // 一覧・フォルダ一覧・その他のファイルに出ない(ナレッジ直下の data だけが対象)
+        let notes: Vec<String> = list(&root).unwrap().into_iter().map(|f| f.path).collect();
+        assert!(notes.contains(&"Dev/note.md".to_owned()) && notes.contains(&"Dev/data/x.md".to_owned()));
+        assert!(notes.iter().all(|p| !is_data(p)), "{notes:?}");
+        assert!(list_dirs(&root).unwrap().iter().all(|p| !is_data(p)));
+        assert!(list_other(&root).unwrap().is_empty());
+        assert!(read_other(&root, "data/app/main.rs").is_err());
+
+        // 画面からの書き換え・作成・移動・削除は拒否する
+        assert!(write(&root, "data/README.md", "x").is_err());
+        assert!(create_file(&root, "data/new.md", "2026-01-01T00:00:00Z").is_err());
+        assert!(create_dir(&root, "Data").is_err());
+        assert!(rename(&root, "data", "moved").is_err());
+        assert!(rename(&root, "Dev/note.md", "data/note.md").is_err());
+        assert!(delete(&root, "data").is_err());
+        assert!(delete(&root, "DATA/README.md").is_err());
+
+        // 初期化しても data の中身(.md や空のフォルダも)は残る
+        reset(&root).unwrap();
+        assert!(root.join("data/README.md").is_file() && root.join("data/app/main.rs").is_file());
+        assert!(root.join("data/app/empty").is_dir());
+        assert!(!root.join("Dev/note.md").exists());
     }
 }

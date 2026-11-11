@@ -68,7 +68,7 @@ LLM 呼び出しの上限は、コマンド実行が有効なとき 1 依頼あ�
 - 終了コードが 0 以外、時間切れ、中断は `is_error` で返す。
 - 実行の前に、判定(Deny は実行しない)と、必要な承認を済ませる。
 - コンテナで動くエージェント(ワークは常に。パーソナルは Bedrock 方式のとき)では、このツールループ自体を使わず、会話はコンテナ内の Claude Code が受け持つ。コマンドもコンテナ内の Claude Code が実行する。詳細は [sandbox.md](sandbox.md)。
-- ツールループの `run_command` をコンテナで実行する仕組み(`services/sandbox.rs`。cwd を `/workspace`・`/knowledge` へ変換し、タイムアウト・中断はコンテナ内のプロセスグループごと止める)は残っているが、会話からは使われない([sandbox.md](sandbox.md) の後回しの項目 18)。
+- ツールループの `run_command` をコンテナで実行する仕組み(`services/sandbox.rs`。cwd を `/knowledge` 配下へ変換し、タイムアウト・中断はコンテナ内のプロセスグループごと止める)は残っているが、会話からは使われない([sandbox.md](sandbox.md) の後回しの項目 18)。
 
 ## 音声承認
 

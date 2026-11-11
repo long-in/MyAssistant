@@ -104,7 +104,7 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
   - コンテナ内の Claude Code(ワーク、Bedrock 方式)で拒否するコマンドは、Claude Code の settings.json の `permissions.deny` で決めます(雛形に `rm`・`sudo` などの初期値が入っています)。
 - **サンドボックス** ([sandbox.md](docs/sandbox.md))
   - ワークのエージェントへの指示は、常に、エージェントごとの専用 Docker コンテナの中の Claude Code が受け持ちます(切り替えはありません)。パーソナルとリーダーは、AI Link の接続方式に Bedrock を選んだときだけコンテナで動きます。続きの指示は同じセッションで引き継ぎます。
-  - コンテナから見えるのは、そのエージェントの担当フォルダ(`/workspace`。エージェントごとに決まった場所で、ソースコードなどを置く)とナレッジ(`/knowledge`)だけで、ほかのエージェントや `~/.aws` には届きません。
+  - コンテナから見えるのは、そのエージェントのナレッジ(`/knowledge`)だけで(ソースコードなどはナレッジ直下の担当フォルダ `/knowledge/data` に置く)、ほかのエージェントや `~/.aws` には届きません。
   - Claude Code の接続先は Amazon Bedrock(AWS の一時キー)です。モデルと許可するツールは、Claude Code の settings.json で決めます。パーソナル・リーダーは、AI Link の接続方式に Bedrock を選んだときだけコンテナで動きます(API 方式では、Anthropic・端末内のモデルを従来どおり使います)。
   - エージェントごとの環境変数(`sandbox.env`)と AWS の一時キーを、実行時にだけコンテナへ渡します。イメージは全エージェント共通で、Dockerfile は全体設定で編集します。エージェントごとに専用の Dockerfile を登録すると、そちらを優先します。
   - Docker が使えないときは、ホストでは実行せずエラーにします。

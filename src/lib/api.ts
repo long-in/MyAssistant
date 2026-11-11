@@ -371,13 +371,13 @@ export const stopAgentSandbox = () => invoke<void>("stop_agent_sandbox");
 export const resetSandbox = () => invoke<void>("reset_sandbox");
 /** Dockerfileを標準の内容で上書きする。 */
 export const resetSandboxDockerfile = () => invoke<void>("reset_sandbox_dockerfile");
-/** `/workspace`にマウントするフォルダ(エージェントごとに決まった場所。無ければ作る)。 */
-export const getSandboxWorkspaceDir = () => invoke<string>("get_sandbox_workspace_dir");
+/** 担当システムのフォルダ(ナレッジ直下の`data/`。コンテナでは`/knowledge/data`。無ければ作る)。 */
+export const getSandboxDataDir = () => invoke<string>("get_sandbox_data_dir");
 /** デバッグログの出力先を Finder で開く。 */
 export const openDebugLogDir = () => invoke<void>("open_debug_log_dir");
 
-/** `/workspace`にマウントするフォルダを Finder で開く。 */
-export const openSandboxWorkspaceDir = () => invoke<void>("open_sandbox_workspace_dir");
+/** 担当システムのフォルダを Finder で開く。 */
+export const openSandboxDataDir = () => invoke<void>("open_sandbox_data_dir");
 
 export type SandboxProvider = "anthropic" | "bedrock";
 /** コンテナ内の Claude Code の接続の設定(モデルと許可するツールは settings.json で決める)。 */
