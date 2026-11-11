@@ -62,7 +62,7 @@ pub fn select_aws_profile(ctx: Ctx, name: String) -> Result<Status, AppError> {
     aws::status(&ctx)
 }
 
-/// 認証からモデル呼び出しまでを通しで確認する。MFAが必要なら入力要求のイベントが飛ぶ。
+/// 認証が通るかを確認する。MFAやSSOの承認が必要なら入力要求のイベントが飛ぶ。
 #[tauri::command]
 pub async fn test_aws_connection(ctx: Ctx) -> Result<Status, AppError> {
     aws::test_connection(&ctx).await.map_err(|e| e.with_source("bedrock"))?;
@@ -81,5 +81,20 @@ pub fn submit_aws_mfa(ws: State<'_, Workspaces>, workspace_id: String, code: Str
 pub fn cancel_aws_mfa(ws: State<'_, Workspaces>, workspace_id: String) {
     if let Ok(ctx) = ws.resolve(&workspace_id) {
         aws::cancel_mfa(&ctx);
+    }
+}
+
+/// 承認待ちのSSOの承認ページを、既定のブラウザで開く。URLはRustが控えているものを使い、フロントエンドからは受け取らない。
+#[tauri::command]
+pub fn open_aws_sso(ws: State<'_, Workspaces>, workspace_id: String) -> Result<(), AppError> {
+    let ctx = ws.resolve(&workspace_id)?;
+    aws::open_sso(&ctx)
+}
+
+/// SSOの承認待ちを取りやめる。
+#[tauri::command]
+pub fn cancel_aws_sso(ws: State<'_, Workspaces>, workspace_id: String) {
+    if let Ok(ctx) = ws.resolve(&workspace_id) {
+        aws::cancel_sso(&ctx);
     }
 }

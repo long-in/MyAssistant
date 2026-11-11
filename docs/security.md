@@ -27,14 +27,17 @@
 
 ## AWS 認証(`aws.rs`)
 
-- 設定画面に貼り付けた `~/.aws/config` と `~/.aws/credentials` の本文を、`secrets.json` に保持する。フロントエンドへはプロファイル名・リージョン・MFA の要否だけを返し、キーは返さない。
+- 設定画面に貼り付けた `~/.aws/config` と `~/.aws/credentials` の本文を、`secrets.json` に保持する。フロントエンドへはプロファイル名・リージョン・MFA の要否・SSO かどうかだけを返し、キーは返さない。
 - 使うプロファイルは、貼り付けた内容から読み取った候補(`preview_aws_config`。保存しない)の中から、保存前に利用者が選ぶ。候補が1つならそれが選ばれ、複数なら選ぶまで保存できない。保存済みの選択が使えなくなっても、他のプロファイルへ黙って切り替えず、未選択として扱う。
 - `role_arn` + `source_profile` のプロファイルは、`sts:AssumeRole`(MFA 付き)で一時クレデンシャルを得る。一時クレデンシャルは**メモリ上だけ**に置き、期限の 60 秒前に取り直す。ディスクにも保存しない。
+- IAM Identity Center(SSO)のプロファイル(`sso_session` + `[sso-session]`、またはプロファイルへ `sso_start_url` を直接書く旧形式)は、アプリ自身がデバイス認可フロー(SSO OIDC の `RegisterClient` → `StartDeviceAuthorization` → `CreateToken`)を行い、`sso:GetRoleCredentials` で一時クレデンシャルを得る。ホストの `aws sso login` や `~/.aws/sso/cache` は使わない。SSO のプロファイルを `source_profile` にしたスイッチロールにも対応する(このとき `mfa_serial` は使わない。MFA は SSO の承認側で求められる)。
+- SSO のアクセストークン・リフレッシュトークン・クライアント登録も**メモリ上だけ**に置く。アプリを起動し直すと、ブラウザでの承認が 1 回必要になる。起動中は、リフレッシュトークンがあれば(`sso_session` 形式)黙って更新する。
+- SSO の承認が必要なときは、Rust が `aws-sso-required` イベントを送り、画面に確認コードを出す。ブラウザは自動では開かず、画面のボタンで開く(裏のエージェントが求めたときに、突然ブラウザが前面に出ないようにする)。開く URL は発行元が返したものを Rust が控えていて、フロントエンドからは受け取らない(`https://` 以外は開かない)。承認は発行元の期限(通常 10 分)まで待ち、終われば `aws-sso-finished` で画面を閉じる。
 - MFA コードが必要なときは、Rust が `aws-mfa-required` イベントを送って入力を待つ(上限 180 秒、誤入力は 3 回まで再入力)。呼び出し側(対話・整理など)はコードが届くまで待ち、届けばそのまま続行する。同時に複数の呼び出しが来ても入力は 1 回にまとめる。
 - 対応するのは「アクセスキーを持つプロファイル」と「そのプロファイルを `source_profile` にした 1 段のロール」。SSO・`credential_process`・`credential_source`・ロールの連鎖は未対応。貼り付けフォームでは、選べないプロファイルをその理由(`source_profile` の参照先が無い、未対応の方式など)付きで表示する。
 - 設定画面の「保存先をFinderで開く」(`reveal_secrets_file`)は、現在のワークスペースの `secrets.json` を Finder で選択表示する(未作成ならフォルダを開く)。パスは `ctx.dir` から Rust 内で組み立て、中身は読まない。
 - Bedrock は、このアプリから直接は呼ばない(モデルの一覧も持たない)。登録した AWS の設定から発行した一時クレデンシャルを、コンテナ内の Claude Code へ環境変数で渡して使う。モデルは Claude Code の settings.json で決める([sandbox.md](sandbox.md))。
-- 「接続テスト」は、STS の `GetCallerIdentity` で認証(プロファイル・MFA・ロールの引き受け)が通るかだけを確かめる。モデルは呼ばない。
+- 「接続テスト」は、STS の `GetCallerIdentity` で認証(プロファイル・MFA・SSO・ロールの引き受け)が通るかだけを確かめる。モデルは呼ばない。
 - 以前のバージョンが `secrets.json` に保存した `aws_models`(Bedrock のモデル一覧)は使わない。AWS の登録を削除するときに一緒に消す。
 
 ## API キー(`secrets.rs`)

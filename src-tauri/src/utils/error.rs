@@ -116,6 +116,9 @@ pub enum AppError {
     /// MFAコードの入力が取り消された、または時間内に入力されなかった。
     #[error("MFA code was not provided")]
     MfaRequired,
+    /// SSOのブラウザでの承認が取り消された、または時間内に終わらなかった。
+    #[error("SSO sign-in was not completed")]
+    SsoRequired,
     /// エージェントの名称・イメージカラーの不備。
     #[error("invalid agent: {0}")]
     InvalidAgent(String),
@@ -211,6 +214,7 @@ impl AppError {
             Self::InvalidSkill(_) => "invalid_skill",
             Self::AwsConfig(_) => "aws_config_error",
             Self::MfaRequired => "mfa_required",
+            Self::SsoRequired => "sso_required",
             Self::InvalidAgent(_) => "invalid_agent",
             Self::PathInUse => "path_in_use",
             Self::ReservedName => "reserved_name",
