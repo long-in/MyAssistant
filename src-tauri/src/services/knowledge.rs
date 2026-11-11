@@ -734,6 +734,9 @@ pub const CAPTURE_CATEGORY: &str = "captures";
 /// ノートではないので、一覧・索引・整理・初期化・書き出し・バックアップの対象にせず、画面やLLMのツールからも書き換えさせない。
 pub const DATA_DIR: &str = "data";
 
+/// カテゴリ未設定のノートの置き場(ナレッジ直下)。
+pub const INBOX_DIR: &str = "inbox";
+
 /// `data/`配下(`data`自身を含む)か。
 pub fn is_data(path: &str) -> bool {
     path.trim_start_matches("./").split(['/', '\\']).next().is_some_and(|p| p.eq_ignore_ascii_case(DATA_DIR))
@@ -782,6 +785,19 @@ pub fn lowercase_dirs(root: &Path) -> usize {
         renamed
     }
     walk(root, 0)
+}
+
+/// ナレッジ直下に、アプリが使うフォルダ(`inbox`・`skills`・`captures`・`preferences`、`with_memory`なら`memory`)を、無ければ作る。
+/// `data/`は担当システムのフォルダとして別に作る(`sandbox::ensure_data_dir`)。小文字化の後に呼ぶ(大文字の同名フォルダと並べて作らないため)。
+pub fn ensure_system_dirs(root: &Path, with_memory: bool) -> Result<(), AppError> {
+    let mut names = vec![INBOX_DIR, super::skills::DIR, CAPTURE_CATEGORY, CORRECTIONS_DIR];
+    if with_memory {
+        names.push(super::memory::MEMORY_CATEGORY);
+    }
+    for name in names {
+        ensure_dir(root, &[name.to_owned()])?;
+    }
+    Ok(())
 }
 
 /// `target`が無い、または`path`と同じ実体(大文字小文字を区別しないボリュームでの別名)か。
