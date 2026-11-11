@@ -217,11 +217,6 @@ pub fn saved_route(ctx: &WorkspaceCtx) -> Result<Option<Route>, AppError> {
     Ok(ctx.db.get_setting(BATCH_ROUTE_KEY)?.and_then(|v| serde_json::from_str(&v).ok()))
 }
 
-/// 保存されている整理のモデル指定(使えるかは確かめない)。
-pub fn saved_route(ctx: &WorkspaceCtx) -> Result<Option<Route>, AppError> {
-    Ok(ctx.db.get_setting(BATCH_ROUTE_KEY)?.and_then(|v| serde_json::from_str(&v).ok()))
-}
-
 /// 保存済みの指定、使えなければ既定を返す。
 pub fn effective_route(ctx: &WorkspaceCtx, available: &[Provider]) -> Result<Option<Route>, AppError> {
     let saved = ctx.db.get_setting(BATCH_ROUTE_KEY)?.and_then(|v| serde_json::from_str(&v).ok());
