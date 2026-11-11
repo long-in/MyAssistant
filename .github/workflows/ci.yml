@@ -25,6 +25,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
+      - run: npm test
       # LayoutProps 等のグローバル型は next typegen で生成されるため、tsc の前に実行する。
       - run: npx next typegen
       - run: npx tsc --noEmit
@@ -39,12 +40,17 @@ jobs:
           node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
       - run: npm ci
       # tauri-build が frontendDist(../out)の存在を要求するため、空のディレクトリを用意する。
       - run: mkdir -p out
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
       - name: cargo test
         working-directory: src-tauri
         run: cargo test

@@ -197,7 +197,7 @@ pub(crate) fn split_frontmatter(text: &str) -> Option<(Vec<Entry>, String)> {
 /// YAMLの値を文字列にする。二重引用符・単一引用符・複数行(`>` `|`と、折り返した値)に対応する。
 fn decode_scalar(first: &str, rest: &[&str]) -> String {
     if first.starts_with(['>', '|']) {
-        let lines: Vec<&str> = rest.iter().copied().collect();
+        let lines: Vec<&str> = rest.to_vec();
         let indent = lines.iter().filter(|l| !l.trim().is_empty()).map(|l| l.len() - l.trim_start().len()).min().unwrap_or(0);
         let lines: Vec<&str> = lines.iter().map(|l| if l.len() >= indent { &l[indent..] } else { "" }).collect();
         if first.starts_with('|') {

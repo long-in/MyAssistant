@@ -52,20 +52,18 @@ fn pending_names(root: &Path) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     for dir in [legacy, root.join(HARNESS_DIR)] {
         for (name, path) in md_files(root, &dir) {
-            if !skills::valid_name(&name) && legacy_name_ok(&name) {
-                if let Some(text) = read_small(&path) {
+            if !skills::valid_name(&name) && legacy_name_ok(&name)
+                && let Some(text) = read_small(&path) {
                     out.push((name, skills::parse("", &text).description));
                 }
-            }
         }
     }
     if let Some(dir) = skills_dir(root) {
         for (name, path) in subdirs(&dir) {
-            if !skills::valid_name(&name) && legacy_name_ok(&name) {
-                if let Some(text) = read_small(&path.join("SKILL.md")) {
+            if !skills::valid_name(&name) && legacy_name_ok(&name)
+                && let Some(text) = read_small(&path.join("SKILL.md")) {
                     out.push((name, skills::parse("", &text).description));
                 }
-            }
         }
     }
     out.sort();

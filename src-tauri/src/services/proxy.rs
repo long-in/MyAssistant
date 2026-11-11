@@ -327,7 +327,7 @@ pub async fn get(url: &str) -> Result<reqwest::Response, AppError> {
 }
 
 /// そのエージェントのAWS SDK用のHTTPクライアント。プロキシを使わないなら`None`(SDKの既定のまま)。
-pub fn aws_http_client_for(ctx: &WorkspaceCtx) -> Option<aws_sdk_bedrockruntime::config::SharedHttpClient> {
+pub fn aws_http_client_for(ctx: &WorkspaceCtx) -> Option<aws_sdk_sts::config::SharedHttpClient> {
     use aws_smithy_http_client::{Connector, proxy::ProxyConfig, tls};
     let a = active_for(&choice_of(ctx))?;
     let mut config = ProxyConfig::all(a.url.as_str()).ok()?.no_proxy(NO_PROXY);

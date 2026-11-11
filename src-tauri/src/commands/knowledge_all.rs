@@ -67,7 +67,7 @@ pub fn list_all_knowledge(ws: State<'_, Workspaces>) -> Vec<AgentKnowledge> {
     ws.batch_ids()
         .into_iter()
         .filter_map(|id| match ws.open_for_knowledge(&id) {
-            Ok(ctx) => Some(collect(&ws, &*ctx, &id)),
+            Ok(ctx) => Some(collect(&ws, &ctx, &id)),
             Err(e) => {
                 log::warn!("knowledge of {id} not listed: {e}");
                 None
