@@ -6,8 +6,7 @@ import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useState } from "react";
 import { Download, Loader2, Pencil, Plus, Upload, Save, ScrollText, Trash2 } from "lucide-react";
 import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { ChatMarkdown } from "@/components/ChatMarkdown";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -355,9 +354,7 @@ export default function Skills() {
                 ) : (
                   <>
                     <p className="text-sm">{draft.description}</p>
-                    <div className="prose prose-sm max-w-none dark:prose-invert">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{draft.body}</ReactMarkdown>
-                    </div>
+                    <ChatMarkdown text={draft.body} />
                   </>
                 )}
               </div>

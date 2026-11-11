@@ -17,7 +17,8 @@ export const PHASE_HUE: Record<Phase, number> = {
   speaking: 150, // グリーン
 };
 
-const PHASES: Record<Phase, { en: string; ja: string }> = {
+/** 処理段階の表示名(英字の読み出しと、日本語の説明)。 */
+export const PHASE_LABELS: Record<Phase, { en: string; ja: string }> = {
   standby: { en: "STANDBY", ja: "待機中" },
   initializing: { en: "INITIALIZING", ja: "初期化中" },
   listening: { en: "LISTENING", ja: "音声入力中" },
@@ -29,8 +30,8 @@ const PHASES: Record<Phase, { en: string; ja: string }> = {
 /** 円形波形の中心に重ねる、処理段階の読み出し表示。 */
 export default function OrbReadout({ phase }: { phase: Phase }) {
   const t = useT();
-  const p = PHASES[phase];
-  const order = Object.keys(PHASES) as Phase[];
+  const p = PHASE_LABELS[phase];
+  const order = Object.keys(PHASE_LABELS) as Phase[];
   const color = `hsl(${PHASE_HUE[phase]} 90% 62%)`;
   return (
     <div

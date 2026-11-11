@@ -1,12 +1,11 @@
 "use client";
 
 import { useT } from "@/lib/i18n";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { approvalLine } from "@/components/AttentionToasts";
 import { notifyOsIfBackground } from "@/lib/osNotify";
-import { VoiceOrb } from "./Waveforms";
 import ChatThread from "./ChatThread";
 import ChatComposer from "./ChatComposer";
 import ChatNotices, { type SetupState } from "./ChatNotices";
@@ -14,14 +13,18 @@ import ApprovalModal, { type Approval, type Listening } from "./ApprovalModal";
 import SwitchConfirm from "./SwitchConfirm";
 import DispatchDraftCard from "./DispatchDraftCard";
 import LeaderLedger from "./LeaderLedger";
-import InfoCard from "./InfoCard";
 import { applyTaskEvent, emptyLog } from "./ExecutionLog";
 import { type Turn } from "./Reply";
 import OrbReadout, { type Phase } from "./OrbReadout";
-import { useDownloadProgress } from "./DownloadBar";
+import InfoCard from "./InfoCard";
+import { VoiceOrb } from "./Waveforms";
+import { PanelRightClose, PanelRightOpen } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useDownloadProgress } from "./DownloadBar";
 import { isPlainSpace, matchShortcut } from "@/lib/shortcuts";
-import { judgeAnswer } from "@/lib/voiceApproval";
+import { judgeAnswer, voiceCanApprove } from "@/lib/voiceApproval";
+import { useSandbox } from "@/lib/useSandbox";
 import { speechText } from "@/lib/speech-sync";
 import { detectSwitch } from "@/lib/voiceCommands";
 import {
@@ -56,16 +59,9 @@ import {
   loadRouting,
   playBase64Mp3,
   recordingWaveform,
-  getSandboxEnabled,
   SANDBOX_PROVIDER,
-  getSandboxStatus,
-  getSandboxModels,
-  setSandboxModel,
-  type SandboxModels,
-  startAgentSandbox,
-  stopAgentSandbox,
-  resetSandbox,
-  type SandboxStatus,
+  listSkills,
+  type Skill,
   reportError,
   saveRouting,
   sendChat,
@@ -101,6 +97,9 @@ const STANDBY_PRE_ROLL_MS = 1000;
 const STANDBY_FLOOR_RESET_MS = 10000;
 /** 常時待機: 読み上げや処理が終わってから、待機の録音を再開するまでの間(ms)。残響を拾わないため。 */
 const STANDBY_RESUME_MS = 600;
+
+/** 右のパネルの開閉を覚えておく`localStorage`のキー。 */
+const PANEL_KEY = "chat-side-panel";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -163,6 +162,22 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   const [turns, setTurns] = useState<Turn[]>([]);
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState("");
+  // 右のパネル(円形波形と情報カード)を出すか。畳むと会話を広く使え、波形と状態は入力欄の下の帯に小さく出る。選んだ状態は端末に覚えておく
+  const [panelOpen, setPanelOpen] = useState(true);
+  // 静的エクスポートのハイドレーション不一致を避けるため、保存値はマウント後に読む
+  useEffect(() => {
+    try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setPanelOpen(localStorage.getItem(PANEL_KEY) !== "0");
+    } catch {}
+  }, []);
+  const togglePanel = () =>
+    setPanelOpen((open) => {
+      try {
+        localStorage.setItem(PANEL_KEY, open ? "0" : "1");
+      } catch {}
+      return !open;
+    });
   const [activity, setActivity] = useState<string | null>(null);
   const [approval, setApproval] = useState<Approval | null>(null);
   // リーダーが作った配布の下書き。利用者が確かめて配布する
@@ -191,84 +206,20 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   const approvalRef = useRef<Approval | null>(null);
   const [listening, setListening] = useState<Listening>("idle");
   const [route, setRoute] = useState<Route | null>(null);
-  /** ワークのエージェントは常に、会話をコンテナ内の Claude Code が受け持つ(このアプリのAPIキーやモデルの選択は使わない)。 */
-  const [sandboxAlways, setSandboxAlways] = useState(false);
+  // コンテナ内の Claude Code で会話するか(ワークは常に、パーソナルとリーダーはモデルに選んだとき)と、コンテナの状態・操作
+  const sandbox = useSandbox(route?.provider === SANDBOX_PROVIDER, active);
+  const sandboxAlways = sandbox.always;
+  const sandboxOn = sandbox.on;
+  const needSandbox = sandbox.needed;
+  /** 入力欄で指定できるスキル。コンテナ内の Claude Code で会話するときは、アプリのスキル指定は使えない。 */
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [skill, setSkill] = useState<string | null>(null);
   useEffect(() => {
-    getSandboxEnabled().then(setSandboxAlways).catch(() => {});
-  }, []);
-  /** コンテナ内の Claude Code で会話するか。ワークは常に、パーソナルとリーダーはモデルに選んだとき。 */
-  const sandboxOn = sandboxAlways || route?.provider === SANDBOX_PROVIDER;
-  /** サンドボックスのコンテナが使える状態か(未確認は null)。使えるまでは、指示を送れない。 */
-  const [sandboxReady, setSandboxReady] = useState<boolean | null>(null);
-  const [sandboxStatus, setSandboxStatus] = useState<SandboxStatus | null>(null);
-  /** チャット画面からのコンテナの起動・停止の実行中。 */
-  const [containerBusy, setContainerBusy] = useState(false);
-  const refreshSandbox = useCallback(
-    () =>
-      getSandboxStatus()
-        .then((s) => {
-          setSandboxStatus(s);
-          setSandboxReady(s.docker === "ready" && s.image_ready && s.container_ready);
-        })
-        .catch(() => {}),
-    [],
-  );
-  useEffect(() => {
-    // 状態はアクティブなエージェントのものだけが取れる
-    if (!sandboxOn || !active) return;
-    let alive = true;
-    const check = () => (alive ? refreshSandbox() : Promise.resolve());
-    void check();
-    const timer = setInterval(() => void check(), sandboxReady ? 30_000 : 5_000);
-    window.addEventListener("focus", check);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-      window.removeEventListener("focus", check);
-    };
-  }, [sandboxOn, active, sandboxReady, refreshSandbox]);
-  const needSandbox = sandboxOn && sandboxReady === false;
-  /** サンドボックスで選べるモデル(settings.json の許可)。設定画面で書き換えたあと戻ってきたときに読み直す。 */
-  const [sandboxModels, setSandboxModels] = useState<SandboxModels | null>(null);
-  useEffect(() => {
-    if (!sandboxOn || !active) return;
-    let alive = true;
-    const load = () =>
-      getSandboxModels()
-        .then((m) => alive && setSandboxModels(m))
-        .catch(() => {});
-    void load();
-    window.addEventListener("focus", load);
-    return () => {
-      alive = false;
-      window.removeEventListener("focus", load);
-    };
-  }, [sandboxOn, active]);
-  const changeSandboxModel = (model: string) => {
-    setSandboxModels((m) => (m ? { ...m, selected: model } : m));
-    setSandboxModel(model).catch(fail);
-  };
-  /** コンテナを起動する。起動中なら停止する。 */
-  const toggleContainer = async () => {
-    if (containerBusy) return;
-    setContainerBusy(true);
-    try {
-      if (sandboxReady) {
-        await stopAgentSandbox();
-        toast.success(t("コンテナを停止しました。"));
-      } else {
-        if (sandboxStatus?.container_name && !sandboxStatus.container_ready) await resetSandbox(); // 古いコンテナは作り直す
-        await startAgentSandbox();
-        toast.success(t("コンテナを起動しました。"));
-      }
-      await refreshSandbox();
-    } catch (e) {
-      fail(e);
-    } finally {
-      setContainerBusy(false);
-    }
-  };
-  const containerStartable = !!sandboxStatus && sandboxStatus.docker === "ready" && sandboxStatus.image_ready && !sandboxStatus.building;
+    if (!active || sandboxOn) return;
+    listSkills()
+      .then((o) => setSkills(o.skills))
+      .catch(() => {});
+  }, [active, sandboxOn]);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [keyStatus, setKeyStatus] = useState<Partial<KeyStatus>>({});
   const [mic, setMicState] = useState<Mic>("idle");
@@ -377,10 +328,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     setRoute(r);
     saveRouting(r).catch(fail);
     // コンテナ内の Claude Code では、選んだモデルを settings.json の許可の中から渡す("default"は settings.json の model に任せる)
-    if (r.provider === SANDBOX_PROVIDER) {
-      setSandboxModels((m) => (m ? { ...m, selected: r.model === "default" ? null : r.model } : m));
-      setSandboxModel(r.model === "default" ? null : r.model).catch(fail);
-    }
+    if (r.provider === SANDBOX_PROVIDER) sandbox.changeModel(r.model === "default" ? null : r.model);
   };
 
   const showApproval = (a: Approval | null) => {
@@ -491,17 +439,21 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 読み込みはワークスペースごとに1回
   }, [workspaceId]);
 
-  const answerApproval = (approved: boolean) => {
+  /** `once`: 許可リストにないコマンドを、許可へ加えずに今回だけ実行する。 */
+  const answerApproval = (approved: boolean, once = false) => {
     const a = approvalRef.current;
     if (!a) return;
     showApproval(null);
-    taskApprove(a.id, approved).catch(fail);
+    taskApprove(a.id, approved, once).catch(fail);
   };
 
   /** 承認待ちへの音声の返答。肯定とはっきり分かるときだけ進め、聞き取れなければ待ち続ける。 */
   const answerByVoice = (text: string) => {
     const answer = judgeAnswer(text);
-    if (answer === "yes") answerApproval(true);
+    const kind = approvalRef.current?.kind;
+    // コマンドの個別承認と許可リストへの追加は、周囲の音声で誤って通らないよう、ボタンでだけ承認できる(拒否は音声でもできる)
+    if (answer === "yes" && kind && !voiceCanApprove(kind)) toast.info(t("このコマンドの承認は、画面のボタンで行ってください。"));
+    else if (answer === "yes") answerApproval(true);
     else if (answer === "no") answerApproval(false);
     else toast.info(t("「はい」または「いいえ」でお答えください。"));
   };
@@ -549,8 +501,12 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   const abortRef = useRef(abortAll);
   const working = useRef(false);
 
-  /** 依頼を送る。`spoke`: 返答を読み上げた、`replied`: 返答は画面のみ、`none`: 返答なし。 */
-  const submit = async (raw: string): Promise<"spoke" | "replied" | "none"> => {
+  /**
+   * 依頼を送る。`spoke`: 返答を読み上げた、`replied`: 返答は画面のみ、`none`: 返答なし。
+   * `skillName`は入力欄で指定したスキル(選定を省いて、その手順で進める)。
+   * 送信に失敗した発話は、失敗の印を付けて残す(再送できる)。
+   */
+  const submit = async (raw: string, skillName: string | null = null): Promise<"spoke" | "replied" | "none"> => {
     const text = raw.trim();
     if (!text || busy) return "none";
     unlockAudio(); // 操作のタイミングで有効化し、応答の自動再生を可能にする
@@ -560,13 +516,13 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     const aborted = () => session.current.id !== sessionId || resetEpoch.current !== epoch;
     const userAt = new Date();
     setBusy(true);
-    setTurns((ts) => [...ts, { user: text, userAt }]);
+    setTurns((ts) => [...ts, { user: text, userAt, skill: skillName ?? undefined }]);
     let result: "spoke" | "replied" | "none" = "none";
     try {
       // サンドボックスでは、経路はバックエンドで使われない(接続先はエージェントの Sandbox の設定)
       const sendRoute = route ?? (sandboxAlways ? SANDBOX_ROUTE : null);
       if (!sendRoute) throw new Error(t("使えるモデルがありません。設定でAPIキーを登録してください。"));
-      const r = await sendChat(sessionId, text, sendRoute, null, onTaskEvent);
+      const r = await sendChat(sessionId, text, sendRoute, sandboxOn ? null : skillName, onTaskEvent);
       if (aborted()) return "none"; // 待っている間に新しい会話へ切り替わった、または中断された
       const replied = { reply: r.content, replyAt: new Date(), via: r.model };
       result = "replied";
@@ -583,12 +539,21 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
       setTurns((ts) => ts.map((x) => (x.userAt === userAt ? { ...x, ...replied } : x)));
     } catch (e) {
       fail(e);
+      // 返答を受け取る前の失敗は、発話に印を付けて再送できるようにする
+      if (result === "none") setTurns((ts) => ts.map((x) => (x.userAt === userAt ? { ...x, failed: true } : x)));
     } finally {
       setBusy(false);
       setActivity(null);
       showApproval(null);
     }
     return result;
+  };
+
+  /** 送信に失敗した発話を送り直す(失敗した行は消して、同じ文とスキルで送る)。 */
+  const retryTurn = (turn: Turn) => {
+    if (busy) return;
+    setTurns((ts) => ts.filter((x) => x.userAt !== turn.userAt));
+    void submit(turn.user, turn.skill ?? null);
   };
 
   /** 字幕の返答を、読み上げボタンから再生する。ミュート中でも、押したときは読み上げる。 */
@@ -609,7 +574,8 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     if (!text || busy || needModel || needSandbox || mic !== "idle") return;
     stopSpeech();
     setDraft("");
-    void submit(text);
+    setSkill(null);
+    void submit(text, skill);
   };
 
   /** `hold`: エージェント長押しでの開始。開始処理中にキーが離されていたら、録音できた時点でそのまま停止する。 */
@@ -1081,20 +1047,37 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     : t("処理中…");
 
   const SMALL = "[@media(max-height:40rem),(max-width:40rem)]";
+  const isLeader = workspaceId === LEADER_ID;
   return (
     <div className="relative flex h-full flex-col gap-3 p-3">
-      <ChatNotices setup={setup} keyStatus={keyStatus} ttsReady={ttsReady} voiceReply={voiceReply} needModel={needModel} needSandbox={needSandbox} containerStartable={containerStartable} containerBusy={containerBusy} onStartContainer={() => void toggleContainer()} downloading={dlActive} progress={dlProgress} onDownload={download} />
+      <ChatNotices setup={setup} keyStatus={keyStatus} ttsReady={ttsReady} voiceReply={voiceReply} needModel={needModel} needSandbox={needSandbox} containerStartable={sandbox.startable} containerBusy={sandbox.busy} onStartContainer={() => void sandbox.toggle()} downloading={dlActive} progress={dlProgress} onDownload={download} />
 
-      {/* 確認UIは、ウィンドウが小さくて会話を畳んでいるときも残す */}
       {switching && (
         <div className="flex shrink-0 justify-center">
           <SwitchConfirm listening={switchListening} onAnswer={answerSwitch} />
         </div>
       )}
-      {/* 左: 会話のカード(広く使う)。右: 円形波形のカード。リーダーは、その下に台帳のカードを縦に並べる。狭いときは波形を会話の上に小さく出す */}
+      {/*
+        左: 会話(広く使う)。右: 円形波形と、その下に情報カード(リーダーは台帳)。右のパネルは畳める。
+        狭いときは波形を会話の上に小さく出し、ウィンドウが小さいときは会話を畳んで波形を大きく保つ。
+      */}
       <div className="flex min-h-0 flex-1 flex-col gap-3 md:flex-row">
-        <section className={cn("hud-panel hud-accent min-h-0 min-w-0 flex-1 flex-col gap-3 px-5 py-4", `flex ${SMALL}:hidden`)} aria-label={t("会話")}>
-          <p className="hud-heading shrink-0">{"// Conversation"}</p>
+        <section className={cn("hud-panel hud-accent flex min-h-0 min-w-0 flex-1 flex-col gap-2 px-4 py-3", panelOpen && `${SMALL}:hidden`)} aria-label={t("会話")}>
+          <div className="flex shrink-0 items-center gap-2">
+            <p className="hud-heading min-w-0 flex-1">{"// Conversation"}</p>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-pressed={panelOpen}
+              aria-label={panelOpen ? t("右のパネルを畳む") : t("右のパネルを開く")}
+              title={panelOpen ? t("右のパネルを畳む(会話を広く使う)") : t("右のパネルを開く(音声の波形と情報)")}
+              className="text-muted-foreground"
+              onClick={togglePanel}
+            >
+              {panelOpen ? <PanelRightClose /> : <PanelRightOpen />}
+            </Button>
+          </div>
           <ChatThread
             turns={turns}
             busy={busy}
@@ -1104,43 +1087,49 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
             onStop={stopSpeech}
             onCancelTask={cancelTask}
             onCorrected={(text) => setTurns((ts) => ts.map((x, i) => (i === ts.length - 1 ? { ...x, user: text } : x)))}
+            onRetry={retryTurn}
           />
         </section>
-        <div
-          className={cn(
-            "order-first flex h-44 shrink-0 flex-col gap-3 md:order-last md:h-auto md:w-[30%] md:max-w-[28rem] md:min-w-64",
-            `${SMALL}:h-auto ${SMALL}:w-full ${SMALL}:max-w-none ${SMALL}:flex-1`,
-          )}
-        >
-          {/* 利用できる幅・高さのうち小さい方に合わせて、円形波形を正方形で最大化する */}
-          <section
+        {panelOpen && (
+          <div
             className={cn(
-              "hud-panel hud-accent relative flex min-h-0 w-full items-center justify-center px-4 py-3 [container-type:size]",
-              "flex-1 md:h-[45%] md:flex-none",
+              "order-first flex h-40 shrink-0 flex-col gap-3 md:order-last md:h-auto",
+              // 情報カードは内容が少ないので幅を固定し、会話を広く使う。台帳は表なので、従来どおり広めにする
+              isLeader ? "md:w-[30%] md:max-w-[28rem] md:min-w-64" : "md:w-72 lg:w-80",
+              `${SMALL}:h-auto ${SMALL}:w-full ${SMALL}:max-w-none ${SMALL}:flex-1`,
             )}
-            aria-label={t("音声")}
           >
-            <div className="relative size-[min(100cqmin,40rem)] @container">
-              <VoiceOrb phase={phase} micActive={recording} thinking={busy} className="size-full" />
-              <OrbReadout phase={phase} />
-            </div>
-          </section>
-          {workspaceId === LEADER_ID ? (
-            <LeaderLedger active={active} className={cn("hud-panel hud-accent hidden min-h-0 flex-1 md:flex", `${SMALL}:hidden`)} />
-          ) : (
-            <InfoCard
-              turns={turns.length}
-              modelLabel={sandboxOn ? (sandboxModels?.selected ?? sandboxModels?.models[0]) : models.find((m) => m.provider === route?.provider && m.id === route?.model)?.label}
-              container={
-                sandboxOn ? { running: !!sandboxReady, busy: containerBusy, disabled: !sandboxReady && !containerStartable, onToggle: () => void toggleContainer() } : undefined
-              }
-              className={cn("hidden flex-1 md:flex", `${SMALL}:hidden`)}
-            />
-          )}
-        </div>
+            {/* 円形波形は、パネルの幅いっぱいの正方形で出す(余白を作らない)。小さいウィンドウでは、残りの高さいっぱいに広げる */}
+            <section
+              className={cn(
+                "hud-panel hud-accent relative flex min-h-0 w-full flex-1 items-center justify-center px-3 py-3 [container-type:size]",
+                "md:aspect-square md:flex-none",
+                `${SMALL}:aspect-auto ${SMALL}:flex-1`,
+              )}
+              aria-label={t("音声")}
+            >
+              <div className="relative size-[min(100cqmin,40rem)] @container">
+                <VoiceOrb phase={phase} micActive={recording} thinking={busy} className="size-full" />
+                <OrbReadout phase={phase} />
+              </div>
+            </section>
+            {isLeader ? (
+              <LeaderLedger active={active} className={cn("hud-panel hud-accent hidden min-h-0 flex-1 md:flex", `${SMALL}:hidden`)} />
+            ) : (
+              <InfoCard
+                turns={turns.length}
+                modelLabel={sandboxOn ? (sandbox.models?.selected ?? sandbox.models?.models[0]) : models.find((m) => m.provider === route?.provider && m.id === route?.model)?.label}
+                container={
+                  sandboxOn ? { running: !!sandbox.ready, busy: sandbox.busy, disabled: !sandbox.ready && !sandbox.startable, onToggle: () => void sandbox.toggle() } : undefined
+                }
+                className={cn("hidden flex-1 md:flex", `${SMALL}:hidden`)}
+              />
+            )}
+          </div>
+        )}
       </div>
 
-      {approval &&<ApprovalModal approval={approval} listening={listening} onAnswer={answerApproval} />}
+      {approval && <ApprovalModal approval={approval} listening={listening} onAnswer={answerApproval} />}
       {dispatchDraft && (
         <DispatchDraftCard
           key={dispatchDraft.id}
@@ -1150,8 +1139,9 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
         />
       )}
 
-      {/* 下部: 操作ボタンと入力欄のカード */}
+      {/* 下部: 入力欄(操作ボタン・モデル・スキルの指定)と、状態の帯 */}
       <ChatComposer
+        phase={phase}
         onNewConversation={() => startNewConversation(true)}
         standby={{ on: standbyOn, available: wake.words.length > 0, onToggle: toggleStandby }}
         mic={{
@@ -1178,8 +1168,14 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
         onStop={abortAll}
         model={
           sandboxAlways
-            ? { kind: "sandbox", models: sandboxModels?.models ?? [], selected: sandboxModels?.selected ?? sandboxModels?.models[0] ?? null, onChange: changeSandboxModel }
+            ? { kind: "sandbox", models: sandbox.models?.models ?? [], selected: sandbox.models?.selected ?? sandbox.models?.models[0] ?? null, onChange: sandbox.changeModel }
             : { kind: "app", route, models, keyStatus: { ...keyStatus, sandbox: models.some((m) => m.provider === SANDBOX_PROVIDER) }, onChange: changeRoute }
+        }
+        showStatus={!panelOpen}
+        skill={sandboxOn ? undefined : { list: skills, selected: skill, onSelect: setSkill }}
+        turns={turns.length}
+        container={
+          sandboxOn ? { running: !!sandbox.ready, busy: sandbox.busy, disabled: !sandbox.ready && !sandbox.startable, onToggle: () => void sandbox.toggle() } : undefined
         }
       />
     </div>
