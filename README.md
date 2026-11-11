@@ -267,7 +267,7 @@ npm run tauri build
 | 用途 | キー |
 | --- | --- |
 | Claude | Anthropic API キー |
-| Claude(Bedrock 経由) | `~/.aws/config` と `~/.aws/credentials` の中身(設定画面へそのまま貼り付け)。MFA 付きのスイッチロール(`role_arn` + `source_profile` + `mfa_serial`)に対応。コンテナ内の Claude Code へ一時キーを渡して使う(モデルは settings.json で決める) |
+| Claude(Bedrock 経由) | `~/.aws/config` と `~/.aws/credentials` の中身(設定画面へそのまま貼り付け)。MFA 付きのスイッチロール(`role_arn` + `source_profile` + `mfa_serial`)と、IAM Identity Center(SSO。`sso_session` / `sso_start_url`)に対応。SSO はアプリが確認コードを表示し、ブラウザで承認する(`aws sso login` は不要)。コンテナ内の Claude Code へ一時キーを渡して使う(モデルは settings.json で決める) |
 | 音声出力 / Google STT | Google Cloud API キー |
 | ローカル LLM(Qwen 2.5 7B) | キー不要。設定画面の「AI Link」からダウンロードする。Web 検索・ページ取得は使えない。メモリ 16GB 以上を推奨 |
 
