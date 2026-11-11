@@ -405,9 +405,13 @@ pub fn mounts_for(ctx: &WorkspaceCtx, knowledge: &Path) -> Result<Mounts, String
 // ------------------------------------------------------------------ 出力の伏せ字
 
 /// 登録済みの値を出力から伏せる。読み取りの境界で値が分かれても伏せられるよう、末尾を次の入力まで保留する。
+/// 値がどれも改行を含まないときは、最後の改行までは保留しない(値は改行をまたげない)。
+/// 応答を待って止まる相手(Claude Code の承認要求)の行が、保留されたまま届かなくならないようにする。
 pub struct Masker {
     secrets: Vec<String>,
     keep: usize,
+    /// 値がどれも改行を含まないか。
+    line_safe: bool,
     carry: String,
 }
 
@@ -417,7 +421,8 @@ impl Masker {
         secrets.sort_by_key(|v| std::cmp::Reverse(v.len()));
         secrets.dedup();
         let keep = secrets.first().map_or(0, |s| s.len().saturating_sub(1));
-        Self { secrets, keep, carry: String::new() }
+        let line_safe = secrets.iter().all(|s| !s.contains('\n'));
+        Self { secrets, keep, line_safe, carry: String::new() }
     }
 
     /// 完全に置き換える(まとめた出力用)。
@@ -439,6 +444,12 @@ impl Masker {
         let mut cut = buf.len().saturating_sub(self.keep);
         while !buf.is_char_boundary(cut) {
             cut -= 1;
+        }
+        // 改行をまたぐ値は無いので、最後の改行までは出してよい
+        if self.line_safe
+            && let Some(i) = buf.rfind('\n')
+        {
+            cut = cut.max(i + 1);
         }
         // 切れ目が値の途中に当たるなら、その値の手前まで戻す
         loop {
@@ -1030,8 +1041,8 @@ pub struct Exec<'a> {
     /// `sh -c`で実行する文字列。可変の値は埋め込まず、`vars`の環境変数で渡して参照する。
     pub command: &'a str,
     pub vars: BTreeMap<String, String>,
-    /// 標準入力へ書き込む内容(無ければ標準入力は閉じる)。
-    pub input: Option<String>,
+    /// 標準入力へ書き込む内容の送り口(無ければ標準入力は閉じる)。送り口がすべて閉じられると、標準入力も閉じる。
+    pub input: Option<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>>,
     pub timeout: Duration,
 }
 
@@ -1069,8 +1080,7 @@ pub async fn exec(req: Exec<'_>, cancel: &CancelToken, mut on_chunk: impl FnMut(
 
     let values = secret_values(&req.vars);
     let (mut out_mask, mut err_mask) = (Masker::new(&values), Masker::new(&values));
-    let input = req.input.map(String::into_bytes);
-    let result = shell::run_prepared_with_input(cmd, input, req.timeout, cancel, |stream, text| {
+    let result = shell::run_prepared_streaming(cmd, req.input, req.timeout, cancel, |stream, text| {
         let masked = match stream {
             Stream::Stdout => out_mask.push(text),
             Stream::Stderr => err_mask.push(text),
@@ -1502,6 +1512,22 @@ mod tests {
         let mut none = Masker::new(&[]);
         assert_eq!(none.push("abc"), "abc");
         assert_eq!(none.flush(), "");
+    }
+
+    #[test]
+    fn masker_releases_complete_lines_without_waiting_for_more_output() {
+        let secret = "x".repeat(1_000);
+        let mut m = Masker::new(&[secret.clone()]);
+        // 承認要求の行は、続きの出力を待たずに出る(相手は応答を待って止まっている)
+        let line = "{\"type\":\"control_request\",\"request_id\":\"r-1\"}\n";
+        assert_eq!(m.push(line), line);
+        // 値は改行の前後どちらで切れても伏せる
+        assert_eq!(m.push(&format!("a {}", &secret[..10])), "");
+        assert_eq!(m.push(&format!("{} b\n", &secret[10..])), "a *** b\n");
+        // 改行を含む値があれば、従来どおり末尾を保留する
+        let mut pem = Masker::new(&["-----BEGIN KEY-----\nabcdefgh\n-----END KEY-----".into()]);
+        let out = pem.push("ok\n-----BEGIN KEY-----\n") + &pem.push("abcdefgh\n-----END KEY-----\n") + &pem.flush();
+        assert_eq!(out, "ok\n***\n");
     }
 
     #[test]

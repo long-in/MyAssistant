@@ -100,8 +100,25 @@ pub async fn run_prepared(cmd: Command, timeout: Duration, cancel: &CancelToken,
 
 /// `run_prepared`と同じ。`input`があれば標準入力へ書き込んでから閉じる(無ければ標準入力は閉じたまま)。
 pub async fn run_prepared_with_input(
-    mut cmd: Command,
+    cmd: Command,
     input: Option<Vec<u8>>,
+    timeout: Duration,
+    cancel: &CancelToken,
+    on_chunk: impl FnMut(Stream, &str),
+) -> Result<Output, String> {
+    let stream = input.map(|bytes| {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let _ = tx.send(bytes);
+        rx
+    });
+    run_prepared_streaming(cmd, stream, timeout, cancel, on_chunk).await
+}
+
+/// `run_prepared_with_input`と同じ。ただし標準入力は、`input`へ送られた内容を実行中も書き続け、送り口がすべて閉じられたら閉じる。
+/// 実行中に相手へ応答を返す(承認の返答など)ときに使う。
+pub async fn run_prepared_streaming(
+    mut cmd: Command,
+    input: Option<mpsc::UnboundedReceiver<Vec<u8>>>,
     timeout: Duration,
     cancel: &CancelToken,
     mut on_chunk: impl FnMut(Stream, &str),
@@ -117,9 +134,13 @@ pub async fn run_prepared_with_input(
     let pid = child.id();
     // 書き込みは別タスクで行い、相手が読まなくても出力の監視を止めない。書き終えたら閉じる(EOF)
     let writer = match (input, child.stdin.take()) {
-        (Some(bytes), Some(mut stdin)) => Some(tokio::spawn(async move {
+        (Some(mut rx), Some(mut stdin)) => Some(tokio::spawn(async move {
             use tokio::io::AsyncWriteExt;
-            let _ = stdin.write_all(&bytes).await;
+            while let Some(bytes) = rx.recv().await {
+                if stdin.write_all(&bytes).await.is_err() || stdin.flush().await.is_err() {
+                    break;
+                }
+            }
             let _ = stdin.shutdown().await;
         })),
         _ => None,

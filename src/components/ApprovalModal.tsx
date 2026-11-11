@@ -19,6 +19,7 @@ const TITLES: Record<Approval["kind"], string> = {
   file: "ファイルの作成を許可しますか？",
   skill_update: "スキルを次の内容で上書きしてよいですか？",
   skill_delete: "このスキルを削除してよいですか？",
+  tool_use: "このツールを実行してよいですか？",
 };
 
 const LISTENING_LABEL: Record<Listening, string> = {
@@ -121,6 +122,19 @@ export default function ApprovalModal({
                 {t("「許可に加えて実行」を選ぶと、次を許可リストへ加えます(以後は承認なしで実行されます):")} <span className="font-mono">{approval.steps.join("、")}</span>
               </p>
             )}
+          </>
+        )}
+
+        {approval.kind === "tool_use" && (
+          <>
+            {approval.reason && <p className="mt-2 text-muted-foreground">{approval.reason}</p>}
+            <p className="mt-2 text-xs text-muted-foreground">
+              {t("ツール:")} <span className="font-mono break-all">{approval.path}</span>
+            </p>
+            <pre className="mt-2 max-h-48 overflow-auto rounded-md border bg-background/60 p-2 font-mono text-xs whitespace-pre-wrap break-all">
+              {approval.preview}
+            </pre>
+            <p className="mt-2 text-xs text-muted-foreground">{t("settings.json の permissions.ask に当たったため、確認しています。")}</p>
           </>
         )}
 

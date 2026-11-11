@@ -40,9 +40,9 @@ const YES_PHRASES = norm([
  */
 const NEGATION = /ない|ません|なかった|せず|するな|やるな|無理|不可|困る|嫌|まだ|あとで|後で|don't|dont|not/;
 
-/** 音声の「はい」で承認できる種類か。コマンドの個別承認と許可リストへの追加は、画面のボタンでだけ承認できる(拒否は音声でもできる)。 */
+/** 音声の「はい」で承認できる種類か。コマンドの個別承認・許可リストへの追加・Claude Code のツールの確認は、画面のボタンでだけ承認できる(拒否は音声でもできる)。 */
 export function voiceCanApprove(kind: string): boolean {
-  return kind !== "command" && kind !== "allow_command";
+  return kind !== "command" && kind !== "allow_command" && kind !== "tool_use";
 }
 
 /**

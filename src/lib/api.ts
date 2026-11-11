@@ -245,7 +245,7 @@ export const sendChat = (sessionId: string, text: string, route: Route, skill: s
 };
 
 /** 承認の種類。file=ファイル作成、plan=作業計画、command=計画外・破壊的なコマンドの個別承認、allow_command=許可リストにないコマンドを許可に加えて実行、skill_update=スキルの上書き、skill_delete=スキルの削除。 */
-export type ApprovalKind = "file" | "plan" | "command" | "allow_command" | "skill_update" | "skill_delete";
+export type ApprovalKind = "file" | "plan" | "command" | "allow_command" | "skill_update" | "skill_delete" | "tool_use";
 
 /** 配布の下書きの宛先(エージェント)。 */
 export type DraftTarget = { id: string; name: string; color: string };
@@ -261,9 +261,9 @@ export type TaskEvent =
       type: "approval";
       id: string;
       kind: ApprovalKind;
-      /** ファイルは作成先、コマンドは作業ディレクトリ。計画では空。 */
+      /** ファイルは作成先、コマンドは作業ディレクトリ、`tool_use`はツール名。計画では空。 */
       path: string;
-      /** ファイルは全文、コマンドはコマンド、計画は概要。 */
+      /** ファイルは全文、コマンドはコマンド、計画は概要、`tool_use`はツールの入力。 */
       preview: string;
       steps: string[];
       /** 個別承認が必要な理由(コマンドのみ)。 */

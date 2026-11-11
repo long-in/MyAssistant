@@ -174,7 +174,7 @@ export default function ClaudeSettingsEditor() {
       {masked !== null && <p className="text-xs text-muted-foreground">{t("env の値は伏せています。編集するには「値を表示して編集」を押してください。")}</p>}
       {error && <p className="text-xs text-destructive">{error}</p>}
       <p className="text-xs text-muted-foreground">
-        {t("Claude Code の settings.json の内容を貼り付けます(JSON のオブジェクト)。コンテナ内の Claude Code へ、指示ごとに --settings で渡します。モデルは model、許可するツールは permissions.allow、拒否するツールは permissions.deny(Bash(git status:*) のような指定も可)で決めます。")}
+        {t("Claude Code の settings.json の内容を貼り付けます(JSON のオブジェクト)。コンテナ内の Claude Code へ、指示ごとに --settings で渡します。モデルは model、許可するツールは permissions.allow、実行前に確認するツールは permissions.ask、拒否するツールは permissions.deny(Bash(git status:*) のような指定も可)で決めます。")}
       </p>
       <p className="text-xs text-muted-foreground">
         {t("コンテナ内の Claude Code のコマンドの拒否は、アプリの Command Policy ではなく、ここの permissions.deny で決めます(雛形に rm・sudo などの初期値が入っています)。消すとその保護は無くなります。env の値は、画面では既定で伏せますが、バックアップ・設定の書き出しにはそのまま含まれます。コンテナの出力に値が出たときは伏せ字にします。")}

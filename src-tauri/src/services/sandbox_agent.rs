@@ -41,14 +41,14 @@ pub const TIMEOUT_RANGE: RangeInclusive<u32> = 1..=180;
 /// アイドル自動停止の時間(分)の上限。0は無効。
 pub const IDLE_STOP_MAX: u32 = 24 * 60;
 /// Claude Code の標準のツール。ツールなしの単発の呼び出しでは、これをすべて拒否する。
-/// 許可は settings.json の`permissions.allow`、拒否は`permissions.deny`で決める(画面の雛形も同じ一覧と`default_deny_rules`)。
+/// 許可は settings.json の`permissions.allow`、確認は`permissions.ask`、拒否は`permissions.deny`で決める(画面の雛形も同じ一覧と`default_deny_rules`)。
 pub const DEFAULT_ALLOWED_TOOLS: [&str; 12] =
     ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit", "WebFetch", "WebSearch", "Task", "TodoWrite", "Skill"];
 /// システムプロンプトの上限(Linux の環境変数1つの上限 128KB より小さく)。
 const SYSTEM_MAX_BYTES: usize = 100 * 1024;
 
 /// コンテナ内で実行するコマンド。可変の値はすべて環境変数で受け取る(シェルへ値を埋め込まない)。
-const CLAUDE_COMMAND: &str = r#"exec claude -p --output-format stream-json --verbose --permission-mode acceptEdits ${MYASSISTANT_DISALLOWED_TOOLS:+--disallowedTools "$MYASSISTANT_DISALLOWED_TOOLS"} ${MYASSISTANT_RESUME:+--resume "$MYASSISTANT_RESUME"} ${MYASSISTANT_MODEL:+--model "$MYASSISTANT_MODEL"} ${MYASSISTANT_SETTINGS:+--settings "$MYASSISTANT_SETTINGS"} --append-system-prompt "$MYASSISTANT_SYSTEM_PROMPT""#;
+const CLAUDE_COMMAND: &str = r#"exec claude -p --input-format stream-json --output-format stream-json --verbose --permission-prompt-tool stdio --permission-mode acceptEdits ${MYASSISTANT_DISALLOWED_TOOLS:+--disallowedTools "$MYASSISTANT_DISALLOWED_TOOLS"} ${MYASSISTANT_RESUME:+--resume "$MYASSISTANT_RESUME"} ${MYASSISTANT_MODEL:+--model "$MYASSISTANT_MODEL"} ${MYASSISTANT_SETTINGS:+--settings "$MYASSISTANT_SETTINGS"} --append-system-prompt "$MYASSISTANT_SYSTEM_PROMPT""#;
 
 /// アプリが決める、秘密でない環境変数の名前。出力の伏せ字の対象から外す。
 pub const NON_SECRET_NAMES: [&str; 2] = ["CLAUDE_CODE_USE_BEDROCK", "ANTHROPIC_MODEL"];
@@ -381,6 +381,52 @@ pub enum AgentEvent {
     Status { line: String },
 }
 
+/// settings.json の`permissions.ask`に当たったツールの、実行してよいかの確認。
+#[derive(Debug, Clone, PartialEq)]
+pub struct PermissionRequest {
+    /// 応答と対応づけるID(Claude Code が付ける)。
+    pub request_id: String,
+    pub tool_name: String,
+    pub input: Value,
+    /// Claude Code が添える説明(無ければ空)。
+    pub description: String,
+}
+
+/// 確認の結果を待つ処理(許可なら`true`)。
+pub type PermissionFuture = std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>>;
+
+/// 確認の画面に載せる内容の長さの上限(文字数)。
+const PERMISSION_PREVIEW_CHARS: usize = 4_000;
+
+/// 確認の画面に見せるツールの入力。コマンドはそのまま、それ以外は整形した JSON。長いときは切り詰める。
+pub fn permission_preview(input: &Value) -> String {
+    let text = match input.get("command").and_then(Value::as_str) {
+        Some(c) => c.to_owned(),
+        None => serde_json::to_string_pretty(input).unwrap_or_default(),
+    };
+    if text.chars().count() > PERMISSION_PREVIEW_CHARS {
+        format!("{}…", text.chars().take(PERMISSION_PREVIEW_CHARS).collect::<String>())
+    } else {
+        text
+    }
+}
+
+/// 確認への応答(`control_response`)の1行。許可はツールの入力をそのまま返し、拒否は理由を添える。
+fn permission_response(request_id: &str, allow: bool, input: &Value) -> String {
+    let body = if allow {
+        serde_json::json!({ "behavior": "allow", "updatedInput": input })
+    } else {
+        serde_json::json!({ "behavior": "deny", "message": "ユーザーが実行を許可しませんでした。" })
+    };
+    let v = serde_json::json!({ "type": "control_response", "response": { "subtype": "success", "request_id": request_id, "response": body } });
+    format!("{v}\n")
+}
+
+/// 指示の1行(`stream-json`の入力)。
+fn user_message(prompt: &str) -> String {
+    format!("{}\n", serde_json::json!({ "type": "user", "message": { "role": "user", "content": prompt } }))
+}
+
 /// 1回の指示の結果。
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct TurnResult {
@@ -403,6 +449,7 @@ enum Parsed {
     Session(String),
     Event(AgentEvent),
     Result(TurnResult),
+    Permission(PermissionRequest),
 }
 
 /// ツールの結果の`content`(文字列、またはブロックの配列)をテキストにまとめる。
@@ -454,6 +501,18 @@ fn parse_line(line: &str) -> Vec<Parsed> {
                     })
                 })
                 .collect()
+        }
+        Some("control_request") if v.pointer("/request/subtype").and_then(Value::as_str) == Some("can_use_tool") => {
+            let r = &v["request"];
+            match str_of(&v, "request_id") {
+                Some(request_id) => vec![Parsed::Permission(PermissionRequest {
+                    request_id,
+                    tool_name: str_of(r, "tool_name").unwrap_or_default(),
+                    input: r.get("input").cloned().unwrap_or(Value::Null),
+                    description: str_of(r, "description").unwrap_or_default(),
+                })],
+                None => Vec::new(),
+            }
         }
         Some("result") => vec![Parsed::Result(TurnResult {
             text: str_of(&v, "result").unwrap_or_default(),
@@ -522,8 +581,15 @@ fn tail(s: &str, n: usize) -> String {
 }
 
 /// コンテナ内の Claude Code で1回の指示を実行する。途中経過は`on_event`へ逐次渡す。
+/// 標準入力は、結果が届くまで開いておき、確認への応答を書く。
 /// 認証情報が足りない・Dockerが使えないなどは、実行せずに`Err`。中断・時間切れは`Ok`で、フラグを立てて返す。
-pub async fn run_turn(turn: Turn<'_>, cancel: &CancelToken, mut on_event: impl FnMut(AgentEvent)) -> Result<TurnResult, String> {
+/// `permissions.ask`に当たったツールは、`on_permission`が返す結果(許可なら`true`)で実行するかを決める。
+pub async fn run_turn(
+    turn: Turn<'_>,
+    cancel: &CancelToken,
+    on_permission: impl Fn(PermissionRequest) -> PermissionFuture,
+    mut on_event: impl FnMut(AgentEvent),
+) -> Result<TurnResult, String> {
     if !sandbox::is_supported(&turn.ctx.id) {
         return Err("このエージェントではサンドボックスを使えません。".into());
     }
@@ -562,6 +628,7 @@ pub async fn run_turn(turn: Turn<'_>, cancel: &CancelToken, mut on_event: impl F
     let mut handle = |p: Parsed, on_event: &mut dyn FnMut(AgentEvent)| match p {
         Parsed::Session(id) => session = Some(id),
         Parsed::Result(r) => result = Some(r),
+        Parsed::Permission(_) => {}
         Parsed::Event(e) => {
             if let AgentEvent::Text { text } = &e {
                 texts.push(text.clone());
@@ -569,19 +636,43 @@ pub async fn run_turn(turn: Turn<'_>, cancel: &CancelToken, mut on_event: impl F
             on_event(e);
         }
     };
+    // 標準入力は、指示を書いたあとも開いておく(確認への応答を書くため)。結果が届いたら閉じて、Claude Code を終わらせる
+    let (input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+    let _ = input_tx.send(user_message(turn.prompt).into_bytes());
+    let weak_tx = input_tx.downgrade();
+    let mut input_tx = Some(input_tx);
     let exec = sandbox::Exec {
         ctx: turn.ctx,
         mounts: &mounts,
         cwd: mounts.default_dir(),
         command: CLAUDE_COMMAND,
         vars,
-        input: Some(turn.prompt.to_owned()),
+        input: Some(input_rx),
         timeout: turn.timeout.unwrap_or_else(|| Duration::from_secs(u64::from(cfg.timeout_mins) * 60)),
     };
     let out = sandbox::exec(exec, cancel, |stream, text| match stream {
         Stream::Stdout => {
             for p in parser.push(text) {
-                handle(p, &mut on_event);
+                match p {
+                    Parsed::Permission(req) => {
+                        let (id, input) = (req.request_id.clone(), req.input.clone());
+                        let answer = on_permission(req);
+                        let tx = weak_tx.clone();
+                        tokio::spawn(async move {
+                            let allow = answer.await;
+                            // 結果が届いて入力を閉じたあとなら、書かない
+                            if let Some(tx) = tx.upgrade() {
+                                let _ = tx.send(permission_response(&id, allow, &input).into_bytes());
+                            }
+                        });
+                    }
+                    p => {
+                        if matches!(p, Parsed::Result(_)) {
+                            input_tx = None;
+                        }
+                        handle(p, &mut on_event);
+                    }
+                }
             }
         }
         // 実行の準備(イメージのビルド)の進捗だけを流す。Claude Code の標準エラーは、失敗したときに文面へ添える
@@ -592,8 +683,11 @@ pub async fn run_turn(turn: Turn<'_>, cancel: &CancelToken, mut on_event: impl F
         }
     })
     .await?;
+    drop(input_tx);
     for p in parser.finish() {
-        handle(p, &mut on_event);
+        if !matches!(p, Parsed::Permission(_)) {
+            handle(p, &mut on_event);
+        }
     }
 
     let mut r = match result {
@@ -638,7 +732,8 @@ pub fn check_route_model(db: &impl SettingsStore, global: &impl SettingsStore, m
 /// Claude Code がエラーで終えた・中断・時間切れは`Err`。
 pub async fn complete(ctx: &WorkspaceCtx, knowledge_root: &Path, system: Option<&str>, prompt: &str, model: Option<&str>, timeout: Option<Duration>, cancel: &CancelToken) -> Result<String, String> {
     let turn = Turn { ctx, knowledge_root, prompt, system: system.unwrap_or(""), resume: None, model, deny: Vec::new(), no_tools: true, timeout };
-    let r = run_turn(turn, cancel, |_| {}).await?;
+    // ツールは使わない(すべて拒否している)ので、確認が来たら拒否する
+    let r = run_turn(turn, cancel, |_| Box::pin(async { false }), |_| {}).await?;
     if r.cancelled {
         return Err("中断されました。".into());
     }
@@ -1010,7 +1105,7 @@ mod tests {
         let cancel = CancelToken::default();
         let mut events = Vec::new();
         let turn = Turn { ctx: &ctx, knowledge_root: &knowledge, prompt: "こんにちは", system: "日本語で答える。'\"$(x)", resume: None, model: None, deny: vec!["WebFetch".into()], no_tools: false, timeout: None };
-        let r = run_turn(turn, &cancel, |e| events.push(e)).await.unwrap();
+        let r = run_turn(turn, &cancel, |_| Box::pin(async { false }), |e| events.push(e)).await.unwrap();
         assert!(r.is_error, "{r:?}");
         assert!(r.session_id.is_some(), "{r:?}");
         // キーの値は出力に出ない(出ても伏せ字)
@@ -1018,8 +1113,58 @@ mod tests {
         // 続きの指示(--resume)も同じ流れで通る
         let resume = r.session_id.clone().unwrap();
         let turn = Turn { ctx: &ctx, knowledge_root: &knowledge, prompt: "続き", system: "x", resume: Some(&resume), model: None, deny: Vec::new(), no_tools: false, timeout: None };
-        let r2 = run_turn(turn, &cancel, |_| {}).await.unwrap();
+        let r2 = run_turn(turn, &cancel, |_| Box::pin(async { false }), |_| {}).await.unwrap();
         assert!(r2.is_error, "{r2:?}");
         sandbox::remove_agent_blocking_for_test(id);
+    }
+
+    #[test]
+    fn can_use_tool_requests_are_parsed() {
+        let line = r#"{"type":"control_request","request_id":"r-1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"echo hello"},"description":"Print hello","tool_use_id":"t1"}}"#;
+        assert_eq!(
+            parse_line(line),
+            vec![Parsed::Permission(PermissionRequest {
+                request_id: "r-1".into(),
+                tool_name: "Bash".into(),
+                input: serde_json::json!({ "command": "echo hello" }),
+                description: "Print hello".into(),
+            })]
+        );
+        // 知らない種類・IDの無いものは読み飛ばす
+        assert!(parse_line(r#"{"type":"control_request","request_id":"r-2","request":{"subtype":"interrupt"}}"#).is_empty());
+        assert!(parse_line(r#"{"type":"control_request","request":{"subtype":"can_use_tool","tool_name":"Bash"}}"#).is_empty());
+    }
+
+    #[test]
+    fn permission_responses_allow_with_the_input_and_deny_with_a_reason() {
+        let input = serde_json::json!({ "command": "ls" });
+        let allow: Value = serde_json::from_str(permission_response("r-1", true, &input).trim_end()).unwrap();
+        assert_eq!(allow["type"], "control_response");
+        assert_eq!(allow["response"]["subtype"], "success");
+        assert_eq!(allow["response"]["request_id"], "r-1");
+        assert_eq!(allow["response"]["response"], serde_json::json!({ "behavior": "allow", "updatedInput": input }));
+        let deny = permission_response("r-1", false, &input);
+        assert!(deny.ends_with('\n') && deny.matches('\n').count() == 1, "1行で返す");
+        let deny: Value = serde_json::from_str(deny.trim_end()).unwrap();
+        assert_eq!(deny["response"]["response"]["behavior"], "deny");
+        assert!(deny["response"]["response"]["message"].as_str().is_some_and(|m| !m.is_empty()));
+    }
+
+    #[test]
+    fn prompt_is_sent_as_a_stream_json_user_message() {
+        let line = user_message("こんにちは\n2行目");
+        assert_eq!(line.matches('\n').count(), 1, "改行はエスケープされ、1行になる");
+        let v: Value = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(v["type"], "user");
+        assert_eq!(v["message"]["content"], "こんにちは\n2行目");
+        assert!(CLAUDE_COMMAND.contains("--input-format stream-json") && CLAUDE_COMMAND.contains("--permission-prompt-tool stdio"));
+    }
+
+    #[test]
+    fn permission_preview_shows_the_command_or_json_and_truncates() {
+        assert_eq!(permission_preview(&serde_json::json!({ "command": "git push" })), "git push");
+        assert!(permission_preview(&serde_json::json!({ "file_path": "/a" })).contains("\"file_path\""));
+        let long = permission_preview(&serde_json::json!({ "command": "x".repeat(10_000) }));
+        assert_eq!(long.chars().count(), PERMISSION_PREVIEW_CHARS + 1);
     }
 }
