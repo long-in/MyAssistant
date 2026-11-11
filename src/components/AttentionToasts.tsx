@@ -28,6 +28,8 @@ export function approvalLine(kind: TaskAttention["approval_kind"], detail: strin
       return tr("スキルを更新: {detail}", { detail });
     case "skill_delete":
       return tr("スキルを削除: {detail}", { detail });
+    case "tool_use":
+      return tr("ツールを実行: {detail}", { detail });
     default:
       return undefined;
   }

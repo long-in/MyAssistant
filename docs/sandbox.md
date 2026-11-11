@@ -26,8 +26,8 @@
 
 ```text
 [アプリ(ホスト)]  チャット画面・会話の記録・設定画面
-   │ ① 指示(stdin)+ 認証情報(実行ごとに環境変数)
-   ▼ docker exec -i ... claude -p --output-format stream-json --verbose [--resume <セッションID>]
+   │ ① 指示(stdin。stream-json の user メッセージ)+ 認証情報(実行ごとに環境変数)
+   ▼ docker exec -i ... claude -p --input-format stream-json --output-format stream-json --verbose --permission-prompt-tool stdio [--resume <セッションID>]
 [エージェント専用コンテナ  myassistant-<ランダム8桁>]
    Claude Code ──→ Amazon Bedrock(AWS 一時キー)
       │ 調査・編集・コマンド(git、AWS CLI など)
@@ -117,6 +117,7 @@
 - **承認**: 初版では、実行中に画面で承認を求めない。コンテナを境界とし、次のリストの範囲で自動で進める。
   - 権限モードは `acceptEdits`(ファイルの編集は自動)。
   - 許可リスト(settings.json の `permissions.allow`): エージェントごとに settings.json で決める(`--allowedTools` は渡さない)。画面の雛形は Bash・Read・Edit・Write・Glob・Grep・NotebookEdit・WebFetch・WebSearch・Task・TodoWrite・Skill。
+  - 確認リスト(settings.json の `permissions.ask`): 当たったツールは、実行前に画面で承認を求める。Claude Code が標準出力へ `control_request`(`can_use_tool`)を出し、アプリが `control_response`(allow はツールの入力をそのまま返す / deny は理由を添える)を標準入力へ返す。このため標準入力は結果が届くまで開いておく(`shell::run_prepared_streaming`)。承認の画面と応答(`task_approve`)・待ち時間(120秒。そのエージェントを開いている間だけ数える。超えたら拒否)は他の承認と同じで、種類は `tool_use`。ボタンでだけ承認できる(音声の「はい」では通らない)。中断・実行の時間切れでも拒否になる。「常に許可」(`permissions.allow` への書き戻し)は未対応。ツールを使わない単発の呼び出し(ナレッジ整理・校正)は、すべて拒否するので確認は来ない。
   - 拒否リスト(settings.json の `permissions.deny`): コマンドの拒否は settings.json だけで決める。既定の拒否は、コマンド権限の初期値の拒否(`deny`)と、どこにあっても拒否する語(`deny_words`)を `Bash(<コマンド>:*)` の形へ変換したもの(`default_deny_rules`。「,」や括弧を含む項目は除く)で、雛形と、settings.json が空のときに渡す内容に使う。拒否が許可より優先される。
   - アプリが決める拒否(`--disallowedTools`): コマンド実行を無効にしているエージェントでは `Bash` を、Web 検索を無効にしているエージェントでは `WebFetch` と `WebSearch` を拒否する。ツールなしの単発の呼び出しでは、標準のツールをすべて拒否する。
   - コマンド権限(`command-policy.json`)は渡さない。Bedrock 方式(ワークは常に)ではコマンドがホストで動かないため、画面に Command Policy を出さない。

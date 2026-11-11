@@ -84,6 +84,7 @@ fn kind_name(kind: ApprovalKind) -> &'static str {
         ApprovalKind::AllowCommand => "allow_command",
         ApprovalKind::SkillUpdate => "skill_update",
         ApprovalKind::SkillDelete => "skill_delete",
+        ApprovalKind::ToolUse => "tool_use",
     }
 }
 
@@ -94,6 +95,7 @@ pub fn detail_of(a: &Approval) -> String {
         ApprovalKind::Plan => String::new(),
         ApprovalKind::Command => truncate(&a.preview),
         ApprovalKind::AllowCommand => truncate(&a.steps.join(", ")),
+        ApprovalKind::ToolUse => truncate(&format!("{} {}", a.path, a.preview)),
         ApprovalKind::SkillUpdate | ApprovalKind::SkillDelete => truncate(&a.path),
     }
 }
@@ -129,9 +131,11 @@ mod tests {
             ApprovalKind::AllowCommand,
             ApprovalKind::SkillUpdate,
             ApprovalKind::SkillDelete,
+            ApprovalKind::ToolUse,
         ]
         .map(kind_name);
-        assert_eq!(names, ["file", "plan", "command", "allow_command", "skill_update", "skill_delete"]);
+        assert_eq!(names, ["file", "plan", "command", "allow_command", "skill_update", "skill_delete", "tool_use"]);
+        assert_eq!(d(ApprovalKind::ToolUse, "Bash", "git  push", &[]), "Bash git push");
     }
 
     #[test]

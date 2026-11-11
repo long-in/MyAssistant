@@ -432,7 +432,34 @@ async fn send_chat_sandbox(
         no_tools: is_leader,
         timeout: None,
     };
-    let result = sandbox_agent::run_turn(turn, &cancel, |event| {
+    // settings.json の`permissions.ask`に当たったツールは、画面で承認を求める(待ち方は他の承認と同じ)
+    let on_permission = {
+        let (app, shared, ws_id, cancel) = (app.clone(), ctx.shared.clone(), ctx.id.clone(), cancel.clone());
+        move |req: sandbox_agent::PermissionRequest| -> sandbox_agent::PermissionFuture {
+            let (app, shared, ws_id, cancel) = (app.clone(), shared.clone(), ws_id.clone(), cancel.clone());
+            Box::pin(async move {
+                let approval = tool_loop::Approval {
+                    id: req.request_id.clone(),
+                    kind: tool_loop::ApprovalKind::ToolUse,
+                    path: req.tool_name,
+                    preview: sandbox_agent::permission_preview(&req.input),
+                    steps: Vec::new(),
+                    reason: req.description,
+                };
+                let mut rx = shared.task.register_approval(&approval.id);
+                // 開いていないエージェントなら、すぐ知らせる(承認は回答を待っている)
+                if attention::is_background(&app, &ws_id) {
+                    attention::notify(&app, &ws_id, AttentionKind::Approval, Some(&approval), None);
+                }
+                let id = approval.id.clone();
+                shared.task.emit(TaskEvent::Approval(approval));
+                let answer = task_cmd::wait_for_answer(&mut rx, &cancel, &|| active(&app).id == ws_id, task_cmd::APPROVAL_TIMEOUT_SECS).await;
+                shared.task.finish_approval(&id);
+                answer
+            })
+        }
+    };
+    let result = sandbox_agent::run_turn(turn, &cancel, on_permission, |event| {
         // イメージの準備の進捗は、1つのツール呼び出しとその出力として見せる
         if let sandbox_agent::AgentEvent::Status { line } = &event {
             if !preparing {

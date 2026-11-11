@@ -524,6 +524,8 @@ pub enum ApprovalKind {
     SkillDelete,
     /// 許可リストにないコマンドを、許可に加えて実行してよいか。`steps`に加えるパターンが入る。
     AllowCommand,
+    /// サンドボックスの Claude Code が、settings.json の`permissions.ask`に当たったツールを実行してよいか。`path`にツール名、`preview`に入力(コマンドなど)が入る。
+    ToolUse,
 }
 
 /// ユーザーへ承認を求める内容。

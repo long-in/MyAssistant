@@ -196,7 +196,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
       const line = text.split(/\s+/).filter(Boolean).join(" ");
       return line.length > 120 ? `${line.slice(0, 120)}…` : line;
     };
-    const detail = approval.kind === "file" ? approval.path : approval.kind === "command" ? approval.preview : approval.kind === "allow_command" ? approval.steps.join(", ") : "";
+    const detail = approval.kind === "file" ? approval.path : approval.kind === "command" ? approval.preview : approval.kind === "allow_command" ? approval.steps.join(", ") : approval.kind === "tool_use" ? `${approval.path} ${approval.preview}` : "";
     const title = t("承認が必要です");
     const description = approvalLine(approval.kind, one(detail));
     toast.warning(title, { id, description, duration: Infinity, action: { label: t("開く"), onClick: () => router.push("/") } });

@@ -21,11 +21,11 @@ use crate::{
 
 /// 承認の待ち時間上限。超えたら拒否として扱う。そのワークスペースを選んでいる間だけ数える
 /// (ほかのワークスペースにいる間は止まり、戻れば残りの時間で続く)。
-const APPROVAL_TIMEOUT_SECS: u32 = 120;
+pub(crate) const APPROVAL_TIMEOUT_SECS: u32 = 120;
 
 /// 承認への応答を待つ。画面からの応答・時間切れ・中断のどれかが先に来るまで待ち、応答が無ければ拒否(`false`)。
 /// 時間切れは、`is_foreground`が真の間(そのワークスペースを選んでいる間)だけ数える。
-async fn wait_for_answer(
+pub(crate) async fn wait_for_answer(
     rx: &mut tokio::sync::oneshot::Receiver<bool>,
     cancel: &CancelToken,
     is_foreground: &impl Fn() -> bool,
