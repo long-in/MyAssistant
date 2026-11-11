@@ -81,7 +81,7 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
           <Heading title="Sandbox" help={t("サンドボックス")}>
             <p>{t("このエージェントへの指示を、専用のDockerコンテナの中の Claude Code が受け持ちます。調査・編集・コマンドの実行はすべてコンテナの中で行います。")}</p>
             <ul>
-              <li>{t("コンテナから見えるのは、担当フォルダ(/workspace)、ナレッジ(/knowledge)、専用ボリュームだけです。ほかのエージェントや ~/.aws には届きません。")}</li>
+              <li>{t("コンテナから見えるのは、ナレッジ(/knowledge。担当フォルダ /knowledge/data を含む)と専用ボリュームだけです。ほかのエージェントや ~/.aws には届きません。")}</li>
               <li>{t("認証情報(AI Link に登録した AWS の一時キー・sandbox.env)は、指示ごとに環境変数で渡します。")}</li>
               <li>{t("Dockerが使えないときは、ホストでは実行せずエラーにします。")}</li>
               <li>{t("チャットは、イメージのビルドとコンテナの起動を済ませてから使えます。")}</li>

@@ -73,7 +73,6 @@ export default function DeleteAgentModal({ agent, onClose, onDeleted }: Props) {
         <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs">
           <li>{t("会話・要約・設定・コマンド権限・読み上げ辞書")}</li>
           <li>{t("APIキー・AWS設定")}</li>
-          <li>{t("サンドボックスの /workspace のフォルダ(置いたソースコードなど)")}</li>
           <li>{t("実行中の依頼(中断されます)")}</li>
         </ul>
 
@@ -82,8 +81,8 @@ export default function DeleteAgentModal({ agent, onClose, onDeleted }: Props) {
             <span className="block font-medium">{t("ナレッジも一緒に削除する")}</span>
             <span className="mt-0.5 block text-muted-foreground">
               {withKnowledge
-                ? t("既定の場所のナレッジとデバッグログも削除されます。")
-                : t("既定の場所のナレッジは、アプリデータ内の「kept-knowledge」フォルダへ移して残します。")}
+                ? t("既定の場所のナレッジ(サンドボックスの担当フォルダ data を含む)とデバッグログも削除されます。")
+                : t("既定の場所のナレッジ(サンドボックスの担当フォルダ data を含む)は、アプリデータ内の「kept-knowledge」フォルダへ移して残します。")}
               {" " + t("独自に指定した保存先は、どちらでも削除されません。")}
             </span>
           </span>
