@@ -4,7 +4,7 @@ import { useEditShortcuts } from "@/lib/useEditShortcuts";
 import { Kbd } from "@/components/Kbd";
 import { useT } from "@/lib/i18n";
 import { useCallback, useEffect, useState } from "react";
-import { BookOpen, Brain, Download, FileText, FolderOpen, Loader2, Pencil, RotateCcw, Save, Sparkles, Trash2, Upload } from "lucide-react";
+import { BookOpen, Brain, Download, FileText, FolderOpen, History, Lightbulb, ListChecks, Loader2, Pencil, RotateCcw, Save, Sparkles, Trash2, Upload } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ChatMarkdown } from "@/components/ChatMarkdown";
@@ -15,11 +15,18 @@ import { splitFrontmatter } from "@/lib/knowledgeDoc";
 import { useWorkspace } from "@/lib/workspace";
 import KnowledgeTree, { type NodeKind } from "@/components/KnowledgeTree";
 import MemoryPanel from "@/components/MemoryPanel";
+import ProposalsPanel from "@/components/ProposalsPanel";
+import NoteVersions, { versionLabel } from "@/components/NoteVersions";
 import { EmptyState, PaneHeader, StatusPill } from "@/components/GlobalPanels";
 import {
   LEADER_ID,
   type KnowledgeFile,
   type MemoryView,
+  type Proposal,
+  listProposals,
+  decideProposal,
+  runMaintenance,
+  restoreKnowledgeVersion,
   memoryView,
   memoryForget,
   knowledgeDir,
@@ -60,16 +67,21 @@ export default function Knowledge() {
   const [running, setRunning] = useState(false);
   const [dir, setDir] = useState("");
   const [memory, setMemory] = useState<MemoryView>({ pins: [] });
-  // 記憶の表示中(ノートを開くと閉じる)
-  const [showMemory, setShowMemory] = useState(false);
+  const [proposals, setProposals] = useState<Proposal[]>([]);
+  // 処理中の提案(統合はLLMを使うため時間がかかる)
+  const [deciding, setDeciding] = useState<string | null>(null);
+  const [maintaining, setMaintaining] = useState(false);
+  // 右側に出すもの。記憶・提案・版はノートを開くと閉じる
+  const [panel, setPanel] = useState<"note" | "memory" | "proposals" | "versions">("note");
 
   const refresh = useCallback(
     () =>
-      Promise.all([listKnowledge(), listOtherKnowledge(), listKnowledgeDirs(), memoryView()])
-        .then(([f, o, d, m]) => {
+      Promise.all([listKnowledge(), listOtherKnowledge(), listKnowledgeDirs(), memoryView(), listProposals()])
+        .then(([f, o, d, m, p]) => {
           setFiles([...f, ...o]);
           setDirs(d);
           setMemory(m);
+          setProposals(p);
         })
         .catch((e) => toast.error(reportError(e))),
     [],
@@ -119,13 +131,13 @@ export default function Knowledge() {
 
   const open = async (path: string) => {
     if (path === selected) {
-      setShowMemory(false);
+      setPanel("note");
       return;
     }
     if (!(await confirmDiscard())) return;
     try {
       const text = await (isNote(path) ? readKnowledge(path) : readOtherKnowledge(path));
-      setShowMemory(false);
+      setPanel("note");
       setSelected(path);
       setContent(text);
       setDraft(text);
@@ -227,7 +239,9 @@ export default function Knowledge() {
         toast.success(t("整理済みの会話のキャプチャを{captures_removed}件削除しました。", { captures_removed: r.captures_removed }));
         await refresh();
       } else {
-        let msg = t("{processed_logs}件のログを整理し、{files_written}件のノートを更新しました。", { processed_logs: r.processed_logs, files_written: r.files_written });
+        let msg = t("{processed_logs}件のログを整理しました(新規{created}件・更新{updated}件)。", { processed_logs: r.processed_logs, created: r.notes_created, updated: r.notes_updated });
+        if (r.proposals_added) msg += t("学びの提案が{n}件あります。", { n: r.proposals_added });
+        if (r.rewrites_skipped) msg += t("({n}件は内容が大きく短くなるため書き換えず、経緯への追記だけにしました)", { n: r.rewrites_skipped });
         if (r.captures_removed) msg += t("(キャプチャ{captures_removed}件を削除)", { captures_removed: r.captures_removed });
         if (r.failed_segments) toast.warning(t("{msg}({failed_segments}件は失敗。次回再試行します)", { msg, failed_segments: r.failed_segments }));
         else toast.success(msg);
@@ -237,6 +251,59 @@ export default function Knowledge() {
       toast.error(reportError(e));
     } finally {
       setRunning(false);
+    }
+  };
+
+  const maintain = async () => {
+    setMaintaining(true);
+    try {
+      const n = await runMaintenance();
+      await refresh();
+      if (n) {
+        toast.success(t("棚卸しの提案が{n}件あります。", { n }));
+        setPanel("proposals");
+      } else toast.info(t("新しい提案はありません。"));
+    } catch (e) {
+      toast.error(reportError(e));
+    } finally {
+      setMaintaining(false);
+    }
+  };
+
+  const decide = async (p: Proposal, accept: boolean) => {
+    setDeciding(p.id);
+    try {
+      await decideProposal(p.id, accept);
+      // 統合で開いているノートが消えたり書き換わったりするため、表示を読み直す
+      if (accept && p.kind === "merge" && selected && (selected === p.payload?.drop || selected === p.payload?.keep)) clearSelection();
+      await refresh();
+      if (accept) toast.success(t("反映しました。"));
+    } catch (e) {
+      toast.error(reportError(e));
+    } finally {
+      setDeciding(null);
+    }
+  };
+
+  const restore = async (version: string) => {
+    if (!selected) return;
+    const ok = await ask(t("「{path}」を {date} の版に戻します。今の内容も版として残ります。続行しますか?", { path: selected, date: versionLabel(version) }), {
+      title: t("以前の版に戻す"),
+      kind: "warning",
+      okLabel: t("戻す"),
+      cancelLabel: t("キャンセル"),
+    });
+    if (!ok) return;
+    try {
+      await restoreKnowledgeVersion(selected, version);
+      const text = await readKnowledge(selected);
+      setContent(text);
+      setDraft(text);
+      setPanel("note");
+      await refresh();
+      toast.success(t("以前の版に戻しました。"));
+    } catch (e) {
+      toast.error(reportError(e));
     }
   };
 
@@ -305,7 +372,7 @@ export default function Knowledge() {
   const doc = selected ? splitFrontmatter(draft) : null;
 
   // `e`で編集、Cmd/Ctrl+Sで保存
-  useEditShortcuts({ canEdit: selected !== null && !readOnly && !showMemory, editMode, onEdit: () => setEditMode(true), onSave: save });
+  useEditShortcuts({ canEdit: selected !== null && !readOnly && panel === "note", editMode, onEdit: () => setEditMode(true), onSave: save });
 
   return (
     <div className="flex h-full">
@@ -322,10 +389,21 @@ export default function Knowledge() {
         />
         <div className="hud-panel hud-accent m-3 px-4 py-3">
           <p className="hud-heading mb-2">Organize</p>
-          <p className="text-xs text-muted-foreground">{t("自動では整理されません。会話ログは、ここから手動で整理します。")}</p>
+          <p className="text-xs text-muted-foreground">{t("自動では整理されません。会話ログは、ここから手動で整理します。同じ話題のノートは、最新の内容に書き直されます。")}</p>
           <Button size="sm" className="mt-2 w-full" disabled={running} onClick={organize}>
             {running ? <Loader2 className="animate-spin" /> : <Sparkles />}
             {running ? t("整理中…") : t("今すぐ整理")}
+          </Button>
+          <Button size="sm" variant="outline" className="mt-2 w-full" disabled={maintaining} onClick={maintain} title={t("似たノート・長く更新されていないノート・Inboxのノートを探します(AIは使いません)")}>
+            {maintaining ? <Loader2 className="animate-spin" /> : <ListChecks />}
+            {t("棚卸し")}
+          </Button>
+        </div>
+        <div className="hud-panel mx-3 mb-3 px-4 py-3">
+          <p className="hud-heading mb-2">Proposals</p>
+          <p className="mb-2 text-xs text-muted-foreground">{t("承認待ちの提案 {n}件", { n: proposals.length })}</p>
+          <Button size="sm" variant={panel === "proposals" ? "default" : "outline"} className="mt-2 w-full" onClick={() => setPanel("proposals")}>
+            <Lightbulb /> {t("提案を見る")}
           </Button>
         </div>
         {hasMemory && (
@@ -334,7 +412,7 @@ export default function Knowledge() {
           <p className="mb-2 text-xs text-muted-foreground">
             {t("覚えておくこと {n}件", { n: memory.pins.length })}
           </p>
-          <Button size="sm" variant={showMemory ? "default" : "outline"} className="mt-2 w-full" onClick={() => setShowMemory(true)}>
+          <Button size="sm" variant={panel === "memory" ? "default" : "outline"} className="mt-2 w-full" onClick={() => setPanel("memory")}>
             <Brain /> {t("記憶を見る")}
           </Button>
         </div>
@@ -386,8 +464,12 @@ export default function Knowledge() {
         )}
       </aside>
       <article className="flex min-w-0 flex-1 flex-col">
-        {showMemory && hasMemory ? (
+        {panel === "memory" && hasMemory ? (
           <MemoryPanel memory={memory} onForget={forgetPin} onEdit={open} />
+        ) : panel === "proposals" ? (
+          <ProposalsPanel proposals={proposals} busyId={deciding} onDecide={decide} onOpenNote={open} />
+        ) : panel === "versions" && selected ? (
+          <NoteVersions path={selected} onRestore={restore} onClose={() => setPanel("note")} />
         ) : doc && selected ? (
           <>
             <div className="flex items-center justify-between gap-3 border-b px-4 py-2">
@@ -399,6 +481,11 @@ export default function Knowledge() {
               </span>
               {!readOnly && (
               <div className="flex shrink-0 gap-2">
+                {!editMode && (
+                  <Button size="sm" variant="ghost" onClick={() => setPanel("versions")} title={t("整理で書き換える前の内容を見る・戻す")}>
+                    <History /> {t("履歴")}
+                  </Button>
+                )}
                 {!editMode && (
                   <Button size="sm" variant="outline" onClick={() => setEditMode(true)}>
                     <Pencil /> {t("編集")} <Kbd>E</Kbd>

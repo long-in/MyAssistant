@@ -697,6 +697,7 @@ const SHARED_PROMPTS: { id: PromptId; title: string }[] = [
   { id: "summary", title: "会話の要約" },
   { id: "proofread", title: "文字起こしの校正" },
   { id: "organize", title: "ナレッジの整理" },
+  { id: "consolidate", title: "ナレッジの統合" },
   { id: "skills", title: "スキルの選定" },
   { id: "suggest", title: "宛先の提案" },
 ];
