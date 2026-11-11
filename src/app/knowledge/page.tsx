@@ -41,6 +41,7 @@ import {
   createKnowledgeDir,
   renameKnowledge,
   deleteKnowledge,
+  SYSTEM_DIRS,
   reportError,
   exportKnowledge,
   importKnowledge,
@@ -214,6 +215,10 @@ export default function Knowledge() {
 
   const deleteNode = async (kind: NodeKind, path: string) => {
     const name = path.split("/").pop() ?? path;
+    if (kind === "dir" && SYSTEM_DIRS.includes(path.toLowerCase())) {
+      toast.warning(t("「{name}」はシステムが管理するフォルダのため、削除できません。", { name }));
+      return;
+    }
     const ok = await ask(
       kind === "dir"
         ? t("フォルダ「{name}」と中のノートをすべて削除します。この操作は元に戻せません。続行しますか?", { name })
