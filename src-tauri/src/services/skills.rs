@@ -22,6 +22,7 @@ use super::{
     prompts::{self, PromptId},
     llm_client::{self, ChatMessage},
     llm_router::{self, ModelInfo, Route},
+    sandbox_agent,
     secrets::Provider,
     workspace::WorkspaceCtx,
 };
@@ -569,14 +570,14 @@ async fn select(ctx: &WorkspaceCtx, skills: &[Skill], text: &str, previous: &str
 }
 
 /// 保存済みの選定モデル。未設定、またはキー削除などで使えなければ既定(Haiku。無ければ使えるモデルの先頭)。使えるモデルが無ければ`None`。
+/// Bedrock 方式(ワークは常に)は、コンテナ内の Claude Code か端末内のモデルで、既定はコンテナ(モデルは settings.json)。
 pub fn effective_route(ctx: &WorkspaceCtx, available: &[Provider]) -> Option<Route> {
-    let saved = ctx
-        .db
-        .get_setting(ROUTE_KEY)
-        .ok()
-        .flatten()
-        .and_then(|v| serde_json::from_str::<Route>(&v).ok())
-        .filter(|r| llm_router::resolve(ctx, r, available).is_ok());
+    let saved = ctx.db.get_setting(ROUTE_KEY).ok().flatten().and_then(|v| serde_json::from_str::<Route>(&v).ok());
+    if llm_router::uses_container(ctx) {
+        let saved = saved.filter(|r| llm_router::is_sandbox(r) || llm_router::resolve(ctx, r, available).is_ok_and(|t| t.provider == Provider::Local));
+        return Some(saved.unwrap_or_else(|| llm_router::sandbox_route("")));
+    }
+    let saved = saved.filter(|r| llm_router::resolve(ctx, r, available).is_ok());
     saved.or_else(|| default_route(&llm_router::catalog(ctx), available))
 }
 
@@ -587,9 +588,22 @@ fn default_route(catalog: &[ModelInfo], available: &[Provider]) -> Option<Route>
 }
 
 /// 選定モデルを保存する。使えないモデルは拒否する。
+/// Bedrock 方式(ワークは常に)は、コンテナ内の Claude Code(settings.json で許可したモデル)か端末内のモデルだけ。
 pub fn save_route(ctx: &WorkspaceCtx, route: &Route) -> Result<(), AppError> {
-    llm_router::resolve(ctx, route, &batch::available_providers(&ctx.secrets))?;
-    ctx.db.set_setting(ROUTE_KEY, &serde_json::to_string(route).map_err(|e| AppError::Db(e.to_string()))?)
+    let route = if llm_router::is_sandbox(route) {
+        if !llm_router::uses_container(ctx) {
+            return Err(AppError::InvalidProvider(route.provider.clone()));
+        }
+        sandbox_agent::check_route_model(&ctx.db, &*ctx.global, &route.model)?;
+        llm_router::sandbox_route(&route.model)
+    } else {
+        let target = llm_router::resolve(ctx, route, &batch::available_providers(&ctx.secrets))?;
+        if llm_router::uses_container(ctx) && target.provider != Provider::Local {
+            return Err(AppError::Sandbox("Bedrock 方式では、コンテナ内の Claude Code か端末内のモデルだけ選べます。".into()));
+        }
+        route.clone()
+    };
+    ctx.db.set_setting(ROUTE_KEY, &serde_json::to_string(&route).map_err(|e| AppError::Db(e.to_string()))?)
 }
 
 // ---------- 発話ごとの準備 ----------

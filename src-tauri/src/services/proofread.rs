@@ -2,7 +2,7 @@
 use std::time::Duration;
 
 use super::{
-    sandbox, sandbox_agent,
+    sandbox_agent,
     cancel::CancelToken,
     prompts::{self, PromptId},
     llm_client::{self, ChatMessage},
@@ -37,14 +37,12 @@ pub const DEFAULT_SYSTEM: &str = "\
 pub fn effective_route(ctx: &WorkspaceCtx, available: &[Provider]) -> Result<Option<Route>, AppError> {
     let route = ctx.db.get_setting(ROUTE_KEY)?.and_then(|v| serde_json::from_str::<Route>(&v).ok());
     Ok(route.filter(|r| {
-        if sandbox::runs_in_sandbox(&ctx.id) {
-            // ワークは、コンテナ(Claude Code)か端末内のQwenだけ
+        if llm_router::uses_container(ctx) {
+            // Bedrock 方式(ワークは常に)は、コンテナ(Claude Code)か端末内のQwenだけ
             r.provider == SANDBOX_PROVIDER || (r.provider == Provider::Local.as_str() && llm_router::resolve(ctx, r, available).is_ok())
-        } else if llm_router::is_sandbox(r) {
-            // 個人・リーダーは、Anthropic・端末内のQwenに並べて、コンテナ(Claude Code)も選べる
-            llm_router::offers_sandbox(ctx)
         } else {
-            llm_router::resolve(ctx, r, available).is_ok()
+            // API 方式は、Anthropic・端末内のQwen
+            !llm_router::is_sandbox(r) && llm_router::resolve(ctx, r, available).is_ok()
         }
     }))
 }
@@ -142,7 +140,14 @@ mod tests {
         let personal = WorkspaceCtx::open(PERSONAL_ID, dir.path()).unwrap();
         let sandbox = Route { provider: SANDBOX_PROVIDER.into(), model: String::new() };
         personal.db.set_setting(ROUTE_KEY, &serde_json::to_string(&sandbox).unwrap()).unwrap();
+        // API 方式では、コンテナの校正は使えない。Bedrock 方式に切り替えると使える
+        llm_router::set_link_mode(&personal, llm_router::LinkMode::Api).unwrap();
+        assert_eq!(effective_route(&personal, &[]).unwrap(), None);
+        llm_router::set_link_mode(&personal, llm_router::LinkMode::Bedrock).unwrap();
         assert_eq!(effective_route(&personal, &[]).unwrap(), Some(sandbox.clone()));
+        // Bedrock 方式では、API のモデルは校正に使えない
+        personal.db.set_setting(ROUTE_KEY, r#"{"provider":"anthropic","model":"claude-haiku-5-5"}"#).unwrap();
+        assert_eq!(effective_route(&personal, &[Provider::Anthropic]).unwrap(), None);
         // 旧Bedrockの保存値は、使えないので校正しない(勝手にコンテナへ回さない)
         personal.db.set_setting(ROUTE_KEY, r#"{"provider":"bedrock","model":"x"}"#).unwrap();
         assert_eq!(effective_route(&personal, &[]).unwrap(), None);

@@ -42,10 +42,62 @@ pub fn sandbox_route(model: &str) -> Route {
     Route { provider: SANDBOX_PROVIDER.into(), model: model.to_owned() }
 }
 
+/// AI の接続方式を保存するキー(`LinkMode`)。
+pub const LINK_MODE_KEY: &str = "ai_link_mode";
+
+/// AI Link の接続方式。API キー(Anthropic)か Amazon Bedrock(コンテナ内の Claude Code)のどちらか一方だけを使う。
+/// 端末内のモデル(ローカル)は、どちらの方式でも使える。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LinkMode {
+    Api,
+    Bedrock,
+}
+
+impl LinkMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Api => "api",
+            Self::Bedrock => "bedrock",
+        }
+    }
+}
+
+/// そのエージェントの接続方式。ワークは常に Bedrock。
+/// 個人・リーダーは保存した方式、未保存なら「AWS だけ登録している」ときに Bedrock、それ以外(両方登録済みを含む)は API。
+pub fn link_mode(ctx: &WorkspaceCtx) -> LinkMode {
+    if !(ctx.id == PERSONAL_ID || ctx.id == LEADER_ID) {
+        return LinkMode::Bedrock;
+    }
+    match ctx.db.get_setting(LINK_MODE_KEY).ok().flatten().as_deref() {
+        Some("api") => LinkMode::Api,
+        Some("bedrock") => LinkMode::Bedrock,
+        _ => {
+            let aws = ctx.secrets.has_aws().unwrap_or(false);
+            let api = ctx.secrets.has_key(Provider::Anthropic).unwrap_or(false);
+            if aws && !api { LinkMode::Bedrock } else { LinkMode::Api }
+        }
+    }
+}
+
+/// 接続方式を保存する。ワークは Bedrock 固定なので変えられない。
+pub fn set_link_mode(ctx: &WorkspaceCtx, mode: LinkMode) -> Result<(), AppError> {
+    if !(ctx.id == PERSONAL_ID || ctx.id == LEADER_ID) {
+        return Err(AppError::Sandbox("ワークのエージェントは、Bedrock 固定です。".into()));
+    }
+    ctx.db.set_setting(LINK_MODE_KEY, mode.as_str())
+}
+
+/// Bedrock 方式か。ワークは常に、個人・リーダーは方式に Bedrock を選んだとき。
+/// このとき校正以外の機能は、コンテナ内の Claude Code で実行する(端末内のモデルは選べる)。
+pub fn uses_container(ctx: &WorkspaceCtx) -> bool {
+    link_mode(ctx) == LinkMode::Bedrock
+}
+
 /// コンテナ内の Claude Code を、モデルの選択肢として選べるエージェントか。
-/// ワークは常にコンテナで動くので選ぶものではなく、個人とリーダーが、Anthropic・端末内のモデルと並べて選ぶ。
+/// ワークは常にコンテナで動くので選ぶものではなく、個人とリーダーが、接続方式に Bedrock を選んだときだけ選べる。
 pub fn offers_sandbox(ctx: &WorkspaceCtx) -> bool {
-    ctx.id == PERSONAL_ID || ctx.id == LEADER_ID
+    (ctx.id == PERSONAL_ID || ctx.id == LEADER_ID) && uses_container(ctx)
 }
 
 /// 固定のモデル。モデルの入れ替えはここだけ編集する。
@@ -82,11 +134,14 @@ pub struct ModelEntry {
 /// 画面に出すモデルの一覧。個人・リーダーには、settings.json で許可したモデルごとにコンテナ内の Claude Code を足す
 /// (許可の指定が無ければ、settings.json の`model`に任せる1件)。
 pub fn entries(ctx: &WorkspaceCtx, sandbox_models: &[String]) -> Vec<ModelEntry> {
+    let bedrock = offers_sandbox(ctx);
     let mut list: Vec<ModelEntry> = catalog(ctx)
         .into_iter()
+        // Bedrock 方式では、Anthropic の API モデルは使わない(端末内のモデルは残す)
+        .filter(|m| !(bedrock && m.provider == Provider::Anthropic))
         .map(|m| ModelEntry { provider: m.provider.as_str().to_owned(), id: m.id, label: m.label, tier: m.tier })
         .collect();
-    if offers_sandbox(ctx) {
+    if bedrock {
         if sandbox_models.is_empty() {
             list.push(ModelEntry { provider: SANDBOX_PROVIDER.into(), id: SANDBOX_DEFAULT_MODEL.into(), label: "settings.json".into(), tier: Tier::Heavy });
         } else {
@@ -126,8 +181,9 @@ fn resolve_in(catalog: &[ModelInfo], route: &Route, available: &[Provider]) -> R
 }
 
 /// 保存済みの選択が今も使えればそれを、なければ既定を返す。使えるプロバイダーが無ければ`None`。
-/// 個人・リーダーは、コンテナの経路も選べる。以前のBedrockの選択は、コンテナの経路に読み替える。
-/// 他に使えるものが無くてもAWSを登録していれば、コンテナの経路を既定にする(以前のBedrockだけの利用者のため)。
+/// 個人・リーダーは、接続方式が Bedrock のときだけコンテナの経路を選べる。このとき選べるのはコンテナと端末内のモデルで、
+/// 保存済みの選択が使えなければコンテナの経路が既定。以前のBedrockの選択は、コンテナの経路に読み替える。
+/// API 方式では、コンテナの経路は使えない(保存してあっても既定へ戻る)。
 pub fn effective(ctx: &WorkspaceCtx, saved: Option<Route>, available: &[Provider]) -> Option<Route> {
     if !offers_sandbox(ctx) {
         return effective_in(&catalog(ctx), saved, available);
@@ -136,7 +192,8 @@ pub fn effective(ctx: &WorkspaceCtx, saved: Option<Route>, available: &[Provider
     if saved.as_ref().is_some_and(is_sandbox) {
         return saved;
     }
-    effective_in(&catalog(ctx), saved, available).or_else(|| ctx.secrets.has_aws().unwrap_or(false).then(|| sandbox_route("")))
+    let local = saved.filter(|r| r.provider == Provider::Local.as_str() && resolve_in(&catalog(ctx), r, available).is_ok());
+    Some(local.unwrap_or_else(|| sandbox_route("")))
 }
 
 /// 既定はClaudeのSonnet(名前にsonnetを含むもの)、
@@ -212,28 +269,54 @@ mod tests {
     }
 
     #[test]
+    fn link_mode_defaults_and_switches() {
+        let (dp, dw) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let personal = WorkspaceCtx::open(PERSONAL_ID, dp.path()).unwrap();
+        let work = WorkspaceCtx::open("0b9c3f5e-1d2a-4c6b-8e7f-123456789abc", dw.path()).unwrap();
+        // 未登録・API だけ・両方登録済みは API、AWS だけのときは Bedrock
+        assert_eq!(link_mode(&personal), LinkMode::Api);
+        personal
+            .secrets
+            .set_aws_files("[default]\nregion = us-east-1", "[default]\naws_access_key_id = A\naws_secret_access_key = B")
+            .unwrap();
+        assert_eq!(link_mode(&personal), LinkMode::Bedrock);
+        personal.secrets.set_key(Provider::Anthropic, "k").unwrap();
+        assert_eq!(link_mode(&personal), LinkMode::Api);
+        // 保存した方式が優先される。登録済みのキーは消えない
+        set_link_mode(&personal, LinkMode::Bedrock).unwrap();
+        assert_eq!(link_mode(&personal), LinkMode::Bedrock);
+        assert!(personal.secrets.has_key(Provider::Anthropic).unwrap());
+        // ワークは Bedrock 固定
+        assert_eq!(link_mode(&work), LinkMode::Bedrock);
+        assert!(set_link_mode(&work, LinkMode::Api).is_err());
+        assert!(uses_container(&work) && !offers_sandbox(&work));
+    }
+
+    #[test]
     fn personal_and_leader_can_choose_the_sandbox_route() {
         let (dp, dw) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         let personal = WorkspaceCtx::open(PERSONAL_ID, dp.path()).unwrap();
         let work = WorkspaceCtx::open("0b9c3f5e-1d2a-4c6b-8e7f-123456789abc", dw.path()).unwrap();
-        // 選択肢: 個人・リーダーだけに、settings.json のモデルごとのコンテナの項目が付く
+        // API 方式: コンテナの項目は出ず、コンテナの経路は保存してあっても既定へ戻る
+        set_link_mode(&personal, LinkMode::Api).unwrap();
+        assert!(!entries(&personal, &["m1".to_owned()]).iter().any(|m| m.provider == SANDBOX_PROVIDER));
+        assert!(entries(&personal, &[]).iter().any(|m| m.provider == Provider::Anthropic.as_str()));
+        assert_eq!(effective(&personal, Some(sandbox_route("m1")), &[Provider::Anthropic]), Some(route("anthropic", "claude-sonnet-5-5")));
+        assert_eq!(effective(&personal, None, &[]), None);
+        // Bedrock 方式: 個人・リーダーだけに、settings.json のモデルごとのコンテナの項目が付き、Anthropic は外れる
+        set_link_mode(&personal, LinkMode::Bedrock).unwrap();
         let list = entries(&personal, &["m1".to_owned()]);
         assert!(list.iter().any(|m| m.provider == SANDBOX_PROVIDER && m.id == "m1"));
+        assert!(!list.iter().any(|m| m.provider == Provider::Anthropic.as_str()));
         assert!(entries(&personal, &[]).iter().any(|m| m.provider == SANDBOX_PROVIDER && m.id == SANDBOX_DEFAULT_MODEL));
         assert!(!entries(&work, &["m1".to_owned()]).iter().any(|m| m.provider == SANDBOX_PROVIDER));
         // 選んだコンテナの経路は保たれ、以前のBedrockの選択はコンテナの経路に読み替える
         let saved = sandbox_route("m1");
         assert_eq!(effective(&personal, Some(saved.clone()), &[]), Some(saved.clone()));
         assert_eq!(effective(&personal, Some(route("bedrock", "x")), &[]), Some(sandbox_route("")));
-        // 他に使えるものが無ければ、AWSを登録しているときだけコンテナの経路が既定になる
-        assert_eq!(effective(&personal, None, &[]), None);
-        personal
-            .secrets
-            .set_aws_files("[default]\nregion = us-east-1", "[default]\naws_access_key_id = A\naws_secret_access_key = B")
-            .unwrap();
-        assert_eq!(effective(&personal, None, &[]), Some(sandbox_route("")));
-        // Claudeが使えれば、既定はそちら
-        assert_eq!(effective(&personal, None, &[Provider::Anthropic]), Some(route("anthropic", "claude-sonnet-5-5")));
+        // API のモデルを保存してあっても、コンテナの経路が既定になる(API の呼び出しへは回らない)
+        assert_eq!(effective(&personal, None, &[Provider::Anthropic]), Some(sandbox_route("")));
+        assert_eq!(effective(&personal, Some(route("anthropic", "claude-opus-5-5")), &[Provider::Anthropic]), Some(sandbox_route("")));
         // ワークは選ぶものではない
         assert_eq!(effective(&work, Some(saved), &[Provider::Anthropic]), Some(route("anthropic", "claude-sonnet-5-5")));
     }

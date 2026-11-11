@@ -203,6 +203,10 @@ export type ChatReply = { content: string; provider: string; model: string };
 export const addSttCorrection = (heard: string, correct: string) =>
   invoke<boolean>("add_stt_correction", { heard, correct });
 
+/** AI Link の接続方式。API キー(Anthropic)か Amazon Bedrock(コンテナ内の Claude Code)のどちらか一方だけを使う。ワークは常に`bedrock`。 */
+export type LinkMode = "api" | "bedrock";
+export const loadLinkMode = () => invoke<LinkMode>("load_link_mode");
+export const saveLinkMode = (mode: LinkMode) => invoke<void>("save_link_mode", { mode });
 export const listModels = () => invoke<ModelInfo[]>("list_models");
 export const loadRouting = () => invoke<Route | null>("load_routing");
 export const saveRouting = (route: Route) => invoke<void>("save_routing", { route });

@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import AwsPanel from "@/components/AwsPanel";
 import LocalLlmPanel from "@/components/LocalLlmPanel";
 import { DownloadBar, useDownloadProgress } from "@/components/DownloadBar";
@@ -24,7 +25,7 @@ import { copyTargets, type CopyRequest } from "@/lib/copyTargets";
 import { DEFAULT_TUNING, getTuning, setTuning, LEADER_ID, PERSONAL_ID, getAgentData, saveAgentData, errorMessage, updateAgent, AGENT_NAME_MAX, leaderCopyApiKey, leaderGetPrompt, leaderSetPrompt, leaderGetLimit, leaderSetLimit, LEADER_LIMIT_MAX, type DeleteReport } from "@/lib/api";
 import { bumpSettingsVersion, refreshWorkspace, useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
-import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, openDebugLogDir, setCommandPolicy, type CommandPolicy, getShellAccess, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, voicevoxDownloadProgress, sttDownloadProgress, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, loadBatchRoute, loadProofreadRoute, loadRouting, loadSkillsRoute, loadSuggestRoute, type Route, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setShellAccess, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
+import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, openDebugLogDir, setCommandPolicy, type CommandPolicy, getShellAccess, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, voicevoxDownloadProgress, sttDownloadProgress, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, loadBatchRoute, loadProofreadRoute, loadRouting, loadSkillsRoute, loadLinkMode, saveLinkMode, type LinkMode, loadSuggestRoute, type Route, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setShellAccess, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
 import AiSettings from "@/components/AiSettings";
 import { Heading, PageHeader, ProxyChoice, StatusPill, TuningPanel, UsedBy, linkCardClass, type TuningField } from "@/components/GlobalPanels";
 
@@ -1217,11 +1218,13 @@ export default function Setup() {
   const [sttUpgradable, setSttUpgradable] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [usage, setUsage] = useState<Partial<Record<Provider, string[]>>>({});
+  const [linkMode, setLinkMode] = useState<LinkMode>("api");
 
   const refresh = useCallback(
     () =>
-      Promise.all([getKeyStatus(), ttsKeyRegistered(), getSttEngine(), getSttLanguage(), sttModelUpgradable(), getTtsEngine(), voicevoxInstalled(), getVoicevoxStyle(), fetchTtsReady()])
-        .then(([s, t, e, l, u, te, vi, vs, sr]) => {
+      Promise.all([getKeyStatus(), ttsKeyRegistered(), getSttEngine(), getSttLanguage(), sttModelUpgradable(), getTtsEngine(), voicevoxInstalled(), getVoicevoxStyle(), fetchTtsReady(), loadLinkMode()])
+        .then(([s, t, e, l, u, te, vi, vs, sr, lm]) => {
+          setLinkMode(lm);
           setTtsEngineState(te);
           setVvInstalled(vi);
           setVvStyle(vs);
@@ -1282,7 +1285,9 @@ export default function Setup() {
   const hasAny = Object.values(status).some(Boolean);
   // ワークのエージェントは、コンテナ内の Claude Code が Bedrock 固定で動くので、Anthropic は使わない
   const workAgent = active.id !== LEADER_ID && active.id !== PERSONAL_ID;
-  const providers = PROVIDERS.filter((p) => !(workAgent && p === "anthropic"));
+  // 接続方式はAPIかBedrockのどちらか一方(ワークはBedrock固定)。ローカル(Qwen)は、どちらの方式でも使える
+  const bedrockMode = workAgent || linkMode === "bedrock";
+  const providers = PROVIDERS.filter((p) => p === "local" || (bedrockMode ? p === "bedrock" : p === "anthropic"));
   const linked = providers.filter((p) => status[p]).length;
 
   return (
@@ -1315,18 +1320,39 @@ export default function Setup() {
           <TabsContent value="llm" className="flex flex-col gap-6">
           <section className="hud-panel hud-accent px-5 py-4">
               <Heading title="AI Link" help={t("AIの接続")} status={<StatusPill on={linked > 0}>{linked} / {providers.length}</StatusPill>}>
-                <p>{workAgent ? t("ワークのエージェントは、Amazon Bedrock の設定を登録します。校正に端末内のモデルを使うときは、ローカル(Qwen)も取得します。") : t("使いたいAIのAPIキーを登録します。全部は不要で、1つ以上あれば使えます。")}</p>
+                <p>{workAgent ? t("ワークのエージェントは、Amazon Bedrock の設定を登録します。校正に端末内のモデルを使うときは、ローカル(Qwen)も取得します。") : t("接続方式を API か Amazon Bedrock から選びます。選んだ方式のカードだけが表示され、登録済みのキーや設定は切り替えても消えません。ローカル(Qwen)は、どちらの方式でも使えます。")}</p>
                 <ul>
                   <li>{t("各カードの「使用中の機能」は、AI Settingsでそのプロバイダーのモデルを選んでいる機能です。チャットと会話の要約は、チャット画面で選んだモデルを使うため含みません。")}</li>
                   <li>{t("ローカル(Qwen)は、キーの代わりにモデルをこの端末へダウンロードして使います。取得したモデルは全エージェントで共通です。")}</li>
                   <li>{t("Amazon Bedrockは、APIキーではなく~/.aws/configと~/.aws/credentialsの中身を貼り付けて登録します。MFA付きのスイッチロール(role_arn + source_profile)に対応し、コードが必要なときは入力欄が開きます。")}</li>
-                  <li>{workAgent ? t("Bedrockのモデルは、Sandbox タブの Claude Code の settings.json で決めます。") : t("Bedrockは、コンテナ内の Claude Code で使います。チャットなどのモデルで「コンテナ内の Claude Code」を選び、Sandbox タブでコンテナを準備して、settings.json にモデルを書いてください。")}</li>
+                  <li>{bedrockMode ? t("Bedrockのモデルは、Sandbox タブの Claude Code の settings.json で決めます。校正以外の機能(チャット・整理・スキル名の英訳・宛先の提案)は、コンテナ内の Claude Code で実行します。Sandbox タブでコンテナを準備してください。") : t("API 方式では、アプリが Anthropic の API を直接呼びます。")}</li>
                   <li>{t("キーは疎通確認に成功した場合のみ、この端末のアプリデータ内に保存されます。")}</li>
                   {active.id !== LEADER_ID && active.id !== PERSONAL_ID && <li>{t("ワークのエージェントでは、登録した AWS の設定から発行した一時キーが、コンテナ内の Claude Code へ指示ごとの環境変数で渡されます(接続先は Bedrock 固定です)。")}</li>}
                   <li>{t("保存先は平文のJSONファイルです(OSのキーチェーンは使っていません)。")}</li>
                 </ul>
               </Heading>
             <div className="flex flex-col gap-2">
+              {!workAgent && (
+                <div className="flex items-center gap-3 rounded-md border px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium">{t("接続方式")}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {bedrockMode
+                        ? t("Bedrock: 校正以外の機能は、コンテナ内の Claude Code で実行します。")
+                        : t("API: Anthropic の API キーでモデルを呼びます。")}
+                    </div>
+                  </div>
+                  <Select value={linkMode} disabled={busy === "mode"} onValueChange={(v) => run("mode", () => saveLinkMode(v as LinkMode))}>
+                    <SelectTrigger size="sm" aria-label={t("接続方式")} className="w-36">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="api">API</SelectItem>
+                      <SelectItem value="bedrock">Amazon Bedrock</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               {providers.filter((p) => p !== "bedrock" && p !== "local").map((p: Provider) => (
                 <KeyRow
                   card
@@ -1339,7 +1365,7 @@ export default function Setup() {
                   onDelete={() => run(p, () => deleteApiKey(p))}
                 />
               ))}
-              <AwsPanel onChanged={refresh} usedBy={usage.bedrock ?? []} />
+              {bedrockMode && <AwsPanel onChanged={refresh} usedBy={usage.bedrock ?? []} />}
               <LocalLlmPanel onChanged={refresh} usedBy={usage.local ?? []} />
             </div>
           </section>
@@ -1361,7 +1387,7 @@ export default function Setup() {
             store={setTuning}
             defaults={DEFAULT_TUNING}
           />}
-          <AiSettings keyStatus={status} leader={active.id === LEADER_ID} work={active.id !== LEADER_ID && active.id !== PERSONAL_ID} />
+          <AiSettings keyStatus={status} leader={active.id === LEADER_ID} work={workAgent} bedrock={bedrockMode} />
           {active.id === LEADER_ID ? <><LeaderPrompt /><LeaderLimit /></> : active.id !== PERSONAL_ID && <AgentData />}
           </TabsContent>
 

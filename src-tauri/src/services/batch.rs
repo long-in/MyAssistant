@@ -9,7 +9,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use super::{
     cancel::CancelToken,
-    sandbox, sandbox_agent,
+    sandbox_agent,
     prompts::{self, PromptId},
     secrets::{Provider, Secrets},
     knowledge::{self, Entry},
@@ -253,12 +253,11 @@ pub async fn run_guarded(ctx: &WorkspaceCtx) -> Result<Option<BatchReport>, AppE
         let db = &ctx.db;
         let root = knowledge_root(ctx)?;
         let available = available_providers(&ctx.secrets);
-        // ワークのエージェントは、整理もコンテナ内の Claude Code で行う(アプリのモデル選択は使わない)。
-        // 個人・リーダーは、整理のモデルにコンテナ内の Claude Code を選んだときだけコンテナで行う
-        let in_sandbox = sandbox::runs_in_sandbox(&ctx.id);
+        // Bedrock 方式(ワークは常に)は、整理もコンテナ内の Claude Code で行う。API 方式は、選んだ API のモデルで行う
+        let in_sandbox = llm_router::uses_container(ctx);
         let route = if in_sandbox { None } else { effective_route(ctx, &available)? };
-        // コンテナで整理するときの`--model`。ワークは保存済みの指定、個人・リーダーは選んだ経路のモデル
-        let sandbox_model = if in_sandbox { saved_route(ctx)? } else { route.clone() }
+        // コンテナで整理するときの`--model`(保存済みの指定)
+        let sandbox_model = if in_sandbox { saved_route(ctx)? } else { None }
             .filter(llm_router::is_sandbox)
             .and_then(|r| sandbox_agent::route_model(db, &*ctx.global, &r.model));
         let in_sandbox = in_sandbox || route.as_ref().is_some_and(llm_router::is_sandbox);
