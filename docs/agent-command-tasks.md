@@ -1,6 +1,6 @@
 # エージェント: 作業依頼(コマンド実行)
 
-「〜してください」という依頼に対し、LLM が手順を考え、シェルコマンドをローカルで実行しながら自律的に進める。[agent-file-tools.md](agent-file-tools.md) のツールループを拡張した機能で、**API 方式で Anthropic または端末内のモデルを選んだとき**に有効(Bedrock 方式・ワークのエージェントは、端末内のモデルも選べず、コンテナ内の Claude Code が自身のツールで実行する)。設定画面の Command Tasks で切り替える(既定は有効、キー `shell_access`)。
+「〜してください」という依頼に対し、LLM が手順を考え、シェルコマンドをローカルで実行しながら自律的に進める。[agent-file-tools.md](agent-file-tools.md) のツールループを拡張した機能で、**API 方式で Anthropic または端末内のモデルを選んだとき**に有効(Bedrock 方式・ワークのエージェントは、端末内のモデルも選べず、コンテナ内の Claude Code が自身のツールで実行する)。オン・オフのスイッチは無く、常に有効。可否は、API 方式では Command Policy([command-policy.md](command-policy.md))、コンテナ内の Claude Code では settings.json の `permissions.deny` で決める(以前の設定キー `shell_access` は使わない。DB に残っていても読まない)。
 
 実装は `services/tool_loop.rs`(`propose_plan` / `run_command`)、`services/shell.rs`(実行)、`services/command_policy.rs`(判定。[command-policy.md](command-policy.md))、フロントエンドの `ApprovalModal` / `ExecutionLog` / `lib/voiceApproval.ts`。
 

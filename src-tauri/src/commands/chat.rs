@@ -33,7 +33,6 @@ use crate::{
 pub const ROUTE_KEY: &str = "routing";
 pub const BASE_INSTRUCTIONS_KEY: &str = "base_instructions";
 pub const WEB_ACCESS_KEY: &str = "web_access";
-pub const SHELL_ACCESS_KEY: &str = "shell_access";
 /// 発話から想起する関連ノートの上限(件数・合計文字数)。本文は渡さず要約だけにしてトークン圧迫を避ける。
 const RELATED_NODES: usize = 5;
 const RELATED_CHARS: usize = 1_500;
@@ -78,25 +77,10 @@ fn web_access(db: &Db) -> Result<bool, AppError> {
     Ok(db.get_setting(WEB_ACCESS_KEY)?.as_deref() != Some("0"))
 }
 
-/// シェルコマンドによる作業の可否。未設定なら有効。
-fn shell_access(db: &Db) -> Result<bool, AppError> {
-    Ok(db.get_setting(SHELL_ACCESS_KEY)?.as_deref() != Some("0"))
-}
-
 /// サンドボックスで動くか。ワークのエージェントは常にコンテナで動く(切り替えは無い)。
 /// パーソナルはホストで動き、リーダーはコマンドを実行しないので対象外。
 pub fn sandbox_enabled(ctx: &WorkspaceCtx) -> bool {
     sandbox::runs_in_sandbox(&ctx.id)
-}
-
-#[tauri::command]
-pub fn get_shell_access(ctx: Ctx) -> Result<bool, AppError> {
-    shell_access(&ctx.db)
-}
-
-#[tauri::command]
-pub fn set_shell_access(ctx: Ctx, enabled: bool) -> Result<(), AppError> {
-    ctx.db.set_setting(SHELL_ACCESS_KEY, if enabled { "1" } else { "0" })
 }
 
 #[tauri::command]
@@ -405,11 +389,8 @@ async fn send_chat_sandbox(
         .chain(corrections)
         .chain(std::iter::once(guide))
         .collect();
-    // コマンド実行・Web検索を無効にしているエージェントでは、対応するツールも拒否する
+    // Web検索を無効にしているエージェントでは、対応するツールも拒否する(コマンドの可否は settings.json で決める)
     let mut deny = Vec::new();
-    if !shell_access(&ctx.db)? {
-        deny.push("Bash".to_owned());
-    }
     if !web_access(&ctx.db)? {
         deny.extend(["WebFetch".to_owned(), "WebSearch".to_owned()]);
     }
@@ -614,7 +595,6 @@ async fn send_chat_inner(
         &target.model,
         system,
         web_access(&ctx.db)?.then_some((tuning.web_search_max, tuning.web_fetch_max)),
-        shell_access(&ctx.db)?,
         sandbox_enabled(ctx),
         host,
         prepared.access,

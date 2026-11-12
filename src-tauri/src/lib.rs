@@ -112,8 +112,6 @@ pub fn run() {
       commands::sandbox::reset_sandbox,
       commands::sandbox::reset_sandbox_dockerfile,
       commands::sandbox::reveal_sandbox_file,
-      commands::chat::get_shell_access,
-      commands::chat::set_shell_access,
       commands::chat::get_voice_timing,
       commands::chat::set_voice_timing,
       commands::chat::get_base_instructions,

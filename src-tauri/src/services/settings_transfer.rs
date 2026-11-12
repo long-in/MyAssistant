@@ -218,7 +218,7 @@ pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{commands::chat, services::wake};
+    use crate::{commands::{chat, voice}, services::wake};
 
     fn mem() -> (tempfile::TempDir, Db) {
         let dir = tempfile::tempdir().unwrap();
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn roundtrip_between_databases() {
         let (_da, a) = mem();
-        a.set_setting(chat::SHELL_ACCESS_KEY, "0").unwrap();
+        a.set_setting(chat::WEB_ACCESS_KEY, "0").unwrap();
         a.set_setting(chat::ROUTE_KEY, r#"{"provider":"anthropic","model":"x"}"#).unwrap();
         a.set_setting("knowledge_dir", "/somewhere").unwrap();
         a.save_summary("abc", &crate::db::Summary { upto_id: "x".into(), text: "要約".into() }).unwrap();
@@ -250,16 +250,16 @@ mod tests {
         let (report, policy) = apply(&b, &parse(&text).unwrap()).unwrap();
         assert_eq!(report, Report { applied: 3, skipped: 0 });
         assert!(policy.is_some());
-        assert_eq!(b.get_setting(chat::SHELL_ACCESS_KEY).unwrap().as_deref(), Some("0"));
+        assert_eq!(b.get_setting(chat::WEB_ACCESS_KEY).unwrap().as_deref(), Some("0"));
         assert_eq!(b.get_setting("knowledge_dir").unwrap(), None);
     }
 
     #[test]
     fn invalid_value_changes_nothing() {
         let (_d, db) = mem();
-        let f = file(&[(chat::SHELL_ACCESS_KEY, "1"), (chat::WEB_ACCESS_KEY, "yes")]);
+        let f = file(&[(voice::STT_ENGINE_KEY, "local"), (chat::WEB_ACCESS_KEY, "yes")]);
         assert!(apply(&db, &f).is_err());
-        assert_eq!(db.get_setting(chat::SHELL_ACCESS_KEY).unwrap(), None);
+        assert_eq!(db.get_setting(voice::STT_ENGINE_KEY).unwrap(), None);
     }
 
     #[test]
@@ -268,12 +268,12 @@ mod tests {
         for key in [profile::KEY, chat::BASE_INSTRUCTIONS_KEY, wake::WORDS_KEY] {
             a.set_legacy_setting(key, "x"); // 全体設定へ移す前の古い値
         }
-        a.set_setting(chat::SHELL_ACCESS_KEY, "1").unwrap();
+        a.set_setting(chat::WEB_ACCESS_KEY, "1").unwrap();
         let exported = collect(&a, Policy::defaults(), "t".into()).unwrap();
-        assert_eq!(exported.settings.keys().collect::<Vec<_>>(), vec![chat::SHELL_ACCESS_KEY]);
+        assert_eq!(exported.settings.keys().collect::<Vec<_>>(), vec![chat::WEB_ACCESS_KEY]);
         // 全体設定の項目は、エージェントのファイルから取り込んでも読み飛ばす
         let (_db, b) = mem();
-        let (report, _) = apply(&b, &file(&[(profile::KEY, "{}"), (chat::SHELL_ACCESS_KEY, "0")])).unwrap();
+        let (report, _) = apply(&b, &file(&[(profile::KEY, "{}"), (chat::WEB_ACCESS_KEY, "0")])).unwrap();
         assert_eq!(report, Report { applied: 1, skipped: 1 });
         assert_eq!(b.get_setting(profile::KEY).unwrap(), None);
     }
@@ -298,7 +298,7 @@ mod tests {
     fn copy_moves_settings_and_policy_but_not_profile_or_keys_by_default() {
         let (_da, a) = ctx("a");
         let (_db, b) = ctx("b");
-        a.db.set_setting(chat::SHELL_ACCESS_KEY, "0").unwrap();
+        a.db.set_setting(chat::WEB_ACCESS_KEY, "0").unwrap();
         a.db.set_legacy_setting(profile::KEY, r#"{"enabled":true,"name":"山田"}"#);
         a.db.set_legacy_setting(chat::BASE_INSTRUCTIONS_KEY, "全体設定の項目");
         let custom = tempfile::tempdir().unwrap(); // コピー元は別の場所をナレッジの保存先にしている
@@ -306,12 +306,12 @@ mod tests {
         a.db.save_summary("abc", &crate::db::Summary { upto_id: "x".into(), text: "要約".into() }).unwrap();
         a.secrets.set_tts_key("tts-a").unwrap();
         command_policy::add_allow(custom.path(), &["mytool".to_owned()]).unwrap();
-        b.db.set_setting(chat::WEB_ACCESS_KEY, "0").unwrap(); // コピー元に無い項目は残る
+        b.db.set_setting(voice::STT_ENGINE_KEY, "google").unwrap(); // コピー元に無い項目は残る
 
         let report = copy(&a, &b, CopyOptions::default()).unwrap();
         assert_eq!(report.keys, 0);
-        assert_eq!(b.db.get_setting(chat::SHELL_ACCESS_KEY).unwrap().as_deref(), Some("0"));
         assert_eq!(b.db.get_setting(chat::WEB_ACCESS_KEY).unwrap().as_deref(), Some("0"));
+        assert_eq!(b.db.get_setting(voice::STT_ENGINE_KEY).unwrap().as_deref(), Some("google"));
         for key in [profile::KEY, chat::BASE_INSTRUCTIONS_KEY, "knowledge_dir"] {
             assert_eq!(b.db.get_setting(key).unwrap(), None, "{key}");
         }
@@ -344,7 +344,7 @@ mod tests {
         let e = |w: &str, r: &str| Entry { word: w.into(), reading: r.into() };
         let (_da, a) = ctx("a");
         let (_db, b) = ctx("b");
-        a.db.set_setting(chat::SHELL_ACCESS_KEY, "0").unwrap();
+        a.db.set_setting(chat::WEB_ACCESS_KEY, "0").unwrap();
         save_user(&a.dir, vec![e("Figma", "フィグマ")]).unwrap();
         save_user(&b.dir, vec![e("Zoom", "ズーム")]).unwrap();
         // 選ばなければ、コピー先の辞書は変わらない
@@ -368,7 +368,7 @@ mod tests {
         let (_da, a) = ctx("a");
         assert!(copy(&a, &a, CopyOptions::default()).is_err());
         let (_db, b) = ctx("b");
-        b.db.set_setting(chat::SHELL_ACCESS_KEY, "1").unwrap();
+        b.db.set_setting(voice::STT_ENGINE_KEY, "local").unwrap();
         a.db.set_setting(chat::WEB_ACCESS_KEY, "yes").unwrap(); // 不正な値
         a.secrets.set_tts_key("tts-a").unwrap();
         assert!(copy(&a, &b, CopyOptions { include_keys: true, ..Default::default() }).is_err());
@@ -380,12 +380,12 @@ mod tests {
     fn key_copy_failure_leaves_destination_untouched() {
         let (_da, a) = ctx("a");
         let (_db, b) = ctx("b");
-        a.db.set_setting(chat::SHELL_ACCESS_KEY, "0").unwrap();
+        a.db.set_setting(chat::WEB_ACCESS_KEY, "0").unwrap();
         a.secrets.set_tts_key("tts-a").unwrap();
         // コピー先のキー保管庫を書けなくする(保存先に同名のフォルダがある)
         std::fs::create_dir(b.dir.join("secrets.json")).unwrap();
         assert!(copy(&a, &b, CopyOptions { include_keys: true, ..Default::default() }).is_err());
-        assert_eq!(b.db.get_setting(chat::SHELL_ACCESS_KEY).unwrap(), None, "設定は書かれない");
+        assert_eq!(b.db.get_setting(chat::WEB_ACCESS_KEY).unwrap(), None, "設定は書かれない");
         assert!(!b.secrets.has_tts_key().unwrap(), "メモリ上のキーも変わらない");
     }
 
@@ -396,7 +396,7 @@ mod tests {
         let custom = tempfile::tempdir().unwrap();
         a.db.set_setting("knowledge_dir", &custom.path().to_string_lossy()).unwrap();
         command_policy::add_allow(custom.path(), &["mytool".to_owned()]).unwrap();
-        a.db.set_setting(chat::SHELL_ACCESS_KEY, "0").unwrap(); // 書き込む設定がないと、失敗が起きない
+        a.db.set_setting(chat::WEB_ACCESS_KEY, "0").unwrap(); // 書き込む設定がないと、失敗が起きない
         a.secrets.set_tts_key("tts-a").unwrap();
         b.secrets.set_proxy_password("p1", "pw-b").unwrap();
         // 設定の書き込みを失敗させる(設定テーブルを壊す)

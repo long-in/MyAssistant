@@ -25,7 +25,7 @@ import { copyTargets, type CopyRequest } from "@/lib/copyTargets";
 import { DEFAULT_TUNING, getTuning, setTuning, LEADER_ID, PERSONAL_ID, getAgentData, saveAgentData, errorMessage, updateAgent, AGENT_NAME_MAX, leaderCopyApiKey, leaderGetPrompt, leaderSetPrompt, leaderGetLimit, leaderSetLimit, LEADER_LIMIT_MAX, type DeleteReport } from "@/lib/api";
 import { bumpSettingsVersion, refreshWorkspace, useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
-import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, openDebugLogDir, setCommandPolicy, type CommandPolicy, getShellAccess, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, voicevoxDownloadProgress, sttDownloadProgress, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, loadBatchRoute, loadProofreadRoute, loadRouting, loadSkillsRoute, loadLinkMode, saveLinkMode, type LinkMode, loadSuggestRoute, type Route, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setShellAccess, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
+import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, openDebugLogDir, setCommandPolicy, type CommandPolicy, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, voicevoxDownloadProgress, sttDownloadProgress, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, loadBatchRoute, loadProofreadRoute, loadRouting, loadSkillsRoute, loadLinkMode, saveLinkMode, type LinkMode, loadSuggestRoute, type Route, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
 import AiSettings from "@/components/AiSettings";
 import { Heading, PageHeader, ProxyChoice, StatusPill, TuningPanel, UsedBy, linkCardClass, type TuningField } from "@/components/GlobalPanels";
 
@@ -146,53 +146,6 @@ function WebAccess() {
         disabled={enabled === null}
         onCheckedChange={change}
         aria-label={t("インターネット検索")}
-      />
-    </section>
-  );
-}
-
-/**
- * シェルコマンドによる作業のオン/オフ。実行前の計画の承認と、コマンドごとの許可・拒否のルールで守られる。
- * `bedrock`は Bedrock 方式(ワークは常に)。コマンドはコンテナ内の Claude Code が実行し、拒否は settings.json で決まるので、その旨を出す。
- */
-function ShellAccess({ bedrock }: { bedrock: boolean }) {
-  const t = useT();
-  const [enabled, setEnabled] = useState<boolean | null>(null);
-  useEffect(() => {
-    getShellAccess()
-      .then(setEnabled)
-      .catch((e) => toast.error(reportError(e)));
-  }, []);
-
-  const change = async (next: boolean) => {
-    setEnabled(next);
-    try {
-      await setShellAccess(next);
-    } catch (e) {
-      setEnabled(!next);
-      toast.error(reportError(e));
-    }
-  };
-
-  return (
-    <section className="hud-panel hud-accent flex items-center justify-between gap-4 px-5 py-4">
-      <div>
-        <Heading title="Command Tasks" help={t("コマンドによる作業")}>
-          <p>{t("「〜してください」という依頼に対し、AIが手順を提示し、あなたが音声で「はい」と承認すると、コマンドを実行して作業を進めます。")}</p>
-          <ul>
-            <li>{t("Claudeを選んでいるときのみ使われます。")}</li>
-            <li>{t("rm・sudo・OSの設定に影響するコマンドは常に拒否します。")}</li>
-            {!bedrock && <li>{t("許可・拒否・都度承認のコマンドは、下の Command Policy で編集できます。")}</li>}
-            {bedrock && <li>{t("コンテナ内の Claude Code で拒否するコマンドは、Sandbox タブの settings.json(permissions.deny)で決めます。")}</li>}
-          </ul>
-        </Heading>
-        <p className="text-xs text-muted-foreground">{t("依頼を承認すると、AIがコマンドを実行して作業します。")}</p>
-      </div>
-      <Switch
-        checked={enabled ?? false}
-        disabled={enabled === null}
-        onCheckedChange={change}
-        aria-label={t("コマンドによる作業")}
       />
     </section>
   );
@@ -1513,7 +1466,6 @@ export default function Setup() {
           {active.id !== LEADER_ID && (
             <TabsContent value="access" className="flex flex-col gap-6">
               <WebAccess />
-              <ShellAccess bedrock={bedrockMode} />
               {/* Bedrock 方式(ワークは常に)は、すべてコンテナ内の Claude Code で動き、コマンド権限は使わない */}
               {!bedrockMode && <CommandPolicyEditor />}
             </TabsContent>

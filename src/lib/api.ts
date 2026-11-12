@@ -308,10 +308,6 @@ export const taskApprove = (id: string, approved: boolean, once = false) =>
 /** 実行中の依頼を中断する。動いているコマンドは強制終了され、承認待ちは拒否になる。 */
 export const taskCancel = () => invoke<void>("task_cancel");
 
-/** シェルコマンドによる作業の可否(Claude選択時のみ有効)。未設定なら有効。 */
-export const getShellAccess = () => invoke<boolean>("get_shell_access");
-export const setShellAccess = (enabled: boolean) => invoke<void>("set_shell_access", { enabled });
-
 /** サンドボックス(エージェント専用のDockerコンテナでコマンドを実行する)の設定。エージェントだけが使える。既定は無効。 */
 export const getSandboxEnabled = () => invoke<boolean>("get_sandbox_enabled");
 

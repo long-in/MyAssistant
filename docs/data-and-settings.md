@@ -122,7 +122,6 @@ erDiagram
 | --- | --- | --- | --- |
 | `routing` | `Route`(JSON) | Claude が使えれば Sonnet | 対話画面のモデル選択 |
 | `web_access` | `0` / `1` | 有効 | Web Search |
-| `shell_access` | `0` / `1` | 有効 | Command Tasks |
 | `sandbox_claude_settings` | 貼り付けた Claude Code の settings.json(JSON。空は未設定=全体設定を利用。全体設定と同じ内容も空として保存) | 未設定 | Sandbox タブ(ワークのエージェント) |
 | `sandbox_llm` | 接続先(Bedrock 固定)・上限時間(分)(JSON)。旧版のモデル・許可するツールは settings.json へ移る | Bedrock・30分 | Sandbox(ワークのエージェント) |
 | `sandbox_claude_sessions` | 会話 ID と Claude Code のセッション ID の対応(JSON、直近 50 件) | なし | なし(端末の会話と対なので対象外) |
@@ -176,7 +175,7 @@ erDiagram
 
 ### 対象
 
-- `app_settings` のうち、キーの一覧(`settings_registry`)で書き出しの対象にした**設定項目**(`routing`・`web_access`・`shell_access`・`stt_engine`・`stt_language`・`tts_engine`・`voicevox_style`・`tuning`・`batch_route`・`proofread_route`・`debug_mode`、使うプロキシの選択 `proxy_choice`。全体設定の項目は含まない)と、**コマンド権限**(`command-policy.json`)。
+- `app_settings` のうち、キーの一覧(`settings_registry`)で書き出しの対象にした**設定項目**(`routing`・`web_access`・`stt_engine`・`stt_language`・`tts_engine`・`voicevox_style`・`tuning`・`batch_route`・`proofread_route`・`debug_mode`、使うプロキシの選択 `proxy_choice`。全体設定の項目は含まない)と、**コマンド権限**(`command-policy.json`)。
 - **含まない**: API キー、エージェントデータ(`agent_data`)、端末ごとに異なるナレッジ・デバッグログの保存先(`knowledge_dir` / `debug_log_dir`)、取得する配布物の版(`whisper_revision` / `voicevox_versions`)、リーダーの設定、会話ごとの要約、会話の履歴。
 - 全体設定の項目(ベースプロンプト・パーソナルデータ・起動ワード・音声入力の待ち時間・ナレッジ整理の間隔・表示言語・OS通知)は含まない。全体設定は App Backup(アプリ全体)で書き出す([backup.md](backup.md))。
 - 書き出し・取り込みの対象は、選択中のワークスペースの設定。ワークスペース間で設定を写すには、各エージェントの設定の「その他」タブにある設定のコピーを使う([workspace.md](workspace.md))。
@@ -188,7 +187,7 @@ erDiagram
   "app": "MyAssistant",
   "version": 1,
   "exported_at": "2026-10-29T03:00:00Z",
-  "settings": { "routing": "{...}", "shell_access": "1" },
+  "settings": { "routing": "{...}", "web_access": "1" },
   "command_policy": { "version": 3, "allow": [] }
 }
 ```
