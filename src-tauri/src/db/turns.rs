@@ -56,7 +56,7 @@ impl Db {
                      ORDER BY f.created_at ASC, f.rowid ASC LIMIT 1) AS title
              FROM conversation_logs l WHERE l.role IN ('user', 'assistant')
              GROUP BY l.session_id HAVING turns > 0
-             ORDER BY last_at DESC LIMIT ?1",
+             ORDER BY last_at DESC, MAX(l.rowid) DESC LIMIT ?1",
         )?;
         let rows = stmt
             .query_map(params![limit], |r| Ok(SessionRow { session_id: r.get(0)?, last_at: r.get(1)?, turns: r.get(2)?, title: r.get(3)? }))?
