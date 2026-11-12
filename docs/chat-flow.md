@@ -132,7 +132,7 @@ flowchart LR
 | --- | --- | --- |
 | 使用モデル | `routing` | Claude が使えれば Sonnet([llm-settings.md](llm-settings.md)) |
 | ベース指示 | `base_instructions`(全体設定)/ `prompt_chat`(エージェント) | 既定文 |
-| インターネット検索 | `web_access` | 有効 |
+| インターネット検索 | `web_access`(API 方式のみ。Bedrock 方式・ワークは settings.json) | 有効 |
 | 往復数の上限、検索・取得の上限(エージェントごと) | `tuning` | [data-and-settings.md](data-and-settings.md) |
 
 ## コンテナの経路との違い
