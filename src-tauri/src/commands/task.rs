@@ -52,7 +52,7 @@ pub(crate) async fn wait_for_answer(
 /// `history`は直前までの会話(`user`/`assistant`のテキスト)で、今回の発話は`user_text`で渡す。
 /// ツールの使い方は`system`の固定部分の末尾へ足す(設定を変えない限り変わらず、キャッシュの対象になる)。
 /// `web_access`が有効なときは、インターネット検索・ページ取得(サーバーツール)も渡す。Bedrockと端末内のLLMでは使えない。
-/// `shell_access`が有効なときは、作業計画の提示とシェルコマンドの実行も渡す。
+/// リーダー以外には、作業計画の提示とシェルコマンドの実行も渡す(可否はコマンド権限で決める)。
 /// `sandbox`が有効なら、コマンドはそのエージェントのDockerコンテナで実行する。
 /// `skills`の範囲だけ、スキル用のツール(手順の読み込み・作成・更新・削除)とその使い方も渡す。リーダーにも渡す。
 /// 進捗(ツール呼び出し・承認要求・コマンド出力)は`on_event`へ流す。実行中は`task_cancel`で中断できる。
@@ -64,7 +64,6 @@ pub async fn run_with_tools(
     model: &str,
     system: SystemPrompt,
     web_access: Option<(u32, u32)>,
-    shell_access: bool,
     sandbox: bool,
     host: Option<tool_loop::ToolHost<'_>>,
     skills: SkillAccess,
@@ -77,17 +76,18 @@ pub async fn run_with_tools(
     std::fs::create_dir_all(root).map_err(|e| AppError::Io(e.to_string()))?;
     // リーダーは、ファイル・コマンド・Webに代えて、台帳の参照と配布の下書きのツールだけを使う
     let leader = host.is_some();
+    let shell_access = !leader;
     let SystemPrompt { stable: mut system, volatile } = system;
     let mut tools = if leader {
         system.push_str(&format!("\n\n{}", leader::TOOL_GUIDE));
         leader::tool_definitions()
     } else {
         system.push_str(&format!("\n\n{}", tool_loop::TOOL_GUIDE));
-        let mut tools = tool_loop::tool_definitions(shell_access);
+        let mut tools = tool_loop::tool_definitions(true);
         tools.extend(tool_loop::docs_tool_definitions());
         tools
     };
-    let (shell_access, web_access) = if leader { (false, None) } else { (shell_access, web_access) };
+    let web_access = if leader { None } else { web_access };
     let sandbox = sandbox && shell_access && !leader && sandbox::is_supported(&ctx.id);
     if shell_access {
         let guide = if sandbox { tool_loop::SANDBOX_GUIDE.to_owned() } else { tool_loop::shell_guide() };

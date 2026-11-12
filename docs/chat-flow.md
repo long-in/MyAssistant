@@ -131,5 +131,4 @@ flowchart LR
 | 使用モデル | `routing` | Claude が使えれば Sonnet |
 | ベース指示(全体設定) | `base_instructions` | 既定文 |
 | インターネット検索 | `web_access` | 有効 |
-| コマンドによる作業 | `shell_access` | 有効 |
 | 往復数の上限、検索・取得の上限(エージェントごと) | `tuning` | [data-and-settings.md](data-and-settings.md) |
