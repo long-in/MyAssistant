@@ -914,7 +914,7 @@ export const knowledgeDir = () => invoke<string>("knowledge_dir");
 /** ナレッジの保存先を Finder で開く。 */
 export const openKnowledgeDir = () => invoke<void>("open_knowledge_dir");
 export const setKnowledgeDir = (path: string | null) => invoke<string>("set_knowledge_dir", { path });
-/** スキル(決まった依頼への対応手順)。ナレッジ配下の`.my-assistant/skills/<name>.md`に、エージェントごとに保存される。 */
+/** スキル(決まった依頼への対応手順)。ナレッジ配下の`skills/<name>/SKILL.md`に、エージェントごとに保存される。 */
 export type Skill = { name: string; description: string; body: string };
 /** スキルの一覧と、選定で毎回送る前置き(指示 + 全スキルの名前・説明)の概算トークン数。 */
 export type SkillsOverview = { skills: Skill[]; index_tokens: number };

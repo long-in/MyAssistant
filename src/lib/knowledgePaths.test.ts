@@ -8,7 +8,7 @@ describe("isReadOnlyPath", () => {
     expect(isReadOnlyPath("DATA/README.md")).toBe(true);
   });
   it(". 始まりを含むパスは閲覧専用", () => {
-    expect(isReadOnlyPath(".my-assistant/command-policy.json")).toBe(true);
+    expect(isReadOnlyPath(".history/a.md")).toBe(true);
     expect(isReadOnlyPath("debug-logs/.hidden")).toBe(true);
   });
   it("ほかは編集できる(直下以外の data は対象外)", () => {

@@ -1714,11 +1714,11 @@ mod tests {
         assert!(db.get_setting(command_policy::KEY).unwrap().is_some());
         assert!(!root.join(".my-assistant/command-policy.json").exists());
         // 隠しフォルダ(ノートの版の置き場)は、ファイルツールから触れない
-        fs::create_dir_all(root.join(".my-assistant")).unwrap();
-        fs::write(root.join(".my-assistant/x.json"), "{}").unwrap();
-        assert!(execute_tool(&root, "read_file", &json!({ "path": ".my-assistant/x.json" })).is_err());
-        assert!(!execute_tool(&root, "list_files", &json!({})).unwrap().contains("my-assistant"));
-        let create = json!({ "path": ".my-assistant/y.json", "content": "{}" });
+        fs::create_dir_all(root.join(".history")).unwrap();
+        fs::write(root.join(".history/x.json"), "{}").unwrap();
+        assert!(execute_tool(&root, "read_file", &json!({ "path": ".history/x.json" })).is_err());
+        assert!(!execute_tool(&root, "list_files", &json!({})).unwrap().contains(".history"));
+        let create = json!({ "path": ".history/y.json", "content": "{}" });
         assert!(execute_tool(&root, "create_file", &create).is_err());
     }
 
