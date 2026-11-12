@@ -12,8 +12,8 @@ use serde_json::Value;
 
 use super::{
     cancel::CancelToken,
-    command_policy::Policy,
     global_settings::SettingsStore,
+    permissions,
     sandbox,
     shell::Stream,
     workspace::WorkspaceCtx,
@@ -178,9 +178,9 @@ pub fn save_selected_model(db: &impl SettingsStore, global: &impl SettingsStore,
     }
 }
 
-/// settings.json の既定の拒否。コマンド権限の初期値の拒否(`deny`・`deny_words`)を、Claude Code の書式にしたもの。
+/// settings.json の既定の拒否。OSに影響するコマンドと削除・権限昇格を、Claude Code の書式にしたもの(API 方式の雛形と同じ)。
 pub fn default_deny_rules() -> Vec<String> {
-    deny_rules(&Policy::defaults())
+    permissions::default_deny_rules()
 }
 
 /// settings.json の雛形。許可は標準のツール、拒否は既定の拒否。
@@ -248,23 +248,6 @@ pub fn check_credentials(vars: &BTreeMap<String, String>) -> Result<(), String> 
 }
 
 // ------------------------------------------------------------------ 1回の指示の実行
-
-/// コマンド権限の拒否(コマンドの接頭辞と、どこにあっても拒否する語)を、Claude Code の拒否ルールへ変換する。
-/// settings.json の既定の拒否(`default_deny_rules`)を作るのに使う。
-pub fn deny_rules(policy: &Policy) -> Vec<String> {
-    let mut rules: Vec<String> = Vec::new();
-    for p in policy.deny.iter().chain(policy.deny_words.iter()).map(|p| p.trim()) {
-        // 区切り(,)や括弧を含むものは、ルールの書式を壊すので渡さない
-        if p.is_empty() || p.contains([',', '(', ')']) || p.chars().any(char::is_control) {
-            continue;
-        }
-        let rule = format!("Bash({p}:*)");
-        if !rules.contains(&rule) {
-            rules.push(rule);
-        }
-    }
-    rules
-}
 
 /// セッションIDとして受け付ける形(英数字と`-`だけ)。
 fn valid_session_id(id: &str) -> bool {
@@ -840,14 +823,6 @@ mod tests {
         assert!(check_credentials(&vars(&[("AWS_ACCESS_KEY_ID", "a"), ("AWS_SECRET_ACCESS_KEY", "b")])).is_err());
         assert!(check_credentials(&vars(&[("AWS_ACCESS_KEY_ID", "a"), ("AWS_SECRET_ACCESS_KEY", " "), ("AWS_REGION", "us-east-1")])).is_err());
         assert!(check_credentials(&vars(&[("AWS_ACCESS_KEY_ID", "a"), ("AWS_SECRET_ACCESS_KEY", "b"), ("AWS_REGION", "us-east-1")])).is_ok());
-    }
-
-    #[test]
-    fn deny_rules_come_from_the_command_policy() {
-        let mut p = Policy::defaults();
-        p.deny = vec!["git push --force".into(), "bad,rule".into(), "x(y)".into(), "git push --force".into()];
-        p.deny_words = vec!["sudo".into(), " ".into()];
-        assert_eq!(deny_rules(&p), vec!["Bash(git push --force:*)".to_owned(), "Bash(sudo:*)".to_owned()]);
     }
 
     #[test]

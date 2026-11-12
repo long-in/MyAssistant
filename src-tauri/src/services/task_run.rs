@@ -80,7 +80,7 @@ pub struct RunSnapshot {
 pub struct TaskState {
     /// 承認要求の`id`ごとに、画面からの応答を待つ。
     approvals: Mutex<HashMap<String, oneshot::Sender<bool>>>,
-    /// 「今回だけ」と答えた承認の`id`(許可リストへ加えない)。実行側が確かめたら消える。
+    /// 「今回だけ」と答えた承認の`id`(許可へ加えない)。実行側が確かめたら消える。
     once: Mutex<HashSet<String>>,
     /// 実行中の依頼。同時には1つだけ。
     cancel: Mutex<Option<CancelToken>>,
@@ -109,7 +109,7 @@ impl TaskState {
         self.clear_pending(id);
     }
 
-    /// 承認する。許可リストにないコマンドを、許可へ加えずに今回だけ実行する。
+    /// 承認する。許可に一致しないコマンドを、許可へ加えずに今回だけ実行する。
     pub fn answer_once(&self, id: &str) {
         lock(&self.once).insert(id.to_owned());
         self.answer(id, true);

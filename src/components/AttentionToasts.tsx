@@ -20,8 +20,6 @@ export function approvalLine(kind: TaskAttention["approval_kind"], detail: strin
       return tr("ファイルを作成: {detail}", { detail });
     case "file_overwrite":
       return tr("資料を上書き: {detail}", { detail });
-    case "plan":
-      return tr("作業計画の確認");
     case "command":
       return tr("コマンドを実行: {detail}", { detail });
     case "allow_command":

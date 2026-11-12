@@ -13,9 +13,8 @@ export type Approval = Extract<TaskEvent, { type: "approval" }>;
 export type Listening = "preparing" | "listening" | "transcribing" | "idle";
 
 const TITLES: Record<Approval["kind"], string> = {
-  plan: "この手順で作業を進めてよいですか？",
   command: "このコマンドを実行してよいですか？",
-  allow_command: "このコマンドは許可リストにありません。実行してよいですか？",
+  allow_command: "このコマンドは許可ルールにありません。実行してよいですか？",
   file: "ファイルの作成を許可しますか？",
   file_overwrite: "資料を次の内容で上書きしてよいですか？",
   skill_update: "スキルを次の内容で上書きしてよいですか？",
@@ -30,7 +29,7 @@ const LISTENING_LABEL: Record<Listening, string> = {
   idle: "「はい」と話すか、ボタンで答えてください",
 };
 
-/** 音声では承認できない種類(コマンドの個別承認・許可リストへの追加)の待ち受け表示。拒否は音声でもできる。 */
+/** 音声では承認できない種類(コマンドの承認・許可ルールへの追加)の待ち受け表示。拒否は音声でもできる。 */
 const BUTTON_ONLY_LABEL: Record<Listening, string> = {
   preparing: "マイクを準備しています…",
   listening: "このコマンドの承認はボタンで行います(「いいえ」と話すと中止します)",
@@ -40,9 +39,9 @@ const BUTTON_ONLY_LABEL: Record<Listening, string> = {
 
 /**
  * 実行前の確認を画面中央に重ねて表示する。背景はうっすら透けさせる。
- * 計画・ファイル作成・スキルの変更は、音声で肯定されたときも実行に進む(判定と録音は呼び出し側)。
- * コマンドの個別承認と許可リストへの追加は、周囲の音声で誤って通らないよう、ボタンでだけ承認できる。
- * 許可リストにないコマンドは、「今回だけ実行」(許可リストへ加えない)と「許可に加えて実行」を選べる。
+ * ファイル作成・スキルの変更は、音声で肯定されたときも実行に進む(判定と録音は呼び出し側)。
+ * コマンドの承認と許可ルールへの追加は、周囲の音声で誤って通らないよう、ボタンでだけ承認できる。
+ * 許可ルール(settings.json の permissions.allow)に一致しないコマンドは、「今回だけ実行」と「許可に加えて実行」を選べる。
  * 開いている間は、Tabでの移動をダイアログの中に留める(Escは対話画面の強制中断で、依頼ごと止まる)。
  */
 export default function ApprovalModal({
@@ -52,7 +51,7 @@ export default function ApprovalModal({
 }: {
   approval: Approval;
   listening: Listening;
-  /** `once`: 許可リストにないコマンドを、許可へ加えずに今回だけ実行する。 */
+  /** `once`: 許可ルールに一致しないコマンドを、許可へ加えずに今回だけ実行する。 */
   onAnswer: (approved: boolean, once?: boolean) => void;
 }) {
   const t = useT();
@@ -95,20 +94,6 @@ export default function ApprovalModal({
           {t(TITLES[approval.kind])}
         </h2>
 
-        {approval.kind === "plan" && (
-          <>
-            {approval.preview && <p className="mt-2 text-muted-foreground">{approval.preview}</p>}
-            <ol className="mt-3 space-y-1.5">
-              {approval.steps.map((s, i) => (
-                <li key={i} className="flex gap-2">
-                  <span className="w-5 shrink-0 text-right tabular-nums text-primary">{i + 1}.</span>
-                  <span className="min-w-0 break-words">{s}</span>
-                </li>
-              ))}
-            </ol>
-          </>
-        )}
-
         {(approval.kind === "command" || approval.kind === "allow_command") && (
           <>
             {approval.reason && <p className="mt-2 text-muted-foreground">{approval.reason}</p>}
@@ -120,7 +105,7 @@ export default function ApprovalModal({
             </pre>
             {approval.kind === "allow_command" && (
               <p className="mt-2 text-xs text-muted-foreground">
-                {t("「許可に加えて実行」を選ぶと、次を許可リストへ加えます(以後は承認なしで実行されます):")} <span className="font-mono">{approval.steps.join("、")}</span>
+                {t("「許可に加えて実行」を選ぶと、settings.json の permissions.allow へ次を加えます(以後は承認なしで実行されます):")} <span className="font-mono">{approval.steps.map((p) => `Bash(${p}:*)`).join("、")}</span>
               </p>
             )}
           </>

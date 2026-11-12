@@ -150,6 +150,10 @@ const MIGRATIONS: &[&str] = &[
     CREATE UNIQUE INDEX idx_proposals_kind_norm ON learning_proposals(kind, norm);
     CREATE INDEX idx_proposals_status ON learning_proposals(status, created_at);
     ",
+    // 版7: API 方式の権限を settings.json(`api_claude_settings`)へ作り直したため、旧形式のコマンド権限と Web 検索のオン/オフを消す(移行はしない)
+    "
+    DELETE FROM app_settings WHERE key IN ('command_policy', 'web_access');
+    ",
 ];
 
 /// 最新の版。
@@ -340,6 +344,16 @@ mod tests {
         assert_eq!(std::fs::read(d.path().join("timeline.db.bak-v0")).unwrap(), b"older");
         let backups = std::fs::read_dir(d.path()).unwrap().filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().starts_with("timeline.db.bak-v0-")).count();
         assert_eq!(backups, 1);
+    }
+
+    #[test]
+    fn old_command_permissions_are_removed() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate(&mut conn, None, 6).unwrap();
+        conn.execute_batch("INSERT INTO app_settings (key, value) VALUES ('command_policy', '{}'), ('web_access', '0'), ('routing', '{}');").unwrap();
+        prepare(&mut conn, None, Role::Agent).unwrap();
+        let keys: Vec<String> = conn.prepare("SELECT key FROM app_settings").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
+        assert_eq!(keys, ["routing"]);
     }
 
     #[test]

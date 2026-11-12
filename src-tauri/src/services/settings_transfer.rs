@@ -1,5 +1,5 @@
 //! 設定のエクスポート・インポート。
-//! 対象は`app_settings`のうち下の一覧にある項目(パーソナルデータを含む)とコマンド権限。APIキーと、端末ごとに異なるナレッジの保存先、
+//! 対象は`app_settings`のうち下の一覧にある項目(パーソナルデータと、API 方式の権限の settings.json を含む)。APIキーと、端末ごとに異なるナレッジの保存先、
 //! 会話ごとの要約は含めない。取り込み時は全項目を検証してから書き込み、不正な項目があれば何も変更しない。
 use std::collections::BTreeMap;
 
@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    aws,
-    command_policy::{self, Policy},
+    aws, permissions,
     profile, pronunciation,
     settings_registry::{self, Kind, Scope},
     workspace::WorkspaceCtx,
@@ -33,7 +32,6 @@ pub struct SettingsFile {
     version: u32,
     exported_at: String,
     settings: BTreeMap<String, String>,
-    command_policy: Option<Policy>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -49,11 +47,12 @@ fn valid(kind: Kind, value: &str) -> bool {
         Kind::OneOf(allowed) => allowed.contains(&value),
         Kind::Text => value.chars().count() <= MAX_TEXT_CHARS,
         Kind::Profile => profile::valid_json(value, chrono::Local::now().date_naive()),
+        Kind::Permissions => permissions::validate(value).is_ok(),
     }
 }
 
 /// 現在の設定をファイルの内容にまとめる。未設定の項目は含めない。
-pub fn collect(db: &Db, policy: Policy, exported_at: String) -> Result<SettingsFile, AppError> {
+pub fn collect(db: &Db, exported_at: String) -> Result<SettingsFile, AppError> {
     let mut settings = BTreeMap::new();
     for (key, _) in entries() {
         if let Some(v) = db.get_setting(key)? {
@@ -65,18 +64,17 @@ pub fn collect(db: &Db, policy: Policy, exported_at: String) -> Result<SettingsF
         version: FORMAT_VERSION,
         exported_at,
         settings,
-        command_policy: Some(policy),
     })
 }
 
 impl SettingsFile {
-    /// 書き出される項目数(コマンド権限を含む)。
+    /// 書き出される項目数。
     pub fn item_count(&self) -> usize {
-        self.settings.len() + usize::from(self.command_policy.is_some())
+        self.settings.len()
     }
 }
 
-/// 文字列からファイルの内容を読み、形式を確認する。
+/// 文字列からファイルの内容を読み、形式を確認する。以前の版のコマンド権限(`command_policy`)は読み飛ばす。
 pub fn parse(text: &str) -> Result<SettingsFile, AppError> {
     let file: SettingsFile = serde_json::from_str(text).map_err(|e| AppError::InvalidSettings(e.to_string()))?;
     if file.app != APP_ID {
@@ -92,7 +90,6 @@ pub fn parse(text: &str) -> Result<SettingsFile, AppError> {
 struct Validated {
     accepted: Vec<(&'static str, String)>,
     skipped: usize,
-    policy: Option<Policy>,
 }
 
 /// 全項目を検証する(何も書かない)。ファイルに無い項目は対象外、未知の項目は読み飛ばす。
@@ -106,12 +103,7 @@ fn validate(file: &SettingsFile) -> Result<Validated, AppError> {
             None => skipped += 1,
         }
     }
-    let policy = file
-        .command_policy
-        .as_ref()
-        .map(|p| p.cleaned().map_err(AppError::InvalidSettings))
-        .transpose()?;
-    Ok(Validated { accepted, skipped, policy })
+    Ok(Validated { accepted, skipped })
 }
 
 impl Validated {
@@ -122,16 +114,15 @@ impl Validated {
     }
 
     fn report(&self) -> Report {
-        Report { applied: self.accepted.len() + usize::from(self.policy.is_some()), skipped: self.skipped }
+        Report { applied: self.accepted.len(), skipped: self.skipped }
     }
 }
 
 /// 検証を通った項目を書き込む。ファイルに無い項目は変更せず、未知の項目は読み飛ばす。
-/// 戻り値の2番目は、反映するコマンド権限(あれば)。
-pub fn apply(db: &Db, file: &SettingsFile) -> Result<(Report, Option<Policy>), AppError> {
+pub fn apply(db: &Db, file: &SettingsFile) -> Result<Report, AppError> {
     let v = validate(file)?;
     v.write(db)?;
-    Ok((v.report(), v.policy))
+    Ok(v.report())
 }
 
 /// ワークスペース間の設定コピーの対象。
@@ -145,7 +136,7 @@ pub struct CopyOptions {
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct CopyReport {
-    /// コピーした設定の項目数(コマンド権限を含む)。
+    /// コピーした設定の項目数。
     pub settings: usize,
     /// コピーしたキーの件数。
     pub keys: usize,
@@ -154,16 +145,15 @@ pub struct CopyReport {
 }
 
 /// `from`の設定を`to`へコピーする。`from`は変更しない。
-/// 対象は書き出しと同じ項目とコマンド権限で、ナレッジの保存先・会話・要約・ナレッジ本体は含めない。読み上げ辞書は選んだときだけ写す。
-/// 先に全項目を検証し(何も書かない)、失敗しうるファイル書き込み(キー・コマンド権限)を行ってから、設定をトランザクションで書く。
-/// 途中で失敗したら、書いたキーとコマンド権限を元へ戻し、`to`は変わらない。
+/// 対象は書き出しと同じ項目で、ナレッジの保存先・会話・要約・ナレッジ本体は含めない。読み上げ辞書は選んだときだけ写す。
+/// 先に全項目を検証し(何も書かない)、失敗しうるファイル書き込み(キー・辞書)を行ってから、設定をトランザクションで書く。
+/// 途中で失敗したら、書いたキーと辞書を元へ戻し、`to`は変わらない。
 /// キーの生値はRust内で写し、画面には件数だけ返す。
 pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result<CopyReport, AppError> {
     if from.id == to.id {
         return Err(AppError::InvalidAgent("same workspace".into()));
     }
-    let policy = command_policy::load(&from.db);
-    let file = collect(&from.db, policy, String::new())?;
+    let file = collect(&from.db, String::new())?;
     let v = validate(&file)?;
     // 辞書は、書き込みの前に整形・検証しておく(上限を超えるなら、何も書かずに失敗する)
     let words = if opts.include_dictionary { Some(pronunciation::normalize(pronunciation::load_user(&from.dir))?) } else { None };
@@ -172,11 +162,7 @@ pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result
     // キーは選んだときだけ写す(失敗したら戻す)
     let keys_backup = to.secrets.backup();
     let keys = if opts.include_keys { to.secrets.copy_from(&from.secrets)? } else { 0 };
-    let prev_policy = v.policy.as_ref().map(|_| command_policy::load(&to.db));
     let written = (|| {
-        if let Some(policy) = &v.policy {
-            command_policy::save(&to.db, policy).map_err(AppError::Io)?;
-        }
         if let Some(words) = &words {
             pronunciation::save_user(&to.dir, words.clone())?;
         }
@@ -184,11 +170,6 @@ pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result
     })();
     if let Err(e) = written {
         // 元へ戻す(戻せなければ警告だけ残す)。コピー先の設定は書かれていない
-        if let Some(prev) = &prev_policy
-            && let Err(err) = command_policy::save(&to.db, prev)
-        {
-            log::warn!("command policy not restored: {err}");
-        }
         if let Some(prev) = &prev_dictionary {
             let file = to.dir.join(pronunciation::DICTIONARY_FILE);
             let restored = match prev {
@@ -213,7 +194,7 @@ pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{commands::{chat, voice}, services::wake};
+    use crate::{commands::{chat, voice}, services::{debug_log, wake}};
 
     fn mem() -> (tempfile::TempDir, Db) {
         let dir = tempfile::tempdir().unwrap();
@@ -227,32 +208,36 @@ mod tests {
             version: FORMAT_VERSION,
             exported_at: String::new(),
             settings: settings.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect(),
-            command_policy: None,
         }
     }
 
     #[test]
     fn roundtrip_between_databases() {
         let (_da, a) = mem();
-        a.set_setting(chat::WEB_ACCESS_KEY, "0").unwrap();
+        a.set_setting(debug_log::ENABLED_KEY, "0").unwrap();
         a.set_setting(chat::ROUTE_KEY, r#"{"provider":"anthropic","model":"x"}"#).unwrap();
         a.set_setting("knowledge_dir", "/somewhere").unwrap();
         a.save_summary("abc", &crate::db::Summary { upto_id: "x".into(), text: "要約".into() }).unwrap();
-        let text = serde_json::to_string(&collect(&a, Policy::defaults(), "t".into()).unwrap()).unwrap();
+        permissions::save(&a, r#"{ "permissions": { "allow": ["Bash(make:*)"] } }"#).unwrap();
+        let text = serde_json::to_string(&collect(&a, "t".into()).unwrap()).unwrap();
         assert!(!text.contains("/somewhere") && !text.contains("要約"));
 
         let (_db, b) = mem();
-        let (report, policy) = apply(&b, &parse(&text).unwrap()).unwrap();
+        let report = apply(&b, &parse(&text).unwrap()).unwrap();
         assert_eq!(report, Report { applied: 3, skipped: 0 });
-        assert!(policy.is_some());
-        assert_eq!(b.get_setting(chat::WEB_ACCESS_KEY).unwrap().as_deref(), Some("0"));
+        assert_eq!(permissions::load(&b).allow, ["Bash(make:*)"]);
+        assert_eq!(b.get_setting(debug_log::ENABLED_KEY).unwrap().as_deref(), Some("0"));
         assert_eq!(b.get_setting("knowledge_dir").unwrap(), None);
     }
 
     #[test]
     fn invalid_value_changes_nothing() {
         let (_d, db) = mem();
-        let f = file(&[(voice::STT_ENGINE_KEY, "local"), (chat::WEB_ACCESS_KEY, "yes")]);
+        let f = file(&[(voice::STT_ENGINE_KEY, "local"), (debug_log::ENABLED_KEY, "yes")]);
+        assert!(apply(&db, &f).is_err());
+        assert_eq!(db.get_setting(voice::STT_ENGINE_KEY).unwrap(), None);
+        // 形の違う settings.json も受け付けない
+        let f = file(&[(voice::STT_ENGINE_KEY, "local"), (permissions::KEY, r#"{ "permissions": { "allow": "Bash" } }"#)]);
         assert!(apply(&db, &f).is_err());
         assert_eq!(db.get_setting(voice::STT_ENGINE_KEY).unwrap(), None);
     }
@@ -263,12 +248,12 @@ mod tests {
         for key in [profile::KEY, chat::BASE_INSTRUCTIONS_KEY, wake::WORDS_KEY] {
             a.set_legacy_setting(key, "x"); // 全体設定へ移す前の古い値
         }
-        a.set_setting(chat::WEB_ACCESS_KEY, "1").unwrap();
-        let exported = collect(&a, Policy::defaults(), "t".into()).unwrap();
-        assert_eq!(exported.settings.keys().collect::<Vec<_>>(), vec![chat::WEB_ACCESS_KEY]);
+        a.set_setting(debug_log::ENABLED_KEY, "1").unwrap();
+        let exported = collect(&a, "t".into()).unwrap();
+        assert_eq!(exported.settings.keys().collect::<Vec<_>>(), vec![debug_log::ENABLED_KEY]);
         // 全体設定の項目は、エージェントのファイルから取り込んでも読み飛ばす
         let (_db, b) = mem();
-        let (report, _) = apply(&b, &file(&[(profile::KEY, "{}"), (chat::WEB_ACCESS_KEY, "0")])).unwrap();
+        let report = apply(&b, &file(&[(profile::KEY, "{}"), (debug_log::ENABLED_KEY, "0")])).unwrap();
         assert_eq!(report, Report { applied: 1, skipped: 1 });
         assert_eq!(b.get_setting(profile::KEY).unwrap(), None);
     }
@@ -276,10 +261,13 @@ mod tests {
     #[test]
     fn unknown_keys_are_skipped_and_foreign_files_rejected() {
         let (_d, db) = mem();
-        let (report, _) = apply(&db, &file(&[("knowledge_dir", "/x"), ("secrets", "y")])).unwrap();
+        let report = apply(&db, &file(&[("knowledge_dir", "/x"), ("secrets", "y")])).unwrap();
         assert_eq!(report, Report { applied: 0, skipped: 2 });
         assert_eq!(db.get_setting("knowledge_dir").unwrap(), None);
         assert!(parse("{}").is_err());
+        // 以前の版のコマンド権限は読み飛ばす
+        let old = parse(r#"{"app":"MyAssistant","version":1,"exported_at":"","settings":{},"command_policy":{"allow":["ls"]}}"#).unwrap();
+        assert_eq!(apply(&db, &old).unwrap(), Report { applied: 0, skipped: 0 });
         assert!(parse(r#"{"app":"other","version":1,"exported_at":"","settings":{},"command_policy":null}"#).is_err());
     }
 
@@ -290,29 +278,29 @@ mod tests {
     }
 
     #[test]
-    fn copy_moves_settings_and_policy_but_not_profile_or_keys_by_default() {
+    fn copy_moves_settings_and_permissions_but_not_profile_or_keys_by_default() {
         let (_da, a) = ctx("a");
         let (_db, b) = ctx("b");
-        a.db.set_setting(chat::WEB_ACCESS_KEY, "0").unwrap();
+        a.db.set_setting(debug_log::ENABLED_KEY, "0").unwrap();
         a.db.set_legacy_setting(profile::KEY, r#"{"enabled":true,"name":"山田"}"#);
         a.db.set_legacy_setting(chat::BASE_INSTRUCTIONS_KEY, "全体設定の項目");
         let custom = tempfile::tempdir().unwrap(); // コピー元は別の場所をナレッジの保存先にしている
         a.db.set_setting("knowledge_dir", &custom.path().to_string_lossy()).unwrap();
         a.db.save_summary("abc", &crate::db::Summary { upto_id: "x".into(), text: "要約".into() }).unwrap();
         a.secrets.set_tts_key("tts-a").unwrap();
-        command_policy::add_allow(&a.db, &["mytool".to_owned()]).unwrap();
+        permissions::add_allow(&a.db, &["mytool".to_owned()]).unwrap();
         b.db.set_setting(voice::STT_ENGINE_KEY, "google").unwrap(); // コピー元に無い項目は残る
 
         let report = copy(&a, &b, CopyOptions::default()).unwrap();
         assert_eq!(report.keys, 0);
-        assert_eq!(b.db.get_setting(chat::WEB_ACCESS_KEY).unwrap().as_deref(), Some("0"));
+        assert_eq!(b.db.get_setting(debug_log::ENABLED_KEY).unwrap().as_deref(), Some("0"));
         assert_eq!(b.db.get_setting(voice::STT_ENGINE_KEY).unwrap().as_deref(), Some("google"));
         for key in [profile::KEY, chat::BASE_INSTRUCTIONS_KEY, "knowledge_dir"] {
             assert_eq!(b.db.get_setting(key).unwrap(), None, "{key}");
         }
         assert_eq!(b.db.summary("abc").unwrap(), None);
         assert!(!b.secrets.has_tts_key().unwrap());
-        assert!(command_policy::load(&b.db).allow.contains(&"mytool".to_owned()));
+        assert!(permissions::load(&b.db).allow.contains(&"Bash(mytool:*)".to_owned()));
         // コピー元は変わらない
         assert_eq!(a.db.get_setting(profile::KEY).unwrap().as_deref(), Some(r#"{"enabled":true,"name":"山田"}"#));
         assert!(a.secrets.has_tts_key().unwrap());
@@ -339,7 +327,7 @@ mod tests {
         let e = |w: &str, r: &str| Entry { word: w.into(), reading: r.into() };
         let (_da, a) = ctx("a");
         let (_db, b) = ctx("b");
-        a.db.set_setting(chat::WEB_ACCESS_KEY, "0").unwrap();
+        a.db.set_setting(debug_log::ENABLED_KEY, "0").unwrap();
         save_user(&a.dir, vec![e("Figma", "フィグマ")]).unwrap();
         save_user(&b.dir, vec![e("Zoom", "ズーム")]).unwrap();
         // 選ばなければ、コピー先の辞書は変わらない
@@ -364,10 +352,10 @@ mod tests {
         assert!(copy(&a, &a, CopyOptions::default()).is_err());
         let (_db, b) = ctx("b");
         b.db.set_setting(voice::STT_ENGINE_KEY, "local").unwrap();
-        a.db.set_setting(chat::WEB_ACCESS_KEY, "yes").unwrap(); // 不正な値
+        a.db.set_setting(debug_log::ENABLED_KEY, "yes").unwrap(); // 不正な値
         a.secrets.set_tts_key("tts-a").unwrap();
         assert!(copy(&a, &b, CopyOptions { include_keys: true, ..Default::default() }).is_err());
-        assert_eq!(b.db.get_setting(chat::WEB_ACCESS_KEY).unwrap(), None);
+        assert_eq!(b.db.get_setting(debug_log::ENABLED_KEY).unwrap(), None);
         assert!(!b.secrets.has_tts_key().unwrap(), "キーも写さない");
     }
 
@@ -375,23 +363,23 @@ mod tests {
     fn key_copy_failure_leaves_destination_untouched() {
         let (_da, a) = ctx("a");
         let (_db, b) = ctx("b");
-        a.db.set_setting(chat::WEB_ACCESS_KEY, "0").unwrap();
+        a.db.set_setting(debug_log::ENABLED_KEY, "0").unwrap();
         a.secrets.set_tts_key("tts-a").unwrap();
         // コピー先のキー保管庫を書けなくする(保存先に同名のフォルダがある)
         std::fs::create_dir(b.dir.join("secrets.json")).unwrap();
         assert!(copy(&a, &b, CopyOptions { include_keys: true, ..Default::default() }).is_err());
-        assert_eq!(b.db.get_setting(chat::WEB_ACCESS_KEY).unwrap(), None, "設定は書かれない");
+        assert_eq!(b.db.get_setting(debug_log::ENABLED_KEY).unwrap(), None, "設定は書かれない");
         assert!(!b.secrets.has_tts_key().unwrap(), "メモリ上のキーも変わらない");
     }
 
     #[test]
-    fn policy_and_keys_are_rolled_back_when_settings_write_fails() {
+    fn permissions_and_keys_are_rolled_back_when_settings_write_fails() {
         let (_da, a) = ctx("a");
         let (_db, b) = ctx("b");
         let custom = tempfile::tempdir().unwrap();
         a.db.set_setting("knowledge_dir", &custom.path().to_string_lossy()).unwrap();
-        command_policy::add_allow(&a.db, &["mytool".to_owned()]).unwrap();
-        a.db.set_setting(chat::WEB_ACCESS_KEY, "0").unwrap(); // 書き込む設定がないと、失敗が起きない
+        permissions::add_allow(&a.db, &["mytool".to_owned()]).unwrap();
+        a.db.set_setting(debug_log::ENABLED_KEY, "0").unwrap();
         a.secrets.set_tts_key("tts-a").unwrap();
         b.secrets.set_proxy_password("p1", "pw-b").unwrap();
         // 設定の書き込みを失敗させる(設定テーブルを壊す)
@@ -399,7 +387,6 @@ mod tests {
         assert!(copy(&a, &b, CopyOptions { include_keys: true, ..Default::default() }).is_err());
         assert!(!b.secrets.has_tts_key().unwrap(), "コピーしたキーは戻る");
         assert!(b.secrets.has_proxy_password("p1").unwrap(), "元からあったキーは残る");
-        let policy = command_policy::load(&b.db);
-        assert!(!policy.allow.contains(&"mytool".to_owned()), "コマンド権限も戻る");
+        assert!(!permissions::load(&b.db).allow.contains(&"Bash(mytool:*)".to_owned()), "権限の settings.json も書かれない");
     }
 }

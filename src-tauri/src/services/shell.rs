@@ -1,5 +1,5 @@
 //! `run_command`の実行。`/bin/sh -c`で子プロセスを起動し、出力を逐次通知しながらタイムアウトと中断を監視する。
-//! 実行してよいかの判定は`command_policy`で済ませてから呼ぶこと。
+//! 実行してよいかの判定は`permissions`で済ませてから呼ぶこと。
 use std::{path::Path, process::Stdio, time::Duration};
 
 use serde::Serialize;

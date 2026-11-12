@@ -105,7 +105,6 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** ナレッジのファイル操作・コマンド実行中に表示する文言。 */
 const TOOL_ACTIVITY: Record<string, string> = {
-  propose_plan: "手順を考えています…",
   run_command: "コマンドを実行しています…",
   list_files: "ファイルを一覧しています…",
   read_file: "ファイルを読んでいます…",
@@ -441,7 +440,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 読み込みはワークスペースごとに1回
   }, [workspaceId]);
 
-  /** `once`: 許可リストにないコマンドを、許可へ加えずに今回だけ実行する。 */
+  /** `once`: 許可に一致しないコマンドを、許可へ加えずに今回だけ実行する。 */
   const answerApproval = (approved: boolean, once = false) => {
     const a = approvalRef.current;
     if (!a) return;
@@ -453,7 +452,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   const answerByVoice = (text: string) => {
     const answer = judgeAnswer(text);
     const kind = approvalRef.current?.kind;
-    // コマンドの個別承認と許可リストへの追加は、周囲の音声で誤って通らないよう、ボタンでだけ承認できる(拒否は音声でもできる)
+    // コマンドの承認と許可への追加は、周囲の音声で誤って通らないよう、ボタンでだけ承認できる(拒否は音声でもできる)
     if (answer === "yes" && kind && !voiceCanApprove(kind)) toast.info(t("このコマンドの承認は、画面のボタンで行ってください。"));
     else if (answer === "yes") answerApproval(true);
     else if (answer === "no") answerApproval(false);

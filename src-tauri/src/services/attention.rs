@@ -36,7 +36,7 @@ pub struct Attention {
     pub workspace_name: Option<String>,
     pub workspace_color: Option<String>,
     pub kind: AttentionKind,
-    /// 承認の種類(`file` / `plan` / `command` / `allow_command` / `skill_update` / `skill_delete`)。承認のときだけ。
+    /// 承認の種類(`file` / `file_overwrite` / `command` / `allow_command` / `skill_update` / `skill_delete` / `tool_use`)。承認のときだけ。
     pub approval_kind: Option<&'static str>,
     /// 承認を求められている内容(ファイルは作成先、コマンドはその内容)を、1行にまとめたもの。計画では空。
     pub detail: Option<String>,
@@ -80,7 +80,6 @@ fn kind_name(kind: ApprovalKind) -> &'static str {
     match kind {
         ApprovalKind::File => "file",
         ApprovalKind::FileOverwrite => "file_overwrite",
-        ApprovalKind::Plan => "plan",
         ApprovalKind::Command => "command",
         ApprovalKind::AllowCommand => "allow_command",
         ApprovalKind::SkillUpdate => "skill_update",
@@ -93,7 +92,6 @@ fn kind_name(kind: ApprovalKind) -> &'static str {
 pub fn detail_of(a: &Approval) -> String {
     match a.kind {
         ApprovalKind::File | ApprovalKind::FileOverwrite => truncate(&a.path),
-        ApprovalKind::Plan => String::new(),
         ApprovalKind::Command => truncate(&a.preview),
         ApprovalKind::AllowCommand => truncate(&a.steps.join(", ")),
         ApprovalKind::ToolUse => truncate(&format!("{} {}", a.path, a.preview)),
@@ -121,7 +119,6 @@ mod tests {
         let d = |kind, path, preview, steps: &[&str]| detail_of(&approval(kind, path, preview, steps));
         assert_eq!(d(ApprovalKind::File, "notes/a.md", "body", &[]), "notes/a.md");
         assert_eq!(d(ApprovalKind::FileOverwrite, "data/reports/a.md", "body", &[]), "data/reports/a.md");
-        assert_eq!(d(ApprovalKind::Plan, "", "overview", &["1", "2"]), "", "計画は内容を載せない");
         assert_eq!(d(ApprovalKind::Command, "", "git\n  status", &[]), "git status");
         assert_eq!(d(ApprovalKind::AllowCommand, "", "", &["git status", "ls"]), "git status, ls");
         assert_eq!(d(ApprovalKind::SkillUpdate, "daily", "全文", &[]), "daily");
@@ -129,7 +126,6 @@ mod tests {
         let names = [
             ApprovalKind::File,
             ApprovalKind::FileOverwrite,
-            ApprovalKind::Plan,
             ApprovalKind::Command,
             ApprovalKind::AllowCommand,
             ApprovalKind::SkillUpdate,
@@ -137,7 +133,7 @@ mod tests {
             ApprovalKind::ToolUse,
         ]
         .map(kind_name);
-        assert_eq!(names, ["file", "file_overwrite", "plan", "command", "allow_command", "skill_update", "skill_delete", "tool_use"]);
+        assert_eq!(names, ["file", "file_overwrite", "command", "allow_command", "skill_update", "skill_delete", "tool_use"]);
         assert_eq!(d(ApprovalKind::ToolUse, "Bash", "git  push", &[]), "Bash git push");
     }
 

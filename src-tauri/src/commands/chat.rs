@@ -10,7 +10,6 @@ use tauri::{AppHandle, Emitter, Manager, State, ipc::Channel};
 
 use crate::{
     commands::task as task_cmd,
-    db::Db,
     services::{
         tool_loop::{self, TaskEvent},
         attention::{self, AttentionKind},
@@ -24,7 +23,7 @@ use crate::{
         cancel::CancelToken,
         chat_session, profile, prompts, sandbox, sandbox_agent,
         skills,
-        agent_data, tuning,
+        agent_data, permissions, tuning,
         workspace::{self, Ctx, WorkspaceCtx, Workspaces, active},
     },
     utils::error::AppError,
@@ -32,7 +31,6 @@ use crate::{
 
 pub const ROUTE_KEY: &str = "routing";
 pub const BASE_INSTRUCTIONS_KEY: &str = "base_instructions";
-pub const WEB_ACCESS_KEY: &str = "web_access";
 /// 発話から想起する関連ノートの上限(件数・合計文字数)。本文は渡さず要約だけにしてトークン圧迫を避ける。
 const RELATED_NODES: usize = 5;
 const RELATED_CHARS: usize = 1_500;
@@ -76,25 +74,10 @@ pub fn base_instructions(db: &impl SettingsStore) -> Result<String, AppError> {
     })
 }
 
-/// インターネット検索の可否。未設定なら有効。
-fn web_access(db: &Db) -> Result<bool, AppError> {
-    Ok(db.get_setting(WEB_ACCESS_KEY)?.as_deref() != Some("0"))
-}
-
 /// サンドボックスで動くか。ワークのエージェントは常にコンテナで動く(切り替えは無い)。
 /// パーソナルはホストで動き、リーダーはコマンドを実行しないので対象外。
 pub fn sandbox_enabled(ctx: &WorkspaceCtx) -> bool {
     sandbox::runs_in_sandbox(&ctx.id)
-}
-
-#[tauri::command]
-pub fn get_web_access(ctx: Ctx) -> Result<bool, AppError> {
-    web_access(&ctx.db)
-}
-
-#[tauri::command]
-pub fn set_web_access(ctx: Ctx, enabled: bool) -> Result<(), AppError> {
-    ctx.db.set_setting(WEB_ACCESS_KEY, if enabled { "1" } else { "0" })
 }
 
 #[tauri::command]
@@ -591,7 +574,11 @@ async fn send_chat_inner(
         target.provider,
         &target.model,
         system,
-        web_access(&ctx.db)?.then_some((tuning.web_search_max, tuning.web_fetch_max)),
+        {
+            // Web 検索・ページ取得は、settings.json の permissions で許可したものだけ渡す
+            let web = permissions::web_access(&permissions::load(&ctx.db));
+            (web.search.then_some(tuning.web_search_max), web.fetch.then_some(tuning.web_fetch_max))
+        },
         sandbox_enabled(ctx),
         host,
         prepared.access,

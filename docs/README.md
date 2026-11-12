@@ -21,7 +21,7 @@
 | [conversation-session.md](conversation-session.md) | 会話の継続と切り替え、履歴からの再開、自動で会話を続けるループ |
 | [agent-file-tools.md](agent-file-tools.md) | ホストのツールループ、ファイル操作・設計書の参照・インターネット検索のツール |
 | [agent-command-tasks.md](agent-command-tasks.md) | 作業依頼(計画の承認とコマンド実行) |
-| [command-policy.md](command-policy.md) | コマンドの許可・拒否の判定とポリシー(DB) |
+| [api-permissions.md](api-permissions.md) | API 方式の権限(settings.json)。コマンドと Web 検索・ページ取得の可否 |
 | [sandbox.md](sandbox.md) | Docker サンドボックス(コンテナ内の Claude Code の実行、認証情報、マウント、承認、Dockerfile、コンテナの準備と後始末、後回しにした項目) |
 | [skills.md](skills.md) | スキル(決まった依頼への対応手順)、軽量モデルによる選定、会話からの管理 |
 

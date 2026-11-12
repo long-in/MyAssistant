@@ -51,8 +51,8 @@ pub(crate) async fn wait_for_answer(
 /// 音声対話の1ターンをファイル操作ツール付きで実行する(Anthropic直接・Bedrock・端末内のLLM)。
 /// `history`は直前までの会話(`user`/`assistant`のテキスト)で、今回の発話は`user_text`で渡す。
 /// ツールの使い方は`system`の固定部分の末尾へ足す(設定を変えない限り変わらず、キャッシュの対象になる)。
-/// `web_access`が有効なときは、インターネット検索・ページ取得(サーバーツール)も渡す。Bedrockと端末内のLLMでは使えない。
-/// リーダー以外には、作業計画の提示とシェルコマンドの実行も渡す(可否はコマンド権限で決める)。
+/// `web`は検索・ページ取得(サーバーツール)の回数の上限で、`Some`のものだけ渡す(settings.json で許可したもの)。Bedrockと端末内のLLMでは使えない。
+/// リーダー以外には、シェルコマンドの実行も渡す(可否は settings.json の`permissions`で決める)。
 /// `sandbox`が有効なら、コマンドはそのエージェントのDockerコンテナで実行する。
 /// `skills`の範囲だけ、スキル用のツール(手順の読み込み・作成・更新・削除)とその使い方も渡す。リーダーにも渡す。
 /// 進捗(ツール呼び出し・承認要求・コマンド出力)は`on_event`へ流す。実行中は`task_cancel`で中断できる。
@@ -63,7 +63,7 @@ pub async fn run_with_tools(
     provider: Provider,
     model: &str,
     system: SystemPrompt,
-    web_access: Option<(u32, u32)>,
+    web: (Option<u32>, Option<u32>),
     sandbox: bool,
     host: Option<tool_loop::ToolHost<'_>>,
     skills: SkillAccess,
@@ -87,16 +87,16 @@ pub async fn run_with_tools(
         tools.extend(tool_loop::docs_tool_definitions());
         tools
     };
-    let web_access = if leader { None } else { web_access };
+    let (search, fetch) = if leader || provider != Provider::Anthropic { (None, None) } else { web };
     let sandbox = sandbox && shell_access && !leader && sandbox::is_supported(&ctx.id);
     if shell_access {
         let guide = if sandbox { tool_loop::SANDBOX_GUIDE.to_owned() } else { tool_loop::shell_guide() };
         system.push_str(&format!("\n\n{guide}"));
     }
     // 検索・ページ取得はAnthropicのサーバーツールで、Bedrockと端末内のLLMには無い
-    if let Some((search_max, fetch_max)) = web_access.filter(|_| provider == Provider::Anthropic) {
-        system.push_str(&format!("\n\n{}", tool_loop::WEB_GUIDE));
-        tools.extend(tool_loop::web_tool_definitions(search_max, fetch_max));
+    if search.is_some() || fetch.is_some() {
+        system.push_str(&format!("\n\n{}", tool_loop::web_guide(search.is_some(), fetch.is_some())));
+        tools.extend(tool_loop::web_tool_definitions(search, fetch));
     }
     if skills.any() {
         system.push_str(&format!("\n\n{}", tool_loop::SKILL_GUIDE));
@@ -137,7 +137,7 @@ pub async fn run_with_tools(
 }
 
 /// 承認への応答。待っていない`id`は無視する。
-/// `once`は、許可リストにないコマンドの承認で「今回だけ実行する」(許可リストへ加えない)を選んだとき。
+/// `once`は、許可に一致しないコマンドの承認で「今回だけ実行する」(許可へ加えない)を選んだとき。
 #[tauri::command]
 pub fn task_approve(ctx: Ctx, id: String, approved: bool, once: Option<bool>) {
     if approved && once == Some(true) {

@@ -16,7 +16,7 @@
 | エージェント一覧 | `<アプリデータ>/work/registry.json`(id・名称・色・作成日時) |
 | 全体設定・共通データ | `<アプリデータ>/work/global_settings.db`、`work/shared_data.json`(全ワークスペース共通。[global-settings.md](global-settings.md)) |
 
-分離するもの: 設定・会話・コマンド権限(`timeline.db`)、APIキー・AWS設定(`secrets.json`)、サンドボックスの環境変数(`sandbox.env`)・Dockerのコンテナとボリューム(Dockerfileとイメージは共通。専用の登録があれば `agent-sandbox/`)([sandbox.md](sandbox.md))、ナレッジ(記憶・スキル・聞き取り訂正を含む)、デバッグログ、読み上げ辞書。
+分離するもの: 設定・会話・API 方式の権限(`timeline.db`)、APIキー・AWS設定(`secrets.json`)、サンドボックスの環境変数(`sandbox.env`)・Dockerのコンテナとボリューム(Dockerfileとイメージは共通。専用の登録があれば `agent-sandbox/`)([sandbox.md](sandbox.md))、ナレッジ(記憶・スキル・聞き取り訂正を含む)、デバッグログ、読み上げ辞書。
 
 共有するもの(端末の資源): Whisper・VOICEVOX・VAD・ローカル LLM のモデルとエンジン、録音、定型音声(`voice/`)、全体設定、プロキシのパスワード(`proxy/secrets.json`)。
 
@@ -81,12 +81,12 @@
 
 ### 内容
 
-- 対象: 設定のエクスポートと同じ項目(モデルの選択・音声・調整値・整理と校正のモデル・プロンプトの上書き・Sandbox の上限時間と settings.json・プロキシの選択など。[data-and-settings.md](data-and-settings.md#設定のエクスポートインポートsettings_transferrs))とコマンド権限。
+- 対象: 設定のエクスポートと同じ項目(モデルの選択・音声・調整値・整理と校正のモデル・プロンプトの上書き・Sandbox の上限時間と settings.json・プロキシの選択など。[data-and-settings.md](data-and-settings.md#設定のエクスポートインポートsettings_transferrs))。API 方式の権限の settings.json も設定項目として含む。
 - 既定ではコピーしないもの: APIキー・AWS設定(スイッチ「Also copy API keys」)。キーのコピーは上書き方式(決定済み)。コピー先にだけあるキーは残し、同じキーはコピー元の値で上書きする。コピー元での削除は同期しない。
 - 読み上げ辞書は、任意スイッチ(初期状態OFF)でコピーできる。コピー先の辞書は置き換わる。
 - 常にコピーしないもの: 全体設定の項目(ベースプロンプト・パーソナルデータ・起動ワード・音声入力の待ち時間など。全エージェント共通で、[global-settings.md](global-settings.md))、エージェントデータ、ナレッジ・会話・ナレッジとデバッグログの保存先、`sandbox.env`。共通データは全エージェント共通なのでコピー不要。
 - キーの生値はRust内(`Secrets::copy_from`)で写し、画面には件数だけ返す。キーを写したら、コピー先のAWS一時クレデンシャルは破棄する。
-- 検証 → キー → コマンド権限 → 読み上げ辞書 → 設定(トランザクション)の順に書き、途中で失敗したら、書いたキー・コマンド権限・辞書を元へ戻す。同じワークスペースどうしのコピーは拒否する。
+- 検証 → キー → 読み上げ辞書 → 設定(トランザクション)の順に書き、途中で失敗したら、書いたキー・辞書を元へ戻す。同じワークスペースどうしのコピーは拒否する。
 - コピー先が選択中のときは、成功後に設定画面などを読み直す。失敗しても、選択中なら表示を更新する。
 
 部品: `CopySettingsCard`(コピー元・先の選択)、`CopyOptions`(スイッチ)、`CopyConfirmModal`(最終確認と実行)、`AgentChip`(名称と色の表示)、`lib/copyTargets.ts`(選択肢と依頼の型)。

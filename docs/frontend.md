@@ -30,11 +30,11 @@ Next.js 16(App Router、`output: "export"`)の静的サイト。Tauri の WebVie
 | `ChatThread` | 会話のスレッド。発話(枠つき)、実行ログ、返答(丸印つき)の順に並べ、最新を追いかける。返答と発話にはコピーボタン、返答には読み上げ・かかった時間・モデル名を添える。送信に失敗した発話は「再送」できる。ユーザー発話は手で直して聞き取り訂正として保存できる([voice-input.md](voice-input.md)) |
 | `ChatMarkdown` | Markdown の描画(表・リスト・コード・見出し)。コードブロックは言語名とコピーボタンつき。` ```mermaid ` のブロックは図として描き、図とコードを切り替えられる。画像は読み込まず、リンクは開かない([security.md](security.md))。ナレッジ・スキルの表示でも使う |
 | `Reply` | 新しい返答の表示。読み上げ中は再生位置に合わせて字幕のように出し、読み上げないときはタイプライターで出す |
-| `TurnLog` / `ExecutionLog` | 発話ごとの実行ログ。`操作名(対象)` の行に、出力を「⎿」でぶら下げる。計画があれば手順ごとにまとめ、実行中は「中断」できる |
+| `TurnLog` / `ExecutionLog` | 発話ごとの実行ログ。`操作名(対象)` の行に、出力を「⎿」でぶら下げる。保存済みの実行ログに以前の作業計画があれば手順ごとにまとめ、実行中は「中断」できる |
 | `ChatComposer` | 入力カード。1 つの枠に、入力欄・音声入力・常時待機・読み上げ/ミュート・新しい会話・モデルの切り替え(`ModelPicker`)・送信/中断をまとめる。「/」でスキルを指定する([skills.md](skills.md))。右のパネルを畳んでいるあいだは、枠の下の帯に、処理段階(小さな `VoiceOrb` つき)・往復数・コンテナの状態と起動/停止・時刻(東京)・バージョンを出す |
 | `VoiceOrb` / `OrbReadout` | 円形の波形(マイク入力と読み上げの音量)と、その中心の処理段階の表示: 待機中 / 初期化中 / 音声入力中 / 音声解析中 / 思考中 / 音声出力中(段階ごとに色相が変わる) |
 | `InfoCard` | 時刻・世界時計・往復数・モデル・コンテナの状態と操作 |
-| `ApprovalModal` | 承認要求(計画・コマンド・許可リストへの追加・ファイル作成・資料の上書き・スキルの変更)。音声での返答中は聞き取り中の表示が出る。コマンドの個別承認と許可リストへの追加はボタンのみ([agent-command-tasks.md](agent-command-tasks.md#承認の種類))。Tab の移動はダイアログの中に留める |
+| `ApprovalModal` | 承認要求(コマンド・許可への追加・ファイル作成・資料の上書き・スキルの変更・Claude Code のツール)。音声での返答中は聞き取り中の表示が出る。コマンドの承認と許可への追加はボタンのみ([agent-command-tasks.md](agent-command-tasks.md#承認の種類))。Tab の移動はダイアログの中に留める |
 | `SwitchConfirm` | 会話の切り替えの確認 |
 | `LeaderLedger` | リーダーの台帳。リーダーのときだけ、右のパネルの円形波形の下に並べる |
 | `ChatNotices` | 設定不足(キー・モデル・コンテナ)の案内 |
@@ -89,7 +89,7 @@ Next.js 16(App Router、`output: "export"`)の静的サイト。Tauri の WebVie
 | --- | --- |
 | LLM | AI Link(接続方式(パーソナル・リーダー)、API キー、AWS、端末内の LLM)、Copy API key(リーダーのみ)、AI Limits(検索回数などの上限。リーダー以外)、AI Settings(機能ごとのモデルとプロンプト。[llm-settings.md](llm-settings.md))、Agent Data(ワークのエージェント)/ Leader Prompt・Active Agents(リーダー) |
 | 音声 | Voice Input(Whisper の取得バージョンを含む)、Voice Output(VOICEVOX の取得バージョン・読み上げ辞書・定型音声を含む) |
-| 権限 | Web Search、Command Policy(リーダーには無い。Command Policy は Bedrock 方式(ワークは常に)でも出さない) |
+| 権限 | settings.json(API 方式の、コマンドと Web 検索・ページ取得の権限。[api-permissions.md](api-permissions.md))。リーダーには無く、Bedrock 方式(ワークは常に)でも出さない(Sandbox タブの settings.json で決める) |
 | Sandbox | 常に出るタブ。ただしパーソナル・リーダーは、AI Link の接続方式が API のあいだは、「Bedrock 方式のときだけ使えます」という案内だけを出す(接続方式の読み込みが終わるまでは何も出さない)。ワークのエージェントは常にサンドボックスで動き、切り替えは無い。準備のチェックリスト(Docker・イメージのビルド・コンテナの起動。`SandboxSteps`)と、詳細設定(担当システムのフォルダ `/knowledge/data`、専用の Dockerfile、`sandbox.env`、上限時間と自動停止、Claude Code の settings.json)([sandbox.md](sandbox.md#設定画面)) |
 | その他 | 名前・色の編集(Agent)、使うプロキシの選択(Proxy)、設定の書き出し・取り込み(Backup)、設定のコピー(Copy Settings。ワークのエージェント)、Debug Mode、削除(Danger Zone。ワークのエージェント) |
 

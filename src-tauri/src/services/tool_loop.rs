@@ -1,7 +1,7 @@
 //! ナレッジディレクトリを対象にしたファイル操作と、シェルコマンドによる作業を行うエージェント。
-//! LLMにツール(一覧・読み取り・検索・新規作成、作業計画の提示・コマンド実行)を渡し、`tool_use`を実行して結果を返すループを回す。
+//! LLMにツール(一覧・読み取り・検索・新規作成・コマンド実行)を渡し、`tool_use`を実行して結果を返すループを回す。
 //! ファイルのパスはすべて`utils::path`のサンドボックスを通し、LLM出力を直接`fs`へ渡さない。
-//! コマンドは`command_policy`の判定と、ユーザーの承認(計画・個別)を通ったものだけを`shell`で実行する。
+//! コマンドは`permissions`の判定(settings.json の`permissions`とアプリデータの保護)と、必要なときはユーザーの承認を通ったものだけを`shell`で実行する。
 use std::{
     fs,
     future::Future,
@@ -15,12 +15,12 @@ use serde_json::{Value, json};
 
 use super::{
     cancel::CancelToken,
-    command_policy::{self, Verdict},
     global_settings::SettingsStore,
     docs,
     knowledge,
     llm_client::{ToolCall, ToolTurn},
     memory::{self, Forgot, Remembered},
+    permissions::{self, Verdict},
     sandbox,
     shell::{self, Stream},
     skills::{self, Access as SkillAccess},
@@ -36,9 +36,6 @@ const MAX_STEPS: usize = 20;
 const MAX_STEPS_SHELL: usize = 40;
 /// 中断したときにユーザーへ返す文面。
 pub const CANCELLED_TEXT: &str = "作業を中断しました。";
-/// `propose_plan`の手順の上限(個数と1件あたりの文字数)。
-const PLAN_MAX_STEPS: usize = 20;
-const PLAN_STEP_CHARS: usize = 300;
 /// `run_command`のコマンド長の上限と、タイムアウトの既定・上限(秒)。
 const COMMAND_MAX_CHARS: usize = 4_000;
 const COMMAND_TIMEOUT_SECS: u64 = 60;
@@ -57,7 +54,7 @@ const WRITE_EXTENSIONS: [&str; 2] = ["md", "txt"];
 
 /// 音声対話のシステムプロンプトへ追加する、ファイル操作ツールの使い方。
 /// 拡張子・上書き不可・承認などツール定義の`description`にある内容は繰り返さない。
-/// ツール結果の扱い(参考データ・読み上げ)はここで一度だけ書き、`shell_guide`・`WEB_GUIDE`では繰り返さない。
+/// ツール結果の扱い(参考データ・読み上げ)はここで一度だけ書き、`shell_guide`・`web_guide`では繰り返さない。
 pub const TOOL_GUIDE: &str = "\
 ツール\n\
 - このアプリの機能・仕様・使い方を聞かれたら、推測せず先に設計書ツールで確かめて答える。設計書に書かれていないことは、その旨を伝える。\n\
@@ -76,11 +73,11 @@ pub fn shell_guide() -> String {
         "\
 作業実行ツール\n\
 - 環境はmacOS、ホームは{home}。コマンドは/bin/sh -cで実行され、cwdの既定はホーム。\n\
-- 読み取り系(ls、cat、grep、ps、git statusなど)はどこでも実行できる。許可リストにない状態を変えるコマンドをナレッジの外で実行するときは、許可に加えてよいかをユーザーに確認して実行する。それ以外はcwdとパスをナレッジ内にしたときだけ実行できる。\n\
+- 設定(settings.json)の許可に一致するコマンドは承認なしで実行され、それ以外は実行前にユーザーの承認が入る。拒否に一致するコマンドは実行できない。\n\
 - 作業の依頼は進行中の会話の続きとして扱う。ユーザーが明示しない限り、会話の切り替えやクリアを提案しない。\n\
-- ユーザーが作業を依頼したときだけ使う。まず読み取り系で状況を確かめ、推測で進めない。対象や期待する結果が曖昧なら、計画の前に一つずつ聞き返す。\n\
-- 状態を変える作業は、先にpropose_planで手順を示して承認を得る。承認済みの手順はrun_commandのstepに番号を指定すれば都度の承認なしで実行でき、計画外や破壊的なコマンドには都度承認が入る。\n\
-- rm・sudo・OSの設定に影響するコマンドは拒否される。拒否されたら理由を伝えて別の方法を相談する。\n\
+- ユーザーが作業を依頼したときだけ使う。まず読み取り系で状況を確かめ、推測で進めない。対象や期待する結果が曖昧なら、実行の前に一つずつ聞き返す。\n\
+- 状態を変える作業は、実行する前に何をするかを短く伝える。\n\
+- 拒否されたり承認されなかったりしたら、理由を伝えて別の方法を相談する。\n\
 - 失敗したら出力から原因を直して再試行する。同じ失敗を繰り返さず、行き詰まったら状況を伝える。\n\
 - APIキーや認証情報を読み取らない。\n\
 - 最終回答は、何をしてどうなったかを短く伝える。"
@@ -93,19 +90,26 @@ pub const SANDBOX_GUIDE: &str = "\
 - コマンドはこのエージェント専用のLinuxコンテナ(Debian)の中で、/bin/shで実行される。macOSのコマンド(brew、open、osascriptなど)とホームのファイルは使えない。\n\
 - ナレッジはコンテナ内の/knowledgeにあり、担当システムのフォルダ(ソースコードなど)は/knowledge/dataにある。cwdの既定は/knowledge/dataで、cwdには/knowledgeの配下だけを指定できる。\n\
 - awsコマンド、git、jq、python3、nodeなどが入っている。認証情報は環境変数としてすでに渡されているので、読み取ったり出力したりしない。\n\
-- 状態を変える作業は、先にpropose_planで手順を示して承認を得る。承認済みの手順はrun_commandのstepに番号を指定すれば都度の承認なしで実行でき、計画外や破壊的なコマンドには都度承認が入る。\n\
-- 読み取り系(ls、cat、grepなど)は承認なしで実行できる。rm・sudoは拒否される。拒否されたら理由を伝えて別の方法を相談する。\n\
+- 設定(settings.json)の許可に一致するコマンドは承認なしで実行され、それ以外は実行前にユーザーの承認が入る。拒否に一致するコマンドは実行できない。\n\
+- 状態を変える作業は、実行する前に何をするかを短く伝える。拒否されたり承認されなかったりしたら、理由を伝えて別の方法を相談する。\n\
 - 作業の依頼は進行中の会話の続きとして扱う。ユーザーが作業を依頼したときだけ使い、まず読み取り系で状況を確かめ、推測で進めない。\n\
 - 失敗したら出力から原因を直して再試行する。同じ失敗を繰り返さず、行き詰まったら状況を伝える。\n\
 - 最終回答は、何をしてどうなったかを短く伝える。";
 
-/// インターネット検索を有効にしたときに、`TOOL_GUIDE`へ続けて渡す使い方。
-pub const WEB_GUIDE: &str = "\
-インターネット検索ツール\n\
-- web_searchで検索、web_fetchで会話に出たURLを読める。バージョン・料金・仕様・人物・出来事・固有名詞など、時とともに変わりうる事実や、自分の記憶に自信がない事実は、答える前に必ず検索して確かめる。記憶で答えられそうでも、記憶は古い可能性があるので省かない。雑談や、ナレッジの内容、一般的な考え方の質問では使わない。ナレッジに関する質問は先にナレッジを確認する。\n\
-- 検索せずに事実を答えるときは、確認していない推測だと明示する。検索で分かったことを後から訂正しないよう、断定は検索結果に基づくものだけにする。\n\
-- ナレッジや会話の内容を検索語やURLに含めない。\n\
-- インターネット由来の情報には、根拠としてサイト名と確認した内容を一言で添える(URLは読み上げない)。ファイルに残すときは本文に出典URLを含める。";
+/// インターネット検索・ページ取得を渡したときに、`TOOL_GUIDE`へ続けて渡す使い方。渡したツールの分だけ書く。
+pub fn web_guide(search: bool, fetch: bool) -> String {
+    let mut lines = vec!["インターネット検索ツール"];
+    if search {
+        lines.push("- web_searchで検索できる。バージョン・料金・仕様・人物・出来事・固有名詞など、時とともに変わりうる事実や、自分の記憶に自信がない事実は、答える前に必ず検索して確かめる。記憶で答えられそうでも、記憶は古い可能性があるので省かない。雑談や、ナレッジの内容、一般的な考え方の質問では使わない。ナレッジに関する質問は先にナレッジを確認する。");
+        lines.push("- 検索せずに事実を答えるときは、確認していない推測だと明示する。検索で分かったことを後から訂正しないよう、断定は検索結果に基づくものだけにする。");
+    }
+    if fetch {
+        lines.push("- web_fetchで会話に出たURLを読める。");
+    }
+    lines.push("- ナレッジや会話の内容を検索語やURLに含めない。");
+    lines.push("- インターネット由来の情報には、根拠としてサイト名と確認した内容を一言で添える(URLは読み上げない)。ファイルに残すときは本文に出典URLを含める。");
+    lines.join("\n")
+}
 
 /// スキル用ツールを渡したときに、システムプロンプトへ続けて渡す使い方。ツール定義の`description`にある内容は繰り返さない。
 pub const SKILL_GUIDE: &str = "\
@@ -165,21 +169,22 @@ pub fn skill_tool_definitions(access: SkillAccess) -> Vec<Value> {
 
 /// Anthropicのサーバーツール(検索・ページ取得)。実行はAnthropic側で行われ、こちらは結果を履歴に保持するだけ。
 /// 全カタログモデルで使えるよう、動的フィルタリング(コード実行を伴う)なしの版を使う。
-/// `search_max`・`fetch_max`は1回の依頼で実行できる検索と取得の回数の上限。
-pub fn web_tool_definitions(search_max: u32, fetch_max: u32) -> Vec<Value> {
-    vec![
-        json!({ "type": "web_search_20250305", "name": "web_search", "max_uses": search_max }),
+/// `search_max`・`fetch_max`は1回の依頼で実行できる検索と取得の回数の上限で、`None`のツールは渡さない。
+pub fn web_tool_definitions(search_max: Option<u32>, fetch_max: Option<u32>) -> Vec<Value> {
+    let search = search_max.map(|n| json!({ "type": "web_search_20250305", "name": "web_search", "max_uses": n }));
+    let fetch = fetch_max.map(|n| {
         json!({
             "type": "web_fetch_20250910",
             "name": "web_fetch",
-            "max_uses": fetch_max,
+            "max_uses": n,
             // ナレッジのファイルに書かれたURLを根拠にした取得(指示の混入による情報送出)を防ぐ
             "url_sources": { "client_tool_results": { "type": "none" } },
-        }),
-    ]
+        })
+    });
+    search.into_iter().chain(fetch).collect()
 }
 
-/// LLMに渡すツール定義。`shell`が有効なら、作業計画の提示とコマンド実行も含める。
+/// LLMに渡すツール定義。`shell`が有効なら、コマンド実行も含める。
 pub fn tool_definitions(shell: bool) -> Vec<Value> {
     let mut tools = file_tool_definitions();
     if shell {
@@ -189,38 +194,19 @@ pub fn tool_definitions(shell: bool) -> Vec<Value> {
 }
 
 fn shell_tool_definitions() -> Vec<Value> {
-    vec![
-        json!({
-            "name": "propose_plan",
-            "description": "状態を変える作業の前に、実行する手順をユーザーへ提示して承認を求める。承認されるまで状態を変えるコマンドは実行できない。承認されたら、手順に沿ってrun_commandを実行する。",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "summary": { "type": "string", "description": "作業の目的を1文で" },
-                    "steps": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "実行する手順。1件ずつ、何をするかを短く(画面に表示し、音声で読み上げる)"
-                    }
-                },
-                "required": ["steps"]
-            }
-        }),
-        json!({
-            "name": "run_command",
-            "description": "シェルコマンドを実行し、終了コードと標準出力・標準エラーを返す。読み取り系は承認なしで実行される。状態を変えるコマンドはpropose_planの承認後に、stepを指定して実行する。",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "command": { "type": "string", "description": "/bin/sh -cに渡すコマンド" },
-                    "cwd": { "type": "string", "description": "作業ディレクトリ(絶対パスまたは~/から)。省略時はホーム。読み取り系以外はナレッジ内を指定する" },
-                    "step": { "type": "integer", "description": "承認済みの計画のうち、このコマンドが対応する手順の番号(1始まり)" },
-                    "timeout_secs": { "type": "integer", "description": "時間切れまでの秒数。既定60、最大600" }
-                },
-                "required": ["command"]
-            }
-        }),
-    ]
+    vec![json!({
+        "name": "run_command",
+        "description": "シェルコマンドを実行し、終了コードと標準出力・標準エラーを返す。設定の許可に一致するものは承認なしで、それ以外はユーザーの承認後に実行される。拒否に一致するものは実行できない。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": { "type": "string", "description": "/bin/sh -cに渡すコマンド" },
+                "cwd": { "type": "string", "description": "作業ディレクトリ(絶対パスまたは~/から)。省略時はホーム" },
+                "timeout_secs": { "type": "integer", "description": "時間切れまでの秒数。既定60、最大600" }
+            },
+            "required": ["command"]
+        }
+    })]
 }
 
 fn file_tool_definitions() -> Vec<Value> {
@@ -605,13 +591,13 @@ pub enum ApprovalKind {
     File,
     /// 資料(`data/reports`の下)の上書き。`path`に上書きするファイル、`preview`に新しい内容の全文が入る。
     FileOverwrite,
-    Plan,
+    /// コマンドの実行。`permissions.ask`に一致したもの、または内容を確かめられないもの。
     Command,
     /// スキルの上書き。`path`にスキル名、`preview`に新しい内容の全文が入る。
     SkillUpdate,
     /// スキルの削除。`path`にスキル名、`preview`に削除するスキルの内容が入る。
     SkillDelete,
-    /// 許可リストにないコマンドを、許可に加えて実行してよいか。`steps`に加えるパターンが入る。
+    /// `permissions`のどのルールにも一致しないコマンドを、実行してよいか(今回だけか、許可に加えるか)。`steps`に加えるパターンが入る。
     AllowCommand,
     /// サンドボックスの Claude Code が、settings.json の`permissions.ask`に当たったツールを実行してよいか。`path`にツール名、`preview`に入力(コマンドなど)が入る。
     ToolUse,
@@ -623,11 +609,11 @@ pub struct Approval {
     /// `tool_use`のid。承認の応答と対応づける。
     pub id: String,
     pub kind: ApprovalKind,
-    /// ファイルは作成先、コマンドは作業ディレクトリ。計画では空。
+    /// ファイルは作成先、コマンドは作業ディレクトリ。
     pub path: String,
-    /// ファイルは全文、コマンドはコマンド、計画は概要。
+    /// ファイルは全文、コマンドはコマンド。
     pub preview: String,
-    /// 計画の手順。計画以外では空。
+    /// 許可へ加えるパターン(`AllowCommand`のみ)。それ以外では空。
     pub steps: Vec<String>,
     /// 個別の承認が必要な理由(コマンドのみ)。
     pub reason: String,
@@ -698,7 +684,7 @@ pub struct TaskOutcome {
     pub text: String,
 }
 
-/// 承認が「今回だけ」(許可リストへ加えない)だったかを、`tool_use`のidで確かめる。確かめたら記録は消える。
+/// 承認が「今回だけ」(許可へ加えない)だったかを、`tool_use`のidで確かめる。確かめたら記録は消える。
 pub type OnceCheck<'a> = &'a (dyn Fn(&str) -> bool + Sync);
 
 /// 1回の依頼の実行環境。
@@ -712,9 +698,9 @@ pub struct Env<'a> {
     skills: SkillAccess,
     /// 指定すると、コマンドをこのエージェントのDockerコンテナの中で実行する(ホストでは実行しない)。
     sandbox: Option<&'a WorkspaceCtx>,
-    /// 許可リストにないコマンドの承認が「今回だけ」だったかの確認。無ければ、承認は常に許可リストへ加える。
+    /// 許可に一致しないコマンドの承認が「今回だけ」だったかの確認。無ければ、承認は常に許可へ加える。
     once: Option<OnceCheck<'a>>,
-    /// コマンド権限を読み書きする設定(エージェントのDB)。`run_command`に必要。
+    /// 権限(settings.json)を読み書きする設定(エージェントのDB)。`run_command`に必要。
     settings: Option<&'a (dyn SettingsStore + Sync)>,
 }
 
@@ -812,8 +798,6 @@ where
 {
     // 中断時の本文は`run`が差し替える
     let cancelled = || Ok(TaskOutcome { text: String::new() });
-    // 承認された作業計画の手順。依頼ごとに持ち、次の依頼には引き継がない
-    let mut plan: Option<Vec<String>> = None;
     for _ in 0..env.max_steps() {
         if env.cancel.is_cancelled() {
             return cancelled();
@@ -846,7 +830,7 @@ where
         }
         let mut results = Vec::new();
         for call in calls {
-            results.push(run_call(env, &mut plan, &call, approve, emit).await);
+            results.push(run_call(env, &call, approve, emit).await);
             if env.cancel.is_cancelled() {
                 return cancelled();
             }
@@ -872,7 +856,6 @@ where
 
 async fn run_call<A, AF, E>(
     env: &Env<'_>,
-    plan: &mut Option<Vec<String>>,
     call: &ToolCall,
     approve: &mut A,
     emit: &mut E,
@@ -898,8 +881,7 @@ where
             result
         }
         "create_file" => create_with_approval(env, call, approve, emit).await,
-        "propose_plan" if env.shell => propose_plan(call, plan, approve, emit).await,
-        "run_command" if env.shell => run_command(env, call, plan.as_deref(), approve, emit).await,
+        "run_command" if env.shell => run_command(env, call, approve, emit).await,
         _ => execute_tool(env.root, &call.name, &call.input),
     };
     let (ok, body) = match outcome {
@@ -1002,57 +984,6 @@ where
     }
 }
 
-/// `propose_plan`の入力検証。`(概要, 手順)`を返す。
-fn validate_plan(input: &Value) -> Result<(String, Vec<String>), String> {
-    let steps: Vec<String> = input
-        .get("steps")
-        .and_then(Value::as_array)
-        .ok_or("stepsが必要です。")?
-        .iter()
-        .filter_map(Value::as_str)
-        .map(|s| s.trim().to_owned())
-        .filter(|s| !s.is_empty())
-        .collect();
-    if steps.is_empty() {
-        return Err("stepsに1つ以上の手順が必要です。".into());
-    }
-    if steps.len() > PLAN_MAX_STEPS || steps.iter().any(|s| s.chars().count() > PLAN_STEP_CHARS) {
-        return Err(format!("手順は{PLAN_MAX_STEPS}件以内、1件{PLAN_STEP_CHARS}文字以内にしてください。"));
-    }
-    let summary = truncate_chars(str_arg(input, "summary").unwrap_or("").trim(), PLAN_STEP_CHARS);
-    Ok((summary, steps))
-}
-
-async fn propose_plan<A, AF, E>(
-    call: &ToolCall,
-    plan: &mut Option<Vec<String>>,
-    approve: &mut A,
-    emit: &mut E,
-) -> Result<String, String>
-where
-    A: FnMut(Approval) -> AF,
-    AF: Future<Output = bool>,
-    E: FnMut(TaskEvent),
-{
-    let (summary, steps) = validate_plan(&call.input)?;
-    // 新しい計画を出したら、承認済みだった前の計画は失効させる
-    *plan = None;
-    let approval = Approval {
-        id: call.id.clone(),
-        kind: ApprovalKind::Plan,
-        path: String::new(),
-        preview: summary,
-        steps: steps.clone(),
-        reason: String::new(),
-    };
-    if ask(approve, emit, approval).await {
-        *plan = Some(steps);
-        Ok("計画が承認されました。手順に沿ってrun_commandを実行してください。stepには対応する手順の番号(1始まり)を指定します。".into())
-    } else {
-        Err("ユーザーが計画を承認しませんでした。コマンドは実行せず、どこを変えたいかをユーザーに尋ねてください。".into())
-    }
-}
-
 /// 作業ディレクトリを解決する。省略時はホーム。絶対パスと`~/`始まりのみ。
 fn resolve_cwd(arg: Option<&str>) -> Result<PathBuf, String> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
@@ -1074,7 +1005,6 @@ fn resolve_cwd(arg: Option<&str>) -> Result<PathBuf, String> {
 async fn run_command<A, AF, E>(
     env: &Env<'_>,
     call: &ToolCall,
-    plan: Option<&[String]>,
     approve: &mut A,
     emit: &mut E,
 ) -> Result<String, String>
@@ -1098,15 +1028,14 @@ where
     };
     let secs = input.get("timeout_secs").and_then(Value::as_u64).unwrap_or(COMMAND_TIMEOUT_SECS);
     let timeout = Duration::from_secs(secs.clamp(1, COMMAND_TIMEOUT_MAX_SECS));
-    let step = input.get("step").and_then(Value::as_u64);
 
-    // 許可・拒否のリストはエージェントの設定(DB)から毎回読み直す
-    let store = env.settings.ok_or("コマンド権限を読み込めません。")?;
-    let policy = command_policy::load(store);
+    // 権限(settings.json)はエージェントの設定(DB)から毎回読み直す
+    let store = env.settings.ok_or("権限の設定を読み込めません。")?;
+    let rules = permissions::load(store);
     let app_data = sandbox::app_dir().ok();
-    let scope = command_policy::Scope::new(env.root, &cwd).with_private(app_data.as_deref());
+    let scope = permissions::Scope::new(env.root, &cwd).with_private(app_data.as_deref());
     let mut allowed = Vec::new();
-    let reason = match command_policy::classify_in(command, &policy, Some(&scope)) {
+    let reason = match permissions::classify(command, &rules, Some(&scope)) {
         Verdict::Deny(reason) => return Err(format!("実行できません: {reason}")),
         Verdict::Unlisted(patterns) => {
             let approval = Approval {
@@ -1115,23 +1044,18 @@ where
                 path: cwd.display().to_string(),
                 preview: command.to_owned(),
                 steps: patterns.clone(),
-                reason: "許可リストにないコマンドです。今回だけ実行するか、許可に加えて実行するかを選べます。".into(),
+                reason: "settings.json の permissions.allow に一致しないコマンドです。今回だけ実行するか、許可に加えて実行するかを選べます。".into(),
             };
             if !ask(approve, emit, approval).await {
-                return Err("ユーザーがこのコマンドを許可に加えず、実行も許可しませんでした。".into());
+                return Err("ユーザーがこのコマンドの実行を許可しませんでした。".into());
             }
-            // 「今回だけ」の承認なら、許可リストへは加えずに実行する
+            // 「今回だけ」の承認なら、許可へは加えずに実行する
             if !env.once.is_some_and(|once| once(&call.id)) {
                 allowed = patterns;
             }
             None
         }
-        Verdict::Auto => None,
-        Verdict::Plan => match plan {
-            None => return Err("先にpropose_planで作業計画を提示し、ユーザーの承認を得てください。".into()),
-            Some(steps) if step.is_some_and(|s| (1..=steps.len() as u64).contains(&s)) => None,
-            Some(_) => Some("承認済みの計画に含まれないコマンドです。".to_owned()),
-        },
+        Verdict::Allow => None,
         Verdict::Ask(reason) => Some(reason),
     };
     if let Some(reason) = reason {
@@ -1149,7 +1073,7 @@ where
     }
 
     if !allowed.is_empty() {
-        command_policy::add_allow(store, &allowed).map_err(|e| format!("許可リストを更新できません: {e}"))?;
+        permissions::add_allow(store, &allowed).map_err(|e| format!("許可を更新できません: {e}"))?;
     }
 
     let mut on_chunk = |stream: Stream, text: &str| {
@@ -1407,13 +1331,20 @@ mod tests {
 
     #[test]
     fn web_tools_are_server_tools_with_limits() {
-        let tools = web_tool_definitions(5, 3);
+        let tools = web_tool_definitions(Some(5), Some(3));
         let names: Vec<_> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert_eq!(names, ["web_search", "web_fetch"]);
         assert_eq!((tools[0]["max_uses"].as_u64(), tools[1]["max_uses"].as_u64()), (Some(5), Some(3)));
         assert_eq!(tools[1]["url_sources"]["client_tool_results"]["type"], "none");
         // 自前ツールの定義とは名前が衝突しない
         assert!(tool_definitions(true).iter().all(|t| !names.contains(&t["name"].as_str().unwrap())));
+        // 許可したものだけ渡す。使い方も渡したツールの分だけ
+        let only_fetch = web_tool_definitions(None, Some(3));
+        assert_eq!(only_fetch.len(), 1);
+        assert_eq!(only_fetch[0]["name"], "web_fetch");
+        assert!(web_tool_definitions(None, None).is_empty());
+        assert!(!web_guide(false, true).contains("web_search") && web_guide(false, true).contains("web_fetch"));
+        assert!(web_guide(true, false).contains("web_search") && !web_guide(true, false).contains("web_fetch"));
     }
 
     #[tokio::test]
@@ -1665,16 +1596,8 @@ mod tests {
         turn(vec![json!({ "type": "text", "text": "完了" })], "end_turn")
     }
 
-    fn plan_call(id: &str) -> ToolTurn {
-        turn(vec![tool_use(id, "propose_plan", json!({ "summary": "ファイルを作る", "steps": ["作る", "確認する"] }))], "tool_use")
-    }
-
-    fn cmd_call(id: &str, command: &str, cwd: &Path, step: Option<u64>) -> ToolTurn {
-        let mut input = json!({ "command": command, "cwd": cwd.to_str().unwrap() });
-        if let Some(s) = step {
-            input["step"] = json!(s);
-        }
-        turn(vec![tool_use(id, "run_command", input)], "tool_use")
+    fn cmd_call(id: &str, command: &str, cwd: &Path) -> ToolTurn {
+        turn(vec![tool_use(id, "run_command", json!({ "command": command, "cwd": cwd.to_str().unwrap() }))], "tool_use")
     }
 
     fn result_of(history: &[Value], turn_index: usize) -> (&str, bool) {
@@ -1682,107 +1605,90 @@ mod tests {
         (block["content"].as_str().unwrap(), block.get("is_error").is_some())
     }
 
-    #[tokio::test]
-    async fn approved_plan_lets_steps_run_without_asking_again() {
-        let (_d, root) = knowledge();
-        let work = root.join("work");
-        fs::create_dir_all(&work).unwrap();
-        let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
-        let env = Env::new(&root).with_shell(true).with_settings(&db);
-        let script = vec![
-            plan_call("p1"),
-            cmd_call("c1", "touch made.txt", &work, Some(1)),
-            cmd_call("c2", "ls", &work, None),
-            done(),
-        ];
-        let (history, kinds, events) = shell_session(script, &env, |_| true).await;
-        // 承認を求めたのは計画だけ。通常コマンドは計画の範囲内、読み取り系は承認不要
-        assert_eq!(kinds, [ApprovalKind::Plan]);
-        assert!(work.join("made.txt").exists());
-        assert!(!result_of(&history, 2).1 && !result_of(&history, 4).1);
-        assert!(result_of(&history, 6).0.contains("made.txt"));
-        assert!(events.iter().any(|e| matches!(e, TaskEvent::CommandOutput { text, .. } if text.contains("made.txt"))));
-    }
-
-    #[tokio::test]
-    async fn state_changing_command_needs_an_approved_plan() {
-        let (_d, root) = knowledge();
-        let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
-        let env = Env::new(&root).with_shell(true).with_settings(&db);
-        // 計画なし
-        let (history, kinds, _) =
-            shell_session(vec![cmd_call("c1", "touch a.txt", &root, Some(1)), done()], &env, |_| true).await;
-        assert!(kinds.is_empty() && !&root.join("a.txt").exists());
-        let (msg, is_err) = result_of(&history, 2);
-        assert!(is_err && msg.contains("propose_plan"));
-        // 計画が拒否されたら実行しない
-        let script = vec![plan_call("p1"), cmd_call("c1", "touch a.txt", &root, Some(1)), done()];
-        let (history, kinds, _) = shell_session(script, &env, |a| a.kind != ApprovalKind::Plan).await;
-        assert_eq!(kinds, [ApprovalKind::Plan]);
-        assert!(result_of(&history, 2).1 && !&root.join("a.txt").exists());
-    }
-
-    #[tokio::test]
-    async fn out_of_plan_and_destructive_commands_are_asked_individually() {
-        let (_d, root) = knowledge();
-        let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
-        let env = Env::new(&root).with_shell(true).with_settings(&db);
-        let script = vec![
-            plan_call("p1"),
-            cmd_call("c1", "touch a.txt", &root, None),       // stepなし = 計画外
-            cmd_call("c2", "touch b.txt", &root, Some(9)),    // 範囲外のstep
-            cmd_call("c3", "mv a.txt c.txt", &root, Some(1)), // 破壊的 = 計画内でも個別承認
-            done(),
-        ];
-        // 計画は承認し、個別のコマンドは拒否する
-        let (history, kinds, events) = shell_session(script, &env, |a| a.kind == ApprovalKind::Plan).await;
-        assert_eq!(kinds, [ApprovalKind::Plan, ApprovalKind::Command, ApprovalKind::Command, ApprovalKind::Command]);
-        assert!(!&root.join("a.txt").exists() && !&root.join("b.txt").exists());
-        assert!(result_of(&history, 4).1);
-        let reasons: Vec<_> = events
+    fn reasons(events: &[TaskEvent]) -> Vec<String> {
+        events
             .iter()
             .filter_map(|e| match e {
-                TaskEvent::Approval(a) if a.kind == ApprovalKind::Command => Some(a.reason.clone()),
+                TaskEvent::Approval(a) => Some(a.reason.clone()),
                 _ => None,
             })
-            .collect();
-        assert!(reasons[0].contains("計画に含まれない") && reasons[2].contains("コマンド権限"));
+            .collect()
     }
 
     #[tokio::test]
-    async fn unlisted_commands_outside_the_knowledge_are_added_to_the_allow_list_when_approved() {
+    async fn allowed_commands_run_without_asking() {
+        let (d, root) = knowledge();
+        fs::write(d.path().join("a.txt"), "hello").unwrap();
+        let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
+        let env = Env::new(&root).with_shell(true).with_settings(&db);
+        // 雛形の許可(読み取り系)は、ナレッジの外でも承認なしで実行する
+        let script = vec![cmd_call("c1", "ls", d.path()), cmd_call("c2", "cat a.txt", d.path()), done()];
+        let (history, kinds, events) = shell_session(script, &env, |_| false).await;
+        assert!(kinds.is_empty());
+        assert!(result_of(&history, 2).0.contains("a.txt") && result_of(&history, 4).0.contains("hello"));
+        assert!(events.iter().any(|e| matches!(e, TaskEvent::CommandOutput { text, .. } if text.contains("hello"))));
+    }
+
+    #[tokio::test]
+    async fn unlisted_commands_are_added_to_the_allow_list_when_approved() {
         let (d, root) = knowledge();
         let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
         let env = Env::new(&root).with_shell(true).with_settings(&db);
         let script = vec![
-            cmd_call("c1", "touch made.txt", d.path(), None), // 作業ディレクトリが外
-            cmd_call("c2", "cat secret.txt", d.path(), None), // 読み取りは外でも確認なしで実行できる
-            cmd_call("c3", "touch made2.txt", d.path(), None), // 許可済みなので確認しない
+            cmd_call("c1", "touch made.txt", d.path()),
+            cmd_call("c2", "touch made2.txt", d.path()), // 許可に加えたので確認しない
             done(),
         ];
-        let (history, kinds, _) = shell_session(script, &env, |_| true).await;
+        let (_, kinds, events) = shell_session(script, &env, |_| true).await;
         assert_eq!(kinds, [ApprovalKind::AllowCommand]);
+        assert!(reasons(&events)[0].contains("permissions.allow"));
         assert!(d.path().join("made.txt").exists() && d.path().join("made2.txt").exists());
-        assert!(result_of(&history, 4).0.contains("secret"));
-        assert!(command_policy::load(&db).allow.contains(&"touch".to_owned()));
+        assert!(permissions::load(&db).allow.contains(&"Bash(touch:*)".to_owned()));
+        assert_ne!(permissions::load_settings(&db), permissions::Preset::Standard.text());
     }
 
     #[tokio::test]
-    async fn refused_allow_request_runs_nothing_and_changes_nothing() {
+    async fn once_approval_runs_without_changing_the_allow_list() {
+        let (d, root) = knowledge();
+        let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
+        let once = |_: &str| true;
+        let env = Env::new(&root).with_shell(true).with_settings(&db).with_once_check(Some(&once));
+        let script = vec![cmd_call("c1", "touch a.txt", d.path()), cmd_call("c2", "touch b.txt", d.path()), done()];
+        let (_, kinds, _) = shell_session(script, &env, |_| true).await;
+        assert_eq!(kinds, [ApprovalKind::AllowCommand, ApprovalKind::AllowCommand]);
+        assert!(d.path().join("a.txt").exists() && d.path().join("b.txt").exists());
+        assert_eq!(permissions::load_settings(&db), permissions::Preset::Standard.text(), "設定は初期値のまま");
+    }
+
+    #[tokio::test]
+    async fn refused_commands_run_nothing_and_change_nothing() {
         let (d, root) = knowledge();
         let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
         let env = Env::new(&root).with_shell(true).with_settings(&db);
         let script = vec![
-            cmd_call("c1", "touch made.txt", d.path(), None),
-            cmd_call("c2", &format!("echo hi > {}/made2.txt", d.path().display()), &root, None), // リダイレクトは確認の対象外
+            cmd_call("c1", "touch made.txt", d.path()),
+            cmd_call("c2", &format!("echo hi > {}/made2.txt", d.path().display()), &root), // リダイレクトは許可へ加えず、毎回確認
             done(),
         ];
-        let (history, kinds, _) = shell_session(script, &env, |_| false).await;
-        assert_eq!(kinds, [ApprovalKind::AllowCommand]);
+        let (history, kinds, events) = shell_session(script, &env, |_| false).await;
+        assert_eq!(kinds, [ApprovalKind::AllowCommand, ApprovalKind::Command]);
         assert!(!d.path().join("made.txt").exists() && !d.path().join("made2.txt").exists());
-        assert!(result_of(&history, 2).0.contains("許可"));
-        assert!(result_of(&history, 4).0.contains("ナレッジ"));
-        assert!(!command_policy::load(&db).allow.contains(&"touch".to_owned()));
+        assert!(result_of(&history, 2).0.contains("許可しませんでした") && result_of(&history, 4).1);
+        assert!(reasons(&events)[1].contains("リダイレクト"));
+        assert_eq!(permissions::load_settings(&db), permissions::Preset::Standard.text());
+    }
+
+    #[tokio::test]
+    async fn ask_rules_are_confirmed_every_time() {
+        let (d, root) = knowledge();
+        fs::write(d.path().join("a.txt"), "x").unwrap();
+        let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
+        let env = Env::new(&root).with_shell(true).with_settings(&db);
+        let script = vec![cmd_call("c1", "mv a.txt b.txt", d.path()), cmd_call("c2", "mv b.txt c.txt", d.path()), done()];
+        let (_, kinds, events) = shell_session(script, &env, |_| true).await;
+        assert_eq!(kinds, [ApprovalKind::Command, ApprovalKind::Command]);
+        assert!(reasons(&events).iter().all(|r| r.contains("permissions.ask")));
+        assert!(d.path().join("c.txt").exists());
     }
 
     #[tokio::test]
@@ -1792,43 +1698,30 @@ mod tests {
         fs::write(&victim, "x").unwrap();
         let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
         let env = Env::new(&root).with_shell(true).with_settings(&db);
-        let script = vec![
-            plan_call("p1"),
-            cmd_call("c1", "rm keep.txt", d.path(), Some(1)),
-            cmd_call("c2", "sudo ls", d.path(), Some(1)),
-            done(),
-        ];
+        let script = vec![cmd_call("c1", "rm keep.txt", d.path()), cmd_call("c2", "sudo ls", d.path()), done()];
         let (history, kinds, _) = shell_session(script, &env, |_| true).await;
-        assert_eq!(kinds, [ApprovalKind::Plan]);
+        assert!(kinds.is_empty());
         assert!(victim.exists());
-        let (msg, is_err) = result_of(&history, 4);
-        assert!(is_err && msg.contains("実行できません") && msg.contains("rm"));
-        assert!(result_of(&history, 6).0.contains("sudo"));
+        let (msg, is_err) = result_of(&history, 2);
+        assert!(is_err && msg.contains("実行できません") && msg.contains("permissions.deny"));
+        assert!(result_of(&history, 4).1);
     }
 
     #[tokio::test]
-    async fn policy_in_the_agent_db_is_read_on_every_command() {
+    async fn settings_in_the_agent_db_are_read_on_every_command() {
         let (d, root) = knowledge();
         let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
         let env = Env::new(&root).with_shell(true).with_settings(&db);
-        // 初回の実行でポリシーが書き出される。以後の編集は次のコマンドから効く
-        let (_, _, _) = shell_session(vec![cmd_call("c1", "echo 1", d.path(), None), done()], &env, |_| true).await;
-        assert!(db.get_setting(command_policy::KEY).unwrap().is_some());
-        db.set_setting(command_policy::KEY, r#"{ "allow": ["touch"], "deny": ["echo"] }"#).unwrap();
-        let script = vec![cmd_call("c1", "touch ok.txt", d.path(), None), cmd_call("c2", "echo 2", d.path(), None), done()];
+        permissions::save(&db, r#"{ "permissions": { "allow": ["Bash(touch:*)"], "deny": ["Bash(echo:*)"] } }"#).unwrap();
+        let script = vec![cmd_call("c1", "touch ok.txt", d.path()), cmd_call("c2", "echo 2", d.path()), done()];
         let (history, kinds, _) = shell_session(script, &env, |_| true).await;
         assert!(kinds.is_empty() && d.path().join("ok.txt").exists());
-        assert!(result_of(&history, 4).0.contains("コマンド権限"));
+        assert!(result_of(&history, 4).0.contains("permissions.deny"));
     }
 
     #[tokio::test]
-    async fn policy_is_kept_in_the_db_and_the_hidden_folder_is_not_reachable_with_file_tools() {
+    async fn the_hidden_folder_is_not_reachable_with_file_tools() {
         let (_d, root) = knowledge();
-        let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
-        let env = Env::new(&root).with_shell(true).with_settings(&db);
-        shell_session(vec![cmd_call("c1", "pwd", &root, None), done()], &env, |_| true).await;
-        // 権限はDBに保存され、ナレッジにはファイルを作らない
-        assert!(db.get_setting(command_policy::KEY).unwrap().is_some());
         // 隠しフォルダ(ノートの版の置き場)は、ファイルツールから触れない
         fs::create_dir_all(root.join(".history")).unwrap();
         fs::write(root.join(".history/x.json"), "{}").unwrap();
@@ -1842,9 +1735,10 @@ mod tests {
     async fn shell_tools_are_unavailable_when_disabled() {
         let (d, root) = knowledge();
         let env = Env::new(&root);
-        let (history, _, _) = shell_session(vec![cmd_call("c1", "ls", d.path(), None), done()], &env, |_| true).await;
+        let (history, _, _) = shell_session(vec![cmd_call("c1", "ls", d.path()), done()], &env, |_| true).await;
         assert!(result_of(&history, 2).1);
-        assert!(tool_definitions(false).iter().all(|t| t["name"] != "run_command" && t["name"] != "propose_plan"));
+        assert!(tool_definitions(false).iter().all(|t| t["name"] != "run_command"));
+        assert!(tool_definitions(true).iter().all(|t| t["name"] != "propose_plan"));
         assert!(tool_definitions(true).iter().any(|t| t["name"] == "run_command"));
     }
 
@@ -1854,7 +1748,7 @@ mod tests {
         let cancel = CancelToken::default();
         let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
         let env = Env::new(&root).with_shell(true).with_settings(&db).with_cancel(cancel.clone());
-        let mut script = VecDeque::from([cmd_call("c1", "sleep 30", d.path(), None), done()]);
+        let mut script = VecDeque::from([cmd_call("c1", "sleep 30", d.path()), done()]);
         let mut history = vec![json!({ "role": "user", "content": "前の依頼" }), json!({ "role": "assistant", "content": [] })];
         tokio::spawn({
             let cancel = cancel.clone();
@@ -1863,8 +1757,8 @@ mod tests {
                 cancel.cancel();
             }
         });
-        // `sleep`は計画なしでは実行できないので、許可リストに入れて承認なしで走らせる
-        db.set_setting(command_policy::KEY, r#"{ "allow": ["sleep"] }"#).unwrap();
+        // `sleep`は雛形の許可に無いので、許可に入れて承認なしで走らせる
+        permissions::save(&db, r#"{ "permissions": { "allow": ["Bash(sleep:*)"] } }"#).unwrap();
         let started = std::time::Instant::now();
         let out = run(
             &env,
@@ -1903,15 +1797,5 @@ mod tests {
         .unwrap();
         assert_eq!(out.text, CANCELLED_TEXT);
         assert!(history.is_empty());
-    }
-
-    #[test]
-    fn plan_validation() {
-        assert!(validate_plan(&json!({ "steps": [] })).is_err());
-        assert!(validate_plan(&json!({ "steps": ["  "] })).is_err());
-        assert!(validate_plan(&json!({})).is_err());
-        assert!(validate_plan(&json!({ "steps": ["a".repeat(PLAN_STEP_CHARS + 1)] })).is_err());
-        let (summary, steps) = validate_plan(&json!({ "summary": " 目的 ", "steps": [" 一 ", "二"] })).unwrap();
-        assert_eq!((summary.as_str(), steps), ("目的", vec!["一".to_owned(), "二".to_owned()]));
     }
 }
