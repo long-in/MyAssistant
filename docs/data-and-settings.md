@@ -9,7 +9,7 @@
 | パス | 内容 |
 | --- | --- |
 | `timeline.db` | SQLite。会話ログ・要約・実行ログ・学びの提案・アプリ設定(API 方式の権限の settings.json を含む。リーダーは台帳も)。WAL の `timeline.db-wal` / `-shm` と、マイグレーション前の複製 `timeline.db.bak-v<版>` が並ぶことがある |
-| `secrets.json` | API キー。**平文 JSON**(権限 0600)。OS のキーチェーンは使っていない([security.md](security.md)) |
+| `secrets.json` | API キーと AWS 設定(Bedrock 用 `aws_*`・サンドボックスのコンテナ用 `sandbox_aws_*`。[sandbox-aws.md](sandbox-aws.md))。**平文 JSON**(権限 0600)。OS のキーチェーンは使っていない([security.md](security.md)) |
 | `models/` | Whisper モデル(`ggml-large-v3-turbo-q5_0.bin` / `ggml-small.bin`) |
 | `voice/` | 定型音声(`<id>-<ハッシュ>.mp3` / `.wav`。声ごとに別ファイル) |
 | `voicevox/` | VOICEVOX CORE・ONNX Runtime・OpenJTalk 辞書・音声モデル(設定画面から取得) |

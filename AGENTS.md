@@ -40,7 +40,8 @@ Tauri 2 (Rust) + Next.js 静的エクスポート(`output: "export"`)のデス�
 ### セキュリティ
 
 - API キーの生値は `src-tauri/src/services/secrets.rs` の外へ出さない。取得関数(`get_key` / `get_tts_key`)をコマンドとして公開しない。フロントエンドには登録有無(bool)のみ返す。
-- 例外: Bedrock の AWS 設定は、ユーザー本人が確認・編集するため `get_aws_files` コマンドで全文(credentials 含む)を返してよい。ログ・LLM・他のコマンドへは渡さない。
+- 例外: AWS 設定(Bedrock 用とサンドボックスのコンテナ用。`AwsSlot`)は、ユーザー本人が確認・編集するため `get_aws_files` コマンドで全文(credentials 含む)を返してよい。ログ・LLM・他のコマンドへは渡さない。
+- サンドボックスのコンテナへ AWS の認証情報を直接渡さない。Bedrock はホストの中継(`src-tauri/src/services/sandbox_bridge.rs`)が署名し、コンテナ用は一時キーだけを中継から取りに来させる。Bedrock 用の認証情報をコンテナへ入れない([docs/sandbox-aws.md](docs/sandbox-aws.md))。
 - ナレッジのパスはすべて `src-tauri/src/utils/path.rs` のサンドボックス(`resolve_existing` / `ensure_dir`)を通す。LLM 出力やフロントエンドからのパスを直接 `fs` に渡さない。
 - `secrets.json`、`timeline.db`、`.env*` をコミットしない(実体はアプリデータディレクトリにある)。
 

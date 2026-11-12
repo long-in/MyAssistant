@@ -23,6 +23,7 @@
 | [agent-command-tasks.md](agent-command-tasks.md) | 作業依頼(計画の承認とコマンド実行) |
 | [api-permissions.md](api-permissions.md) | API 方式の権限(settings.json)。コマンドと Web 検索・ページ取得の可否 |
 | [sandbox.md](sandbox.md) | Docker サンドボックス(コンテナ内の Claude Code の実行、認証情報、マウント、承認、Dockerfile、コンテナの準備と後始末、後回しにした項目) |
+| [sandbox-aws.md](sandbox-aws.md) | サンドボックスの AWS 認証(Bedrock 用とコンテナ用の2つの設定、ホストの中継による Bedrock の署名と一時キーの配布、トークン、許可するモデル) |
 | [skills.md](skills.md) | スキル(決まった依頼への対応手順)、軽量モデルによる選定、会話からの管理 |
 
 ### 音声

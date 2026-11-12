@@ -9,7 +9,7 @@ LLM をどの経路で呼ぶか(接続方式)、機能ごとにどのモデル�
 | 方式 | 使う LLM | 処理の場所 |
 | --- | --- | --- |
 | API | Anthropic(API キー)と端末内のモデル(Qwen。[local-llm.md](local-llm.md)) | ホスト。このアプリのツールループ([agent-file-tools.md](agent-file-tools.md)) |
-| Amazon Bedrock | コンテナ内の Claude Code(Bedrock。AWS の一時キーを渡す) | エージェント専用の Docker コンテナ([sandbox.md](sandbox.md)) |
+| Amazon Bedrock | コンテナ内の Claude Code(Bedrock。ホストの中継が署名する。[sandbox-aws.md](sandbox-aws.md)) | エージェント専用の Docker コンテナ([sandbox.md](sandbox.md)) |
 
 - **ワークのエージェントは常に Bedrock**(変えられない。`set_link_mode` は拒否する)。
 - パーソナルとリーダーは選べる。未保存のときは、AWS の設定だけを登録していれば Bedrock、それ以外(両方登録済みを含む)は API。

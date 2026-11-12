@@ -27,11 +27,11 @@
 
 ```text
 [アプリ(ホスト)]  チャット画面・会話の記録・設定画面
-   │ ① 指示(stdin。stream-json の user メッセージ)+ 認証情報(実行ごとに環境変数)
+   │ ① 指示(stdin。stream-json の user メッセージ)+ 中継の設定・sandbox.env(実行ごとに環境変数)
    ▼ docker exec -i ... claude -p --input-format stream-json --output-format stream-json --verbose --permission-prompt-tool stdio --permission-mode acceptEdits [--resume <セッションID>]
 [エージェント専用コンテナ  myassistant-<ランダム8桁>]
-   Claude Code ──→ Amazon Bedrock(AWS 一時キー)
-      │ 調査・編集・コマンド(git、AWS CLI など)
+   Claude Code ──(署名なし)──→ ホストの中継 ──(Bedrock 用の設定で署名)──→ Amazon Bedrock
+      │ 調査・編集・コマンド(git、AWS CLI など。AWS CLI はコンテナ用の一時キーを中継から取る)
    /knowledge      = そのエージェントのナレッジ(読み書き)
    /knowledge/data = 担当システムのフォルダ(ナレッジ直下の data/。ソースコードなど)
    /home/agent  = 専用ボリューム(~/.claude の会話・設定、インストールしたツール)
@@ -47,7 +47,7 @@
 
 実装: `services/sandbox_agent.rs`(`run_turn`)、会話への接続は `commands/chat.rs`(`send_chat_sandbox`)。
 
-1. アプリが、エージェントの認証情報(`sandbox.env` と AWS の一時キー)を用意し、接続先に必要なものがそろっているか確かめる。AWS の一時キーの期限が切れていれば、ここで MFA の入力や SSO の承認を求める(「認証情報」)。
+1. アプリが、渡す環境変数(`sandbox.env` と、ホストの中継のトークン)を用意する。Bedrock 用の AWS 設定が無ければ、ここでエラーにする。Bedrock 用の一時キーの期限が切れていれば、ここで MFA の入力や SSO の承認を求める(「認証情報」)。
 2. 事前に準備したコンテナ(現在のイメージ・マウント元で起動中のもの)を探す。**実行時にはビルドも起動もしない**。準備ができていなければ、「Sandbox の設定で、イメージのビルドとコンテナの起動を行ってください」というエラーにする(「コンテナの準備」)。
 3. `docker exec -i` で Claude Code をヘッドレスモード(`claude -p --input-format stream-json --output-format stream-json --verbose --permission-prompt-tool stdio --permission-mode acceptEdits`)で起動する。
    - 指示は**標準入力**で渡す(stream-json の user メッセージ。長い指示に対応し、プロセスの引数に残さないため)。標準入力は、確認の応答を返すため結果が届くまで開いておく。
@@ -75,14 +75,14 @@
 
 ## 認証情報
 
-すべて**実行ごとに環境変数で渡し**、ファイルとしてはコンテナに置きません。
+AWS の認証情報はコンテナへ直接は渡さず、ホストの中継(`services/sandbox_bridge.rs`)を通します。詳細は [sandbox-aws.md](sandbox-aws.md) にまとめています。そのほかは**実行ごとに環境変数で渡し**、ファイルとしてはコンテナに置きません(中継の設定ファイル `/tmp/myassistant-aws/config` を除く。中身は固定で、秘密を含まない)。
 
-- **Amazon Bedrock(固定)**: 接続先は Bedrock だけ(以前の Anthropic API は廃止。保存済みの旧設定は読み込み時に Bedrock へ直す)。アプリに登録した Anthropic の API キーはコンテナへ渡さない。アプリに登録したそのエージェントの AWS 設定から、**ホスト側で STS の一時キーを発行して渡す**(ロールの引き受け、MFA の入力、SSO の承認はホストで行う)。Claude Code 向けに `CLAUDE_CODE_USE_BEDROCK=1` を渡す。リージョンは AWS 設定のプロファイル(`AWS_REGION`)から取る。
-- **AWS のリソース**: Bedrock と同じ一時キーで、コンテナ内の AWS CLI などからも使える。AWS 設定が登録されていれば渡す。
+- **Amazon Bedrock(固定)**: 接続先は Bedrock だけ(以前の Anthropic API は廃止。保存済みの旧設定は読み込み時に Bedrock へ直す)。アプリに登録した Anthropic の API キーはコンテナへ渡さない。**Bedrock 用の AWS 設定(AI Link)の認証情報もコンテナへ渡さない。** Claude Code は署名せずにホストの中継へ送り(`CLAUDE_CODE_SKIP_BEDROCK_AUTH=1`、`ANTHROPIC_BEDROCK_BASE_URL`)、中継がホストで発行した一時キーで署名して Bedrock へ転送する(ロールの引き受け、MFA の入力、SSO の承認はホストで行う)。中継が通すのは、settings.json などで指定したモデルの呼び出しだけ。Claude Code 向けに `CLAUDE_CODE_USE_BEDROCK=1` を渡す。
+- **AWS のリソース**: コンテナ内の AWS CLI・SDK は、Bedrock 用とは別に登録した「コンテナ内の AWS」(Sandbox タブ)の認証情報を使う。一時キーは、コマンドが使うときに `credential_process` で中継から取りに来る(期限が近づけば自動で取り直し、MFA・SSO の承認はそのときに画面で求める)。登録が無ければ、AWS の認証情報は渡さない。
 - **Claude Code の settings.json**: 利用者が貼り付けた内容(JSON のオブジェクト、64KB まで)を、アプリの設定 `sandbox_claude_settings` に保存する。実行ごとに環境変数 `MYASSISTANT_SETTINGS` で渡し、`claude --settings` へ与える(ファイルとしてコンテナには置かない。`~/.claude/settings.json` には書かない)。保存時に検証し、誤りは行・列と理由だけを返す(内容は含めない)。モデル(`model`)、許可するツール(`permissions.allow`)、拒否するツール・コマンド(`permissions.deny`)はここで決める。アプリが決める `--disallowedTools`(コマンド実行・Web 検索を無効にしたときの拒否など)と `--permission-mode` は引数で渡すため、settings.json では緩められない。エージェントの保存が空のときは、全体設定の settings.json(`sandbox_claude_settings_shared`。全体設定画面の Sandbox タブで編集)を使う(全体設定を利用)。全体設定を変えると、次の指示から自動で反映される。エージェントが自分の内容を保存すると個別設定になり、全体設定の変更では更新されない(「全体設定に戻す」で個別の内容を破棄して追従へ戻せる)。どちらも空のときは、既定の拒否(後述)だけを持つ settings(`{"permissions":{"deny":[...]}}`)を渡す。許可は空なので Bash などは使えず、画面に雛形(既定の12ツールの許可と既定の拒否。`get_claude_settings_template`)を入れるボタンを出す(全体設定の画面にも、空のときに出す)。画面は既定で閲覧だけにし、「編集」で書き換えられるようにする(ボタンは「編集」「保存」「全体設定に戻す」)。`env` の値は画面では伏せず、コンテナの出力に出たときは伏せ字にする(`sandbox.env` と同じ)。設定の書き出し・バックアップにはそのまま含まれる。
 - **接続先とモデル**: 接続先は Bedrock 固定。モデルは settings.json の `model` で決める。秘密でない値(`CLAUDE_CODE_USE_BEDROCK`)はアプリが決めて渡す。`sandbox.env` に同じ名前があれば、そちらが優先される。
-- 必要な認証情報が無いとき(AWS のキーかリージョンが無い、MFA を入力しなかった、SSO を承認しなかった)は、実行せずにエラーにする。
-- MFA: 一時キーはメモリにキャッシュし、期限内は MFA を聞かない。指示ごとに実行し直すため、毎回期限内のキーが渡る。1回の指示が一時キーの期限を超えると、その途中で AWS の呼び出しが失敗する。AWS 設定の `duration_seconds` を長くして避ける(ロールの最大セッション時間まで。最大 12 時間)。
+- Bedrock 用の認証情報が無いとき(AWS 設定が無い、MFA を入力しなかった、SSO を承認しなかった)は、実行せずにエラーにする。
+- MFA: 一時キーはメモリにキャッシュし、期限内は MFA を聞かない。一時キーの期限が切れても、中継が取り直すので、長い指示が途中で止まらない(MFA のプロファイルでは、取り直すときに MFA を求める)。
 
 ### 環境変数(`sandbox.env`)
 
@@ -94,7 +94,7 @@
 - 検証: 名前は英数字と `_`(数字から始まらない)。`PATH` `HOME` `USER` `TERM` など実行の仕組みが使う名前と、`DOCKER_` `LD_` `DYLD_` `MYASSISTANT_` で始まる名前は不可。最大 100 個、値は 8KB まで、制御文字は不可。不正な行は「N行目」を示してエラーにする(値はエラーに含めない)。
 - **画面で編集する**: エージェントの設定画面(Sandbox タブ)のエディタに、値を含めてそのまま表示する。保存の前に書式を検証し、誤りがあれば「N行目」を示して保存しない。一時ファイルに書いてから置き換え、権限は 0600 のまま保つ。外部のエディタで保存した変更は、画面へ戻ったときに(編集中でなければ)読み込み直す。
 - 値の渡し方: `docker exec -e NAME` の形で**名前だけを引数に書き**、値は docker CLI の環境変数として渡す。`docker inspect` に値は残らない。
-- 出力の伏せ字: 8 文字以上の値が出力に出たら `***` に置き換える(`*REGION` で終わる名前、`CLAUDE_CODE_USE_BEDROCK` `ANTHROPIC_MODEL`、`MYASSISTANT_` で始まる名前は対象外)。変形して出力された値(Base64 など)は検知できない。
+- 出力の伏せ字: 8 文字以上の値が出力に出たら `***` に置き換える(`*REGION` で終わる名前、`CLAUDE_CODE_USE_BEDROCK` `CLAUDE_CODE_SKIP_BEDROCK_AUTH` `ANTHROPIC_MODEL`、`MYASSISTANT_` で始まる名前は対象外)。中継がその実行へ配ったコンテナ用の一時キーも伏せる([sandbox-aws.md](sandbox-aws.md#出力の伏せ字))。変形して出力された値(Base64 など)は検知できない。
 - API 方式の settings.json の初期値(「標準」「読み取りのみ」)の拒否に `sandbox.env` を含め、アプリデータの保護(設定で外せない)でも、ホストのコマンドから触れない([api-permissions.md](api-permissions.md))。
 
 ## マウント
@@ -161,6 +161,7 @@
 ## 分離の内容
 
 - マウントは上の表のものだけ。アプリデータ・`~/.aws`・ほかのエージェントのフォルダはコンテナから見えない。
+- コンテナからホストへは、中継(`host.docker.internal` の 1 ポート)にだけ用がある。中継は実行ごとのトークンが無いと何も返さない([sandbox-aws.md](sandbox-aws.md))。
 - `--read-only`(`/tmp`・`/var/tmp` は tmpfs)、`--cap-drop ALL`、`no-new-privileges`、`--init`、非 root(`agent`)、メモリ 2GB・CPU 2・プロセス 512 の上限。
 - エージェントごとにネットワークを分け、コンテナ同士は通信できない。外向きの通信は制限しない。
 
@@ -181,6 +182,7 @@
   - 詳細設定(任意):
     - 担当システムのフォルダ(`/knowledge/data`)の場所の表示、「Finder で開く」、注意書き(`SandboxAgentSettings`)。
     - 専用の Dockerfile の登録・編集(`SandboxDockerfile`)。
+    - コンテナ内の AWS(コンテナ内のコマンドが使う AWS 設定。`AwsPanel slot="sandbox"`。[sandbox-aws.md](sandbox-aws.md))。
     - `sandbox.env` のエディタ(値を含めて表示・編集、保存・変更を破棄・再読み込み・ファイルを表示)と、渡す変数の名前・検証結果(`SandboxEnvEditor`)。
     - 1回の指示の上限時間とコンテナの自動停止(`SandboxTimeout`。`sandbox_llm`。設定の書き出し・コピーの対象)。
     - Claude Code の settings.json のエディタ(`ClaudeSettingsEditor`。モデル・許可・確認・拒否もここ。空のときは許可・拒否の雛形を入れるボタン。`sandbox_claude_settings`。設定の書き出し・コピーの対象)。
@@ -192,18 +194,19 @@
 - docker CLI だけに対応する(Docker Desktop / OrbStack など)。探す場所は `/usr/local/bin` `/opt/homebrew/bin` `/Applications/Docker.app/Contents/Resources/bin` `~/.orbstack/bin` と `PATH`。
 - コンテナ内は Linux。`brew` `open` `osascript` などホストの macOS 固有のコマンドは使えない。
 - 外向きのネットワークは制限しない。
-- 接続先は Bedrock 固定で、アプリに登録した Anthropic の API キーはコンテナへ渡さない。AWS の一時キーは実行ごとの環境変数で渡す(コンテナへファイルとして置かない。`sandbox.env` の同名が優先)。
+- 接続先は Bedrock 固定で、アプリに登録した Anthropic の API キーはコンテナへ渡さない。
+- AWS の認証情報は、Bedrock 用(AI Link)とコンテナ用(Sandbox タブ)に分け、どちらもコンテナへ直接は渡さない。Bedrock はホストの中継が署名し、コンテナ用は一時キーを中継から取りに来る(2026-11-13 に決定。[sandbox-aws.md](sandbox-aws.md#決定事項))。
 - `sandbox.env` は、値を含めて画面で表示・編集する(2026-11-10 に決定。以前は名前だけを返していた)。
 - 実行中の承認は、settings.json の `permissions.ask` に当たったツールだけで挟む(それ以外は許可・拒否のリストで制御する)。
 
 ## 既知の限界
 
 - 同じ Docker ホスト上の root 権限を持つ者や、Docker の脆弱性までは防がない(コンテナによる分離の範囲)。
-- コンテナ内の Claude Code とコマンドは、渡された認証情報の値を読める。外向きの通信を制限しないため、値を外へ送ることも技術的には可能。渡すのは、そのエージェントが使う分だけにする。
+- コンテナ内の Claude Code とコマンドは、渡された認証情報の値(`sandbox.env`、コンテナ用の AWS の一時キー)を読める。外向きの通信を制限しないため、値を外へ送ることも技術的には可能。渡すのは、そのエージェントが使う分だけにする。
+- Claude Code の実行中は、コンテナ内のコマンドも Bedrock の中継(許可したモデルの呼び出しだけ)を使える([sandbox-aws.md](sandbox-aws.md#既知の限界))。
 - 実行中、`sandbox.env` の値は docker CLI のプロセスの環境変数にある。同じユーザーの別プロセスから短時間見える可能性がある。
 - `sandbox.env` の値(API キーなど)は設定画面にそのまま表示される。画面の共有やスクリーンショットに注意する。
 - `/knowledge`(`data/` を含む)は読み書きでマウントするため、コンテナ内の作業でホスト側のファイルが変更・削除されうる。
-- 1回の指示が AWS の一時キーの期限を超えると、途中で AWS の呼び出しが失敗する。
 - 端末内の LLM(`local_llm`)は、Docker for Mac のコンテナでは GPU(Metal)を使えないため、コンテナ内では実用的な速度にならない。
 - 同梱テンプレートの更新は、各 Dockerfile へ自動反映されない(共通の Dockerfile を編集済みのとき)。
 - `sandbox.env` は認証情報を含むため、全体設定にしない(エージェントごとにだけ持つ)。
@@ -211,13 +214,12 @@
 
 ## 後回しにした項目
 
-決定の際に後回しにしたものです。着手するときは、この表から外して本文へ移します。(画面での承認(旧 3)と実行中の確認(旧 16)は、`permissions.ask` の確認の中継として実装済み。「ルールと権限」を参照)
+決定の際に後回しにしたものです。着手するときは、この表から外して本文へ移します。(画面での承認(旧 3)と実行中の確認(旧 16)は、`permissions.ask` の確認の中継として実装済み。「ルールと権限」を参照。長時間のプロセス向けの認証情報(旧 5)は、中継から一時キーを取りに来る方式で実装済み。[sandbox-aws.md](sandbox-aws.md))
 
 | # | 項目 | 内容・理由 | 決めた時点 |
 | --- | --- | --- | --- |
 | 2 | ナレッジの同時編集の扱い | コンテナ内の Claude Code とホスト側の機能が、同じナレッジを同時に書き換えたときの扱い(ナレッジ整理もコンテナ内になったため、画面からの編集との同時書き込みが対象) | 2026-11-10 |
 | 4 | スキルの移行 | アプリのスキルを、コンテナの `~/.claude/skills` へ移すか同期する | 2026-11-10 |
-| 5 | 長時間のプロセス向けの認証情報 | 期限の切れる AWS の一時キーを、コンテナからホストへ都度取りに来る方式(コンテナ向けの資格情報のエンドポイント)。MFA は期限前に画面で求める | 2026-11-10 |
 | 6 | API キーの中継 | API キーをコンテナへ入れず、ホストの中継が付けて転送する方式 | 2026-11-10 |
 | 7 | アプリ登録済みの API キーの受け渡し | `secrets.json` のキーをコンテナへ渡す。AGENTS.md の方針の例外が必要なため不採用(`sandbox.env` を使う)。必要になったら再検討 | 2026-11-10 |
 | 8 | 音声対話の遅延対策 | 指示ごとに Claude Code を起動するため数秒かかる。常駐させて入力を流し込む形にする | 2026-11-10 |

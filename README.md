@@ -104,8 +104,8 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
 - **サンドボックス** ([sandbox.md](docs/sandbox.md))
   - ワークのエージェントへの指示は、常に、エージェントごとの専用 Docker コンテナの中の Claude Code が受け持ちます(切り替えはありません)。パーソナルとリーダーは、AI Link の接続方式に Bedrock を選んだときだけコンテナで動きます。続きの指示は同じセッションで引き継ぎます。
   - コンテナから見えるのは、そのエージェントのナレッジ(`/knowledge`)だけで(ソースコードなどはナレッジ直下の担当フォルダ `/knowledge/data` に置く)、ほかのエージェントや `~/.aws` には届きません。
-  - Claude Code の接続先は Amazon Bedrock(AWS の一時キー)です。モデルと許可するツールは、Claude Code の settings.json で決めます。パーソナル・リーダーは、AI Link の接続方式に Bedrock を選んだときだけコンテナで動きます(API 方式では、Anthropic・端末内のモデルを従来どおり使います)。
-  - エージェントごとの環境変数(`sandbox.env`)と AWS の一時キーを、実行時にだけコンテナへ渡します。イメージは全エージェント共通で、Dockerfile は全体設定で編集します。エージェントごとに専用の Dockerfile を登録すると、そちらを優先します。
+  - Claude Code の接続先は Amazon Bedrock です。Bedrock の認証情報はコンテナへ渡さず、アプリが中継して署名します([sandbox-aws.md](docs/sandbox-aws.md))。モデルと許可するツールは、Claude Code の settings.json で決めます。パーソナル・リーダーは、AI Link の接続方式に Bedrock を選んだときだけコンテナで動きます(API 方式では、Anthropic・端末内のモデルを従来どおり使います)。
+  - エージェントごとの環境変数(`sandbox.env`)を、実行時にだけコンテナへ渡します。コンテナ内のコマンド(AWS CLI・SDK)が使う AWS の認証情報は、Bedrock 用とは別に Sandbox タブで登録します(MFA・SSO に対応)。コマンドは一時キーをアプリから自動で取得し、登録が無ければ AWS の認証情報は渡しません。イメージは全エージェント共通で、Dockerfile は全体設定で編集します。エージェントごとに専用の Dockerfile を登録すると、そちらを優先します。
   - Docker が使えないときは、ホストでは実行せずエラーにします。
 
 ### スキル
@@ -270,7 +270,8 @@ npm run tauri build
 | 用途 | キー |
 | --- | --- |
 | Claude | Anthropic API キー |
-| Claude(Bedrock 経由) | `~/.aws/config` と `~/.aws/credentials` の中身(設定画面へそのまま貼り付け)。MFA 付きのスイッチロール(`role_arn` + `source_profile` + `mfa_serial`)と、IAM Identity Center(SSO。`sso_session` / `sso_start_url`)に対応。SSO はアプリが確認コードを表示し、ブラウザで承認する(`aws sso login` は不要)。コンテナ内の Claude Code へ一時キーを渡して使う(モデルは settings.json で決める) |
+| Claude(Bedrock 経由) | `~/.aws/config` と `~/.aws/credentials` の中身(設定画面へそのまま貼り付け)。MFA 付きのスイッチロール(`role_arn` + `source_profile` + `mfa_serial`)と、IAM Identity Center(SSO。`sso_session` / `sso_start_url`)に対応。SSO はアプリが確認コードを表示し、ブラウザで承認する(`aws sso login` は不要)。一時キーはコンテナへ渡さず、コンテナ内の Claude Code の呼び出しをアプリが中継して署名する(モデルは settings.json で決める) |
+| コンテナ内の AWS(Sandbox) | Bedrock と同じ形式で、Sandbox タブの詳細設定へ別に貼り付ける(MFA・SSO に対応)。コンテナ内の AWS CLI・SDK が、使うときに一時キーをアプリから取得する |
 | 音声出力 / Google STT | Google Cloud API キー |
 | ローカル LLM(Qwen 2.5 7B) | キー不要。設定画面の「AI Link」からダウンロードする。Web 検索・ページ取得は使えない。メモリ 16GB 以上を推奨 |
 
