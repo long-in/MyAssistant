@@ -124,7 +124,7 @@
   - 許可リスト(settings.json の `permissions.allow`): エージェントごとに settings.json で決める(`--allowedTools` は渡さない)。画面の雛形は Bash・Read・Edit・Write・Glob・Grep・NotebookEdit・WebFetch・WebSearch・Task・TodoWrite・Skill。
   - 確認リスト(settings.json の `permissions.ask`): 当たったツールは、実行前に画面で承認を求める。Claude Code が標準出力へ `control_request`(`can_use_tool`)を出し、アプリが `control_response`(allow はツールの入力をそのまま返す / deny は理由を添える)を標準入力へ返す。このため標準入力は結果が届くまで開いておく(`shell::run_prepared_streaming`)。承認の画面と応答(`task_approve`)・待ち時間(120秒。そのエージェントを開いている間だけ数える。超えたら拒否)は他の承認と同じで、種類は `tool_use`。ボタンでだけ承認できる(音声の「はい」では通らない)。中断・実行の時間切れでも拒否になる。承認の画面には、コマンド(またはツールの入力の JSON。4,000 文字まで)を出す。「常に許可」(`permissions.allow` への書き戻し)は未対応。ツールを使わない単発の呼び出し(ナレッジ整理・校正・宛先の提案)は、すべて拒否するので確認は来ない。
   - 拒否リスト(settings.json の `permissions.deny`): コマンドの拒否は settings.json だけで決める。既定の拒否は、コマンド権限の初期値の拒否(`deny`)と、どこにあっても拒否する語(`deny_words`)を `Bash(<コマンド>:*)` の形へ変換したもの(`default_deny_rules`。「,」や括弧を含む項目は除く)で、雛形と、settings.json が空のときに渡す内容に使う。拒否が許可より優先される。
-  - アプリが決める拒否(`--disallowedTools`): Web 検索を含むツールの許可・拒否は settings.json だけで決める(権限タブの Web Search は API 方式のみで、Bedrock 方式には出さない)。ツールなしの単発の呼び出しでは、標準のツールをすべて拒否する。
+  - アプリが決める拒否(`--disallowedTools`): Web 検索を含むツールの許可・拒否は settings.json だけで決める(権限タブは API 方式のみで、Bedrock 方式では出さない)。ツールなしの単発の呼び出しでは、標準のツールをすべて拒否する。
   - コマンド権限(DB のキー `command_policy`)は渡さない。Bedrock 方式(ワークは常に)ではコマンドがホストで動かないため、画面に Command Policy を出さない。
   - 許可されないツールは実行されず、その旨がツールの結果として Claude Code に返る。
 
