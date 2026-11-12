@@ -245,8 +245,8 @@ export const sendChat = (sessionId: string, text: string, route: Route, skill: s
   return invoke<ChatReply>("send_chat", { sessionId, text, route, skill, onEvent: channel });
 };
 
-/** 承認の種類。file=ファイル作成、file_overwrite=資料(data/reports)の上書き、plan=作業計画、command=計画外・破壊的なコマンドの個別承認、allow_command=許可リストにないコマンドを許可に加えて実行、skill_update=スキルの上書き、skill_delete=スキルの削除。 */
-export type ApprovalKind = "file" | "file_overwrite" | "plan" | "command" | "allow_command" | "skill_update" | "skill_delete" | "tool_use";
+/** 承認の種類。file=ファイル作成、file_overwrite=資料(data/reports)の上書き、command=permissions.ask に一致した・内容を確かめられないコマンドの承認、allow_command=permissions.allow に一致しないコマンドの承認(今回だけ、または許可に加えて実行)、skill_update=スキルの上書き、skill_delete=スキルの削除、tool_use=Claude Code のツールの確認。 */
+export type ApprovalKind = "file" | "file_overwrite" | "command" | "allow_command" | "skill_update" | "skill_delete" | "tool_use";
 
 /** 配布の下書きの宛先(エージェント)。 */
 export type DraftTarget = { id: string; name: string; color: string };
@@ -262,10 +262,11 @@ export type TaskEvent =
       type: "approval";
       id: string;
       kind: ApprovalKind;
-      /** ファイルは作成先、コマンドは作業ディレクトリ、`tool_use`はツール名。計画では空。 */
+      /** ファイルは作成先、コマンドは作業ディレクトリ、`tool_use`はツール名。 */
       path: string;
-      /** ファイルは全文、コマンドはコマンド、計画は概要、`tool_use`はツールの入力。 */
+      /** ファイルは全文、コマンドはコマンド、`tool_use`はツールの入力。 */
       preview: string;
+      /** `allow_command`で、許可へ加えるパターン。 */
       steps: string[];
       /** 個別承認が必要な理由(コマンドのみ)。 */
       reason: string;
@@ -302,7 +303,7 @@ export const taskResume = (workspaceId: string, onEvent: (e: TaskEvent) => void)
 /** 画面がワークスペースを離れたことを知らせる。依頼は止まらず、進捗はバックエンドに記録される。 */
 export const taskDetach = (workspaceId: string) => invoke<void>("task_detach", { workspaceId });
 
-/** `once`: 許可リストにないコマンドを、許可へ加えずに今回だけ実行する。 */
+/** `once`: 許可に一致しないコマンドを、許可へ加えずに今回だけ実行する。 */
 export const taskApprove = (id: string, approved: boolean, once = false) =>
   invoke<void>("task_approve", { id, approved, once });
 /** 実行中の依頼を中断する。動いているコマンドは強制終了され、承認待ちは拒否になる。 */
@@ -408,25 +409,17 @@ export const buildAgentSandboxImage = (force: boolean) => invoke<void>("build_ag
 /** Finderでファイルを選択して開く。 */
 export const revealSandboxFile = (kind: "env" | "dockerfile" | "agent_dockerfile") => invoke<void>("reveal_sandbox_file", { kind });
 
-/** コマンド権限。各項目は`git status`のようなコマンド名と引数の接頭辞。 */
-export type CommandPolicy = {
-  allow: string[];
-  ask: string[];
-  deny: string[];
-  deny_words: string[];
-  protected: string[];
-  system_paths: string[];
-  system_exceptions: string[];
-  confirm_overwrite: boolean;
-  confirm_pipe_to_shell: boolean;
-  restrict_to_knowledge: boolean;
-};
-export const getCommandPolicy = () => invoke<CommandPolicy>("get_command_policy");
-/** 保存して、整形後(空行・重複を除いた)の内容を返す。 */
-export const setCommandPolicy = (policy: CommandPolicy) => invoke<CommandPolicy>("set_command_policy", { policy });
-
-/** 初期値のコマンド権限(保存はしない)。 */
-export const getDefaultCommandPolicy = () => invoke<CommandPolicy>("get_default_command_policy");
+/** API 方式の権限の settings.json(Claude Code と同じ書式)。未保存なら標準のプリセットを書き出して返す。 */
+export const getApiSettings = () => invoke<string>("get_api_settings");
+/** 検証して保存し、保存後の内容を返す。空は受け付けない。 */
+export const setApiSettings = (text: string) => invoke<string>("set_api_settings", { text });
+/** 初期値のプリセット。standard=標準(既定)、read_only=読み取りのみ、permissive=すべて許可。 */
+export type ApiSettingsPresetId = "standard" | "read_only" | "permissive";
+export type ApiSettingsPreset = { id: ApiSettingsPresetId; label: string; description: string; text: string };
+/** プリセットの一覧(先頭が既定)。保存はしない。 */
+export const getApiSettingsPresets = () => invoke<ApiSettingsPreset[]>("get_api_settings_presets");
+/** 選んだプリセットを保存し、保存した内容を返す。 */
+export const resetApiSettings = (preset: ApiSettingsPresetId) => invoke<string>("reset_api_settings", { preset });
 
 /** デバッグモード。有効な間、API通信と文字起こしをナレッジ配下の`debug-logs`へ記録する。未設定なら無効。 */
 export const getDebugMode = () => invoke<boolean>("get_debug_mode");
@@ -447,10 +440,6 @@ export const deleteDebugLogs = (name?: string) => invoke<number>("delete_debug_l
 
 /** デバッグモードの切り替えをナビゲーションへ知らせるイベント名。 */
 export const DEBUG_MODE_EVENT = "debug-mode-changed";
-
-/** インターネット検索・ページ取得の可否(Claude選択時のみ有効)。未設定なら有効。 */
-export const getWebAccess = () => invoke<boolean>("get_web_access");
-export const setWebAccess = (enabled: boolean) => invoke<void>("set_web_access", { enabled });
 
 /** エージェントごとの数値の上限。保存時に範囲内へ丸められる。 */
 export type Tuning = {

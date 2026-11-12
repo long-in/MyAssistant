@@ -25,9 +25,9 @@ describe("judgeAnswer", () => {
 });
 
 describe("voiceCanApprove", () => {
-  it("コマンドの個別承認と許可リストへの追加は、音声では承認できない", () => {
+  it("コマンドの承認と許可への追加は、音声では承認できない", () => {
     expect(voiceCanApprove("command")).toBe(false);
     expect(voiceCanApprove("allow_command")).toBe(false);
-    for (const kind of ["plan", "file", "file_overwrite", "skill_update", "skill_delete"]) expect(voiceCanApprove(kind), kind).toBe(true);
+    for (const kind of ["file", "file_overwrite", "skill_update", "skill_delete"]) expect(voiceCanApprove(kind), kind).toBe(true);
   });
 });

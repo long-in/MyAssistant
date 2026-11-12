@@ -2,7 +2,7 @@
 
 音声対話の中で、LLM がナレッジのファイルを調べたり作成したり、インターネットを検索したりする機能。専用のエージェント画面・モードは無く、通常の音声入力から呼ばれる。ホストのツールループで動くとき(API 方式のパーソナル・リーダー)の機能で、コンテナ内の Claude Code で動くときは Claude Code 自身のツールを使う([sandbox.md](sandbox.md))。リーダーのツールは台帳と配布の下書きに差し替わる([leader.md](leader.md))。実装は `services/tool_loop.rs`(ツール定義・実行・ループ)、`commands/task.rs`(承認・中断の橋渡し)、`services/llm_client.rs`(`complete_with_tools`)。
 
-コマンド実行(`propose_plan` / `run_command`)は同じツールループに載る別機能で、[agent-command-tasks.md](agent-command-tasks.md) に書く。
+コマンド実行(`run_command`)は同じツールループに載る別機能で、[agent-command-tasks.md](agent-command-tasks.md) に書く。
 
 ## 決定事項
 
@@ -84,7 +84,7 @@ sequenceDiagram
 
 ## インターネット検索
 
-設定の Web Search で切り替える(既定は有効、キー `web_access`)。Anthropic の**サーバーツール**で、実行は Anthropic 側。こちらは結果を履歴に保持するだけ。
+権限タブの settings.json で決める。`permissions.allow` に `WebSearch` / `WebFetch` と書き、ask・deny に書いていないときだけ、それぞれのツールを渡す(初期値の「標準」「すべて許可」は両方とも許可、「読み取りのみ」は使わない。[api-permissions.md](api-permissions.md#web-検索ページ取得))。Anthropic の**サーバーツール**で、実行は Anthropic 側。こちらは結果を履歴に保持するだけ。
 
 | ツール | 種別 | 上限(1 回の依頼あたり) |
 | --- | --- | --- |

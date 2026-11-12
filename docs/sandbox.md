@@ -95,7 +95,7 @@
 - **画面で編集する**: エージェントの設定画面(Sandbox タブ)のエディタに、値を含めてそのまま表示する。保存の前に書式を検証し、誤りがあれば「N行目」を示して保存しない。一時ファイルに書いてから置き換え、権限は 0600 のまま保つ。外部のエディタで保存した変更は、画面へ戻ったときに(編集中でなければ)読み込み直す。
 - 値の渡し方: `docker exec -e NAME` の形で**名前だけを引数に書き**、値は docker CLI の環境変数として渡す。`docker inspect` に値は残らない。
 - 出力の伏せ字: 8 文字以上の値が出力に出たら `***` に置き換える(`*REGION` で終わる名前、`CLAUDE_CODE_USE_BEDROCK` `ANTHROPIC_MODEL`、`MYASSISTANT_` で始まる名前は対象外)。変形して出力された値(Base64 など)は検知できない。
-- `command_policy` の保護対象に `sandbox.env` を含め、ホストのコマンドからも触れない。
+- API 方式の settings.json の初期値(「標準」「読み取りのみ」)の拒否に `sandbox.env` を含め、アプリデータの保護(設定で外せない)でも、ホストのコマンドから触れない([api-permissions.md](api-permissions.md))。
 
 ## マウント
 
@@ -123,9 +123,9 @@
   - 権限モードは `acceptEdits`(ファイルの編集は自動)。
   - 許可リスト(settings.json の `permissions.allow`): エージェントごとに settings.json で決める(`--allowedTools` は渡さない)。画面の雛形は Bash・Read・Edit・Write・Glob・Grep・NotebookEdit・WebFetch・WebSearch・Task・TodoWrite・Skill。
   - 確認リスト(settings.json の `permissions.ask`): 当たったツールは、実行前に画面で承認を求める。Claude Code が標準出力へ `control_request`(`can_use_tool`)を出し、アプリが `control_response`(allow はツールの入力をそのまま返す / deny は理由を添える)を標準入力へ返す。このため標準入力は結果が届くまで開いておく(`shell::run_prepared_streaming`)。承認の画面と応答(`task_approve`)・待ち時間(120秒。そのエージェントを開いている間だけ数える。超えたら拒否)は他の承認と同じで、種類は `tool_use`。ボタンでだけ承認できる(音声の「はい」では通らない)。中断・実行の時間切れでも拒否になる。承認の画面には、コマンド(またはツールの入力の JSON。4,000 文字まで)を出す。「常に許可」(`permissions.allow` への書き戻し)は未対応。ツールを使わない単発の呼び出し(ナレッジ整理・校正・宛先の提案)は、すべて拒否するので確認は来ない。
-  - 拒否リスト(settings.json の `permissions.deny`): コマンドの拒否は settings.json だけで決める。既定の拒否は、コマンド権限の初期値の拒否(`deny`)と、どこにあっても拒否する語(`deny_words`)を `Bash(<コマンド>:*)` の形へ変換したもの(`default_deny_rules`。「,」や括弧を含む項目は除く)で、雛形と、settings.json が空のときに渡す内容に使う。拒否が許可より優先される。
+  - 拒否リスト(settings.json の `permissions.deny`): コマンドの拒否は settings.json だけで決める。既定の拒否は、OS に影響するコマンドと削除・権限昇格を `Bash(<コマンド>:*)` の形にしたもの(`permissions::default_deny_rules`。API 方式の初期値「標準」「読み取りのみ」の拒否にも含まれる)で、雛形と、settings.json が空のときに渡す内容に使う。拒否が許可より優先される。
   - アプリが決める拒否(`--disallowedTools`): Web 検索を含むツールの許可・拒否は settings.json だけで決める(権限タブは API 方式のみで、Bedrock 方式では出さない)。ツールなしの単発の呼び出しでは、標準のツールをすべて拒否する。
-  - コマンド権限(DB のキー `command_policy`)は渡さない。Bedrock 方式(ワークは常に)ではコマンドがホストで動かないため、画面に Command Policy を出さない。
+  - API 方式の権限(DB のキー `api_claude_settings`)は渡さない。Bedrock 方式(ワークは常に)ではコマンドがホストで動かないため、権限タブを出さない。
   - 許可されないツールは実行されず、その旨がツールの結果として Claude Code に返る。
 
 ## 既存機能との関係

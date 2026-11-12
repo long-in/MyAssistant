@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{
-    batch, chat_session, command_policy, debug_log, global_settings, leader, profile, proofread, proxy, prompts, agent_data, sandbox_agent, skills, stt, tuning, voicevox, wake, workspace,
+    batch, chat_session, debug_log, global_settings, leader, profile, proofread, proxy, prompts, agent_data, permissions, sandbox_agent, skills, stt, tuning, voicevox, wake, workspace,
 };
 
 /// 設定の保存先。
@@ -34,6 +34,8 @@ pub enum Kind {
     Text,
     /// 検証を通る基本情報のJSON(空文字は未設定を表す)。
     Profile,
+    /// 検証を通る API 方式の権限の settings.json(空文字は未設定=雛形を表す)。
+    Permissions,
 }
 
 /// 設定キー1つ分の定義。
@@ -58,7 +60,6 @@ const fn global(key: &'static str, transfer: Option<Kind>) -> Setting {
 pub const ALL: &[Setting] = &[
     // ---- エージェントごと(書き出し・コピーの対象) ----
     agent(chat::ROUTE_KEY, Some(Kind::Json)),
-    agent(chat::WEB_ACCESS_KEY, Some(Kind::Flag)),
     agent(voice::STT_ENGINE_KEY, Some(Kind::OneOf(&["local", "google"]))),
     agent(voice::STT_LANGUAGE_KEY, Some(Kind::Text)),
     agent(voice::TTS_ENGINE_KEY, Some(Kind::OneOf(&["google", "voicevox"]))),
@@ -78,14 +79,14 @@ pub const ALL: &[Setting] = &[
     agent(sandbox_agent::LLM_KEY, Some(Kind::Json)),
     // 貼り付けた Claude Code の settings.json。`env`などに秘密が入りうるが、利用者の指示で書き出し・コピーの対象にしている
     agent(sandbox_agent::CLAUDE_SETTINGS_KEY, Some(Kind::Json)),
+    // API 方式の権限(Claude Code の settings.json の書式)
+    agent(permissions::KEY, Some(Kind::Permissions)),
     // 使うプロキシの選択(空は既定、`none`は使わない、それ以外は登録済みのID)。IDは全体設定の一覧のもの
     agent(proxy::CHOICE_KEY, Some(Kind::Text)),
     // ---- エージェントごと(対象外: 端末ごとに異なるもの、エージェント固有のもの) ----
     agent(batch::KNOWLEDGE_DIR_KEY, None),
     // アプリの会話とコンテナ内の Claude Code のセッションの対応。端末の履歴(DB)と対なので対象外
     agent(sandbox_agent::SESSIONS_KEY, None),
-    // コマンド権限(JSON)。書き出し・コピーは、設定項目とは別の経路(`command_policy`)で扱う
-    agent(command_policy::KEY, None),
     agent(debug_log::DIR_KEY, None),
     agent(stt::REVISION_KEY, None),
     agent(voicevox::VERSIONS_KEY, None),

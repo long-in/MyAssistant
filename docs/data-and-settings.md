@@ -8,7 +8,7 @@
 
 | パス | 内容 |
 | --- | --- |
-| `timeline.db` | SQLite。会話ログ・要約・実行ログ・学びの提案・アプリ設定(コマンド権限を含む。リーダーは台帳も)。WAL の `timeline.db-wal` / `-shm` と、マイグレーション前の複製 `timeline.db.bak-v<版>` が並ぶことがある |
+| `timeline.db` | SQLite。会話ログ・要約・実行ログ・学びの提案・アプリ設定(API 方式の権限の settings.json を含む。リーダーは台帳も)。WAL の `timeline.db-wal` / `-shm` と、マイグレーション前の複製 `timeline.db.bak-v<版>` が並ぶことがある |
 | `secrets.json` | API キー。**平文 JSON**(権限 0600)。OS のキーチェーンは使っていない([security.md](security.md)) |
 | `models/` | Whisper モデル(`ggml-large-v3-turbo-q5_0.bin` / `ggml-small.bin`) |
 | `voice/` | 定型音声(`<id>-<ハッシュ>.mp3` / `.wav`。声ごとに別ファイル) |
@@ -119,7 +119,7 @@ erDiagram
 | 6 | 学びの提案の表 `learning_proposals` を追加 |
 
 - **既存のDBを書き換える前に複製を残す**: 同じフォルダへ `timeline.db.bak-v<元の版>` として `VACUUM INTO` で書き出す。同名のファイルがあれば日時を付けた別名にし、上書きしない。複製できなければDBを開かない(書き換えない)。空のDB(新規作成)では複製しない。
-- 複製と WAL のファイルも名前が `timeline.db` で始まるため、コマンド実行の保護の対象になる([command-policy.md](command-policy.md))。
+- 複製と WAL のファイルも名前が `timeline.db` で始まるため、API 方式の settings.json の初期値(「標準」「読み取りのみ」)の拒否の対象になる([api-permissions.md](api-permissions.md))。
 - 列や表を変えるときは `MIGRATIONS` の末尾に版を足す。既存の版の SQL は変えない。
 
 ## 設定項目(`app_settings`)
@@ -133,8 +133,7 @@ erDiagram
 | `proofread_route` | `Route`(JSON)。空は校正オフ。Bedrock 方式では `provider` が `sandbox` のときだけ有効 | オフ | AI Settings の「文字起こしの校正」 |
 | `skills_route` | `Route`(JSON) | 軽量モデル | AI Settings の「スキルの選定」([skills.md](skills.md)) |
 | `prompt_*` | 機能ごとのプロンプトの上書き(全文。空は上書きなし) | なし(全体設定 → 既定) | AI Settings([llm-settings.md](llm-settings.md#プロンプト)) |
-| `web_access` | `0` / `1` | 有効 | 権限タブの Web Search(API 方式のみ。Bedrock 方式・ワークは settings.json で決める) |
-| `command_policy` | コマンド権限(JSON。[command-policy.md](command-policy.md)) | 初期値 | 権限タブの Command Policy |
+| `api_claude_settings` | API 方式の権限の settings.json(コマンドと Web 検索・ページ取得の可否。JSON の文字列。空は保存できない。[api-permissions.md](api-permissions.md)) | 初回に初期値「標準」を書き出す | 権限タブの settings.json(API 方式のみ。Bedrock 方式・ワークは Sandbox タブの settings.json で決める) |
 | `tuning` | 上限の調整項目(JSON) | 下表 | LLM タブの AI Limits |
 | `sandbox_llm` | 接続先(Bedrock 固定)・1回の指示の上限時間(分)・コンテナの自動停止(分)(JSON) | Bedrock・30分・0(止めない) | Sandbox タブ |
 | `sandbox_claude_settings` | 貼り付けた Claude Code の settings.json(JSON。空は未設定=全体設定を利用。全体設定と同じ内容も空として保存) | 未設定 | Sandbox タブ |
@@ -159,7 +158,9 @@ erDiagram
 
 `ai_link_mode` と `sandbox_model` は一覧に登録していない(書き出し・コピーの対象外。保存先はエージェントの DB)。
 
-自動保存: 調整項目は、入力欄を離れたときに保存する。Command Policy は JSON の編集欄で、「保存」を押したときに検証して保存する。
+自動保存: 調整項目は、入力欄を離れたときに保存する。権限タブの settings.json は、「保存」を押したときに検証して保存する。
+
+以前のキー `web_access`(Web 検索のオン/オフ)と `command_policy`(独自形式のコマンド権限)は、DB のマイグレーション(版 7)で削除した(移行はしない)。
 
 ## 調整項目(`tuning.rs`)
 
@@ -182,7 +183,7 @@ erDiagram
 
 ### 対象
 
-- `app_settings` のうち、キーの一覧(`settings_registry`)で書き出しの対象にした**設定項目**(`routing`・`web_access`・`stt_engine`・`stt_language`・`tts_engine`・`voicevox_style`・`tuning`・`batch_route`・`proofread_route`・プロンプトの上書き `prompt_*`(リーダーの `prompt_suggest` を含む)・`debug_mode`・`sandbox_llm`・`sandbox_claude_settings`・使うプロキシの選択 `proxy_choice`。全体設定の項目は含まない)と、**コマンド権限**(`app_settings` のキー `command_policy`。書き出しでは設定項目とは別枠 `command_policy` で扱う)。
+- `app_settings` のうち、キーの一覧(`settings_registry`)で書き出しの対象にした**設定項目**(`routing`・`stt_engine`・`stt_language`・`tts_engine`・`voicevox_style`・`tuning`・`batch_route`・`proofread_route`・プロンプトの上書き `prompt_*`(リーダーの `prompt_suggest` を含む)・`debug_mode`・`sandbox_llm`・`sandbox_claude_settings`・API 方式の権限 `api_claude_settings`・使うプロキシの選択 `proxy_choice`。全体設定の項目は含まない)。
 - **含まない**: API キー・AWS 設定、`sandbox.env`、エージェントデータ(`agent_data`)、端末ごとに異なるナレッジ・デバッグログの保存先(`knowledge_dir` / `debug_log_dir`)、取得する配布物の版(`whisper_revision` / `voicevox_versions`)、接続方式、スキルの選定モデル、リーダーの設定、会話(セッション・要約・履歴)。
 - 全体設定の項目(ベースプロンプト・パーソナルデータ・起動ワード・音声入力の待ち時間・表示言語・OS通知・プロキシの一覧など)は含まない。全体設定は App Backup(アプリ全体)で書き出す([backup.md](backup.md))。
 - Claude Code の settings.json は、`env` などに秘密が入りうるが、利用者の指示で対象にしている。
@@ -195,21 +196,21 @@ erDiagram
   "app": "MyAssistant",
   "version": 1,
   "exported_at": "2026-10-29T03:00:00Z",
-  "settings": { "routing": "{...}", "web_access": "1" },
-  "command_policy": { "allow": [] }
+  "settings": { "routing": "{...}", "api_claude_settings": "{...}" }
 }
 ```
 
 - 保存先は、ダイアログで選んだ拡張子 `.json` の絶対パスのみ。既定のファイル名は `myassistant-settings-<日時>.json`。
 - 未設定の項目は書き出さない。
+- 以前の版が書き出した `command_policy`(独自形式のコマンド権限)は、取り込み時に読み飛ばす。
 
 ### 取り込み
 
 1. 1,000,000 バイトを超えるファイルは拒否する。
 2. `app` と `version` を確認する(別アプリのファイル・未対応の版は拒否)。
-3. **全項目を検証してから書き込む**。型ごとに検証する: フラグ(`0` / `1`)、JSON として読めるか、許可された値のどれか、文字列(20,000 文字以内)。**不正な項目が 1 つでもあれば何も変更しない**。
+3. **全項目を検証してから書き込む**。型ごとに検証する: フラグ(`0` / `1`)、JSON として読めるか、許可された値のどれか、文字列(20,000 文字以内)、API 方式の権限の settings.json の形([api-permissions.md](api-permissions.md#保存先))。**不正な項目が 1 つでもあれば何も変更しない**。
 4. ファイルに無い項目は変更しない。未知の項目は読み飛ばす(`skipped`)。
-5. コマンド権限は検証(`cleaned`)して保存する。デバッグモードの出力先を決め直す。
+5. デバッグモードの出力先を決め直す。
 
 結果は `{ applied, skipped }` で返す。
 

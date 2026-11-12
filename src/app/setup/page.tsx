@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowRight, AudioLines, Bot, Brain, Check, Container, ChevronDown, Download, KeyRound, Loader2, Pencil, Play, Plus, ShieldCheck, Square, Trash2, Upload, X } from "lucide-react";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { ask, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,7 +25,7 @@ import { copyTargets, type CopyRequest } from "@/lib/copyTargets";
 import { DEFAULT_TUNING, getTuning, setTuning, LEADER_ID, PERSONAL_ID, getAgentData, saveAgentData, errorMessage, updateAgent, AGENT_NAME_MAX, leaderCopyApiKey, leaderGetPrompt, leaderSetPrompt, leaderGetLimit, leaderSetLimit, LEADER_LIMIT_MAX, type DeleteReport } from "@/lib/api";
 import { bumpSettingsVersion, refreshWorkspace, useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
-import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getCommandPolicy, getDefaultCommandPolicy, getDebugLogDir, getDebugMode, openDebugLogDir, setCommandPolicy, type CommandPolicy, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getWebAccess, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, voicevoxDownloadProgress, sttDownloadProgress, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, loadBatchRoute, loadProofreadRoute, loadRouting, loadSkillsRoute, loadLinkMode, saveLinkMode, type LinkMode, loadSuggestRoute, type Route, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, setWebAccess, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
+import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getApiSettings, setApiSettings, getApiSettingsPresets, resetApiSettings, type ApiSettingsPreset, type ApiSettingsPresetId, getDebugLogDir, getDebugMode, openDebugLogDir, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, voicevoxDownloadProgress, sttDownloadProgress, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, loadBatchRoute, loadProofreadRoute, loadRouting, loadSkillsRoute, loadLinkMode, saveLinkMode, type LinkMode, loadSuggestRoute, type Route, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
 import AiSettings from "@/components/AiSettings";
 import { Heading, PageHeader, ProxyChoice, StatusPill, TuningPanel, UsedBy, linkCardClass, type TuningField } from "@/components/GlobalPanels";
 
@@ -109,123 +109,73 @@ const TASK_FIELDS: TuningField<Tuning>[] = [
   { key: "history_exchanges", label: "そのまま渡す会話の往復数", hint: "超えた古い会話はAIで要約して渡す(要約にも少量のトークンを使う)。", unit: "往復", min: 2, max: 30, step: 1 },
 ];
 
-/** インターネット検索のオン/オフ。検索はAnthropic側で実行され、検索回数に応じた料金がかかる。 */
-function WebAccess() {
+/**
+ * API 方式の権限の settings.json(Claude Code と同じ書式)。コマンド実行と Web 検索・ページ取得の可否を、permissions の allow / ask / deny で決める。
+ * 既定は閲覧だけで、「編集」で書き換えられるようにする。保存時に JSON と permissions の形を検証し、誤りがあれば保存しない。
+ * 初期値はアプリ側のプリセット(標準・読み取りのみ・すべて許可)から選び、「初期値に戻す」で確認のうえ保存する。未保存なら標準が書き出される。
+ * Bedrock 方式(ワークは常に)では出さない。
+ */
+function ApiSettingsEditor() {
   const t = useT();
-  const [enabled, setEnabled] = useState<boolean | null>(null);
-  useEffect(() => {
-    getWebAccess()
-      .then(setEnabled)
-      .catch((e) => toast.error(reportError(e)));
-  }, []);
+  const [saved, setSaved] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [presets, setPresets] = useState<ApiSettingsPreset[]>([]);
+  const [presetId, setPresetId] = useState<ApiSettingsPresetId>("standard");
+  const dirty = saved !== null && draft.trim() !== saved.trim();
+  const preset = presets.find((p) => p.id === presetId);
+  // 保存した内容と同じプリセットがあれば、その名前を出す
+  const matched = saved === null ? undefined : presets.find((p) => p.text.trim() === saved.trim());
 
-  const change = async (next: boolean) => {
-    setEnabled(next);
-    try {
-      await setWebAccess(next);
-    } catch (e) {
-      setEnabled(!next);
-      toast.error(reportError(e));
-    }
+  const show = (text: string) => {
+    setSaved(text);
+    setDraft(text);
+    setEditing(false);
+    setError(null);
   };
 
-  return (
-    <section className="hud-panel hud-accent flex items-center justify-between gap-4 px-5 py-4">
-      <div>
-        <Heading title="Web Search" help={t("インターネット検索")}>
-          <p>{t("調査の依頼などで、AIがインターネットを検索してページを読めるようにします。")}</p>
-          <ul>
-            <li>{t("Claudeを選んでいるときのみ使われます。")}</li>
-            <li>{t("検索はAnthropic側で実行され、検索1回ごとに追加料金(1,000回あたり10ドル)がかかります。")}</li>
-          </ul>
-        </Heading>
-        <p className="text-xs text-muted-foreground">{t("AIがネットを検索して調べものをします(検索ごとに追加料金)。")}</p>
-      </div>
-      <Switch
-        checked={enabled ?? false}
-        disabled={enabled === null}
-        onCheckedChange={change}
-        aria-label={t("インターネット検索")}
-      />
-    </section>
-  );
-}
-
-const POLICY_LIST_KEYS = ["allow", "ask", "deny", "deny_words", "protected", "system_paths", "system_exceptions"] as const;
-const POLICY_FLAG_KEYS = ["confirm_overwrite", "confirm_pipe_to_shell", "restrict_to_knowledge"] as const;
-
-const toJson = (p: CommandPolicy) => JSON.stringify(p, null, 2);
-
-/**
- * コマンド権限の編集。JSON で表示・編集し、「保存」で検証して保存する。次のコマンドから使われる。rm・sudo・機密の拒否なども初期値として入っており、すべて編集できる。
- * アプリ自身がコマンドを実行する API 方式だけで使う(Bedrock 方式では出さない)。
- */
-function CommandPolicyEditor() {
-  const t = useT();
-  const [saved, setSaved] = useState<CommandPolicy | null>(null);
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
-
   useEffect(() => {
-    getCommandPolicy()
-      .then((p) => {
-        setSaved(p);
-        setText(toJson(p));
+    getApiSettings()
+      .then((text) => {
+        setSaved(text);
+        setDraft(text);
       })
+      .catch((e) => toast.error(reportError(e)));
+    getApiSettingsPresets()
+      .then(setPresets)
       .catch((e) => toast.error(reportError(e)));
   }, []);
 
-  /** JSON を検証して保存する。構文・型が不正なら保存せず、理由だけ出す。書いていない項目は保存済みの値のまま。 */
   const save = async () => {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch (e) {
-      toast.error(t("JSONの構文が正しくありません: {msg}", { msg: e instanceof Error ? e.message : String(e) }));
-      return;
-    }
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      toast.error(t("JSONはオブジェクトで書いてください。"));
-      return;
-    }
-    const obj = parsed as Record<string, unknown>;
-    for (const key of POLICY_LIST_KEYS) {
-      if (key in obj && !(Array.isArray(obj[key]) && (obj[key] as unknown[]).every((v) => typeof v === "string"))) {
-        toast.error(t("{key} は文字列の配列にしてください。", { key }));
-        return;
-      }
-    }
-    for (const key of POLICY_FLAG_KEYS) {
-      if (key in obj && typeof obj[key] !== "boolean") {
-        toast.error(t("{key} は true か false にしてください。", { key }));
-        return;
-      }
-    }
-    if (!saved || busy) return;
     setBusy(true);
     try {
-      const result = await setCommandPolicy({ ...saved, ...obj } as CommandPolicy);
-      setSaved(result);
-      setText(toJson(result));
-      toast.success(t("コマンド権限を保存しました"));
+      show(await setApiSettings(draft));
+      toast.success(t("保存しました。次の指示から反映されます。"));
     } catch (e) {
-      toast.error(reportError(e));
+      setError(reportError(e));
     } finally {
       setBusy(false);
     }
   };
 
-  /** 初期値を読み込んで保存する。 */
-  const loadDefaults = async () => {
-    if (busy) return;
+  /** 保存した内容と編集中の内容を捨てて、選んだプリセットを保存する。 */
+  const reset = async () => {
+    if (!preset) return;
+    const yes = await ask(t("いまの settings.json を破棄して、初期値「{name}」を保存します。よろしいですか?", { name: t(preset.label) }), {
+      title: t("初期値に戻す"),
+      kind: "warning",
+      okLabel: t("戻す"),
+      cancelLabel: t("キャンセル"),
+    });
+    if (!yes) return;
     setBusy(true);
     try {
-      const result = await setCommandPolicy(await getDefaultCommandPolicy());
-      setSaved(result);
-      setText(toJson(result));
-      toast.success(t("コマンド権限を保存しました"));
+      show(await resetApiSettings(preset.id));
+      toast.success(t("初期値「{name}」に戻しました。", { name: t(preset.label) }));
     } catch (e) {
-      toast.error(reportError(e));
+      setError(reportError(e));
     } finally {
       setBusy(false);
     }
@@ -233,32 +183,62 @@ function CommandPolicyEditor() {
 
   return (
     <section className="hud-panel hud-accent space-y-3 px-5 py-4">
-      <Heading title="Command Policy" help={t("コマンドの権限")}>
-        <p>{t("コマンドごとの実行ルールを JSON で編集します。リストには、コマンド名と引数を1項目ずつ書きます。")}</p>
-        <ul>
-          <li><strong>*</strong> {t("が使えます。")}<strong>aws s3 *</strong> {t("は aws s3 以下すべて、")}<strong>aws * delete-*</strong> {t("は語の中や途中の指定です。")}</li>
-          <li>{t("rm・sudo・OSの設定に影響するコマンド、APIキーのファイルの拒否なども、初期値として入っているだけで、すべて編集できます。消すとその保護は無くなります。")}</li>
-          <li>{t("「初期値に戻す」で初期値に戻せます。")}</li>
-          <li>{t("エージェントごとに、アプリの設定(データベース)に保存されます。")}</li>
-        </ul>
-      </Heading>
+      <div className="flex flex-wrap items-center gap-2">
+        <Heading title="settings.json" help={t("コマンドとWeb検索の権限")}>
+          <p>{t("AIが実行するコマンドと、Web検索・ページ取得の可否を、Claude Code の settings.json と同じ書式で決めます。")}</p>
+          <ul>
+            <li>{t("permissions.allow に一致するコマンドは承認なしで実行、permissions.ask に一致するものは毎回確認、permissions.deny に一致するものは実行しません(deny > ask > allow の順)。どれにも一致しないコマンドは毎回確認します。")}</li>
+            <li>{t("Bash(git status:*) は前方一致、Bash(npm run *) の * は任意の文字列、Bash だけならすべてのコマンドです。&& や | でつないだコマンドは、それぞれを判定します。")}</li>
+            <li>{t("Web検索・ページ取得は、allow に WebSearch・WebFetch と書いたときだけ使えます(ask・deny に書くと使えません)。検索1回ごとに追加料金(1,000回あたり10ドル)がかかります。")}</li>
+            <li>{t("アプリのデータ(APIキー・会話の記録など)の場所を扱うコマンドは、設定にかかわらず実行しません。")}</li>
+            <li>{t("初期値は「標準」「読み取りのみ」「すべて許可」から選んで戻せます。はじめは「標準」です。エージェントごとに、アプリの設定(データベース)に保存されます。")}</li>
+          </ul>
+        </Heading>
+        {saved !== null && <Badge variant="outline">{matched ? t("初期値「{name}」", { name: t(matched.label) }) : t("編集済み")}</Badge>}
+        {dirty && <Badge variant="secondary">{t("未保存の変更")}</Badge>}
+      </div>
       <Textarea
-        value={text}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
         disabled={saved === null}
+        readOnly={!editing}
         rows={22}
         spellCheck={false}
+        autoComplete="off"
         className="font-mono text-xs"
-        onChange={(e) => setText(e.target.value)}
-        aria-label="Command Policy JSON"
+        aria-label="settings.json"
       />
-      <p className="text-xs text-muted-foreground">{t("書いていない項目は、いまの値のままです。「保存」を押すと反映されます。")}</p>
-      <div className="flex justify-end gap-2">
-        <Button variant="outline" disabled={saved === null || busy} onClick={loadDefaults}>
-          {t("初期値に戻す")}
-        </Button>
-        <Button disabled={saved === null || busy} onClick={save}>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      <div className="flex flex-wrap justify-end gap-2">
+        {!editing && (
+          <Button variant="outline" disabled={saved === null || busy} onClick={() => setEditing(true)}>
+            {t("編集")}
+          </Button>
+        )}
+        <Button disabled={!dirty || busy} onClick={() => void save()}>
           {busy && <Loader2 className="animate-spin" />} {t("保存")}
         </Button>
+      </div>
+      <div className="space-y-2 border-t pt-3">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span className="text-xs text-muted-foreground">{t("初期値")}</span>
+          <Select value={presetId} onValueChange={(v) => setPresetId(v as ApiSettingsPresetId)}>
+            <SelectTrigger className="w-44" aria-label={t("初期値")}>
+              <SelectValue>{preset ? t(preset.label) : ""}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {presets.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {t(p.label)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button variant="outline" disabled={!preset || busy} onClick={() => void reset()}>
+            {t("初期値に戻す")}
+          </Button>
+        </div>
+        {preset && <p className="text-right text-xs text-muted-foreground">{t(preset.description)}</p>}
       </div>
     </section>
   );
@@ -1314,7 +1294,7 @@ export default function Setup() {
               <>
                 <p>{t("AIが1回の依頼で使う量の上限です。")}</p>
                 <ul>
-                  <li>{t("Web検索とページ取得の回数は、Web Searchがオンのときだけ使われます。Web検索の回数はClaude Codeのみ有効です。")}</li>
+                  <li>{t("Web検索とページ取得の回数は、権限タブの settings.json で WebSearch・WebFetch を許可しているときだけ使われます。Web検索の回数はClaude Codeのみ有効です。")}</li>
                   <li>{t("次の送信から反映されます。")}</li>
                 </ul>
               </>
@@ -1467,8 +1447,7 @@ export default function Setup() {
 
           {showAccess && (
             <TabsContent value="access" className="flex flex-col gap-6">
-              <WebAccess />
-              <CommandPolicyEditor />
+              <ApiSettingsEditor />
             </TabsContent>
           )}
           <TabsContent value="sandbox" className="flex flex-col gap-6">

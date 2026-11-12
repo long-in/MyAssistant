@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::{
     services::{
-        command_policy, debug_log,
+        debug_log,
         settings_transfer::{self, MAX_FILE_BYTES, Report},
         workspace::Ctx,
     },
@@ -22,9 +22,8 @@ pub(super) fn json_path(path: &str) -> Result<PathBuf, AppError> {
 #[tauri::command]
 pub fn export_settings(ctx: Ctx, dest: String) -> Result<Report, AppError> {
     let dest = json_path(&dest)?;
-    let policy = command_policy::load(&ctx.db);
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    let file = settings_transfer::collect(&ctx.db, policy, now)?;
+    let file = settings_transfer::collect(&ctx.db, now)?;
     let json = serde_json::to_string_pretty(&file).map_err(|e| AppError::Io(e.to_string()))?;
     std::fs::write(&dest, json).map_err(|e| AppError::Io(e.to_string()))?;
     Ok(Report { applied: file.item_count(), skipped: 0 })
@@ -39,10 +38,7 @@ pub fn import_settings(ctx: Ctx, src: String) -> Result<Report, AppError> {
         return Err(AppError::InvalidSettings("ファイルが大きすぎます".into()));
     }
     let text = std::fs::read_to_string(&src).map_err(|e| AppError::Io(e.to_string()))?;
-    let (report, policy) = settings_transfer::apply(&ctx.db, &settings_transfer::parse(&text)?)?;
-    if let Some(policy) = policy {
-        command_policy::save(&ctx.db, &policy).map_err(AppError::Io)?;
-    }
+    let report = settings_transfer::apply(&ctx.db, &settings_transfer::parse(&text)?)?;
     debug_log::refresh(&ctx)?;
     Ok(report)
 }

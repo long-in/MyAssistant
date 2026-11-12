@@ -13,7 +13,7 @@
 | `ws/<id>/timeline.db` | DB のスナップショット(`VACUUM INTO`) |
 | `ws/<id>/secrets.json`, `ws/<id>/tts_dictionary.json`, `ws/<id>/sandbox.env` | API キー・AWS 設定(平文のまま)、読み上げ辞書、サンドボックスの環境変数(平文のまま) |
 | `ws/<id>/sandbox/`, `ws/<id>/agent-sandbox/` | 共通の Dockerfile(パーソナルの側に入る。アプリデータ直下の `sandbox/`)、エージェント専用の Dockerfile(登録があるときだけ)([sandbox.md](sandbox.md)) |
-| `ws/<id>/knowledge/` | ナレッジ。保存先がアプリデータの外でも含める。`.` 始まりのフォルダ(ノートの版 `.history`)と、スキル(`skills/`)も含む。コマンド権限は各エージェントの `timeline.db` に入る。直下の `data/`(サンドボックスの担当システムのフォルダ)は含めない。ただし資料の置き場 `data/reports/` は含める |
+| `ws/<id>/knowledge/` | ナレッジ。保存先がアプリデータの外でも含める。`.` 始まりのフォルダ(ノートの版 `.history`)と、スキル(`skills/`)も含む。API 方式の権限の settings.json は各エージェントの `timeline.db` に入る。直下の `data/`(サンドボックスの担当システムのフォルダ)は含めない。ただし資料の置き場 `data/reports/` は含める |
 
 `<id>` は `personal`・`leader`・エージェントの UUID。`models/`・`voicevox/`・`voice/`、`-wal`/`-shm`、`.bak-vN` は含めない。シンボリックリンクと、名前が UTF-8 でないファイルは取り込まない。
 
