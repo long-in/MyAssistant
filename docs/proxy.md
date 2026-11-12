@@ -9,7 +9,7 @@
 
 | 項目 | 保存先 | 内容 |
 | --- | --- | --- |
-| `proxy_list` | `work/global_settings.json` | 登録したプロキシのJSON配列。各件は `id`(英数字・`-`・`_`、64文字まで。`none` は不可)・`name`(60文字まで)・`url`・`username` |
+| `proxy_list` | `work/global_settings.db` | 登録したプロキシのJSON配列。各件は `id`(英数字・`-`・`_`、64文字まで。`none` は不可)・`name`(60文字まで)・`url`・`username` |
 | `proxy_default` | 同上 | 既定のプロキシのID。空なら既定なし |
 | パスワード | `<アプリデータ>/proxy/secrets.json` | IDごとに `proxy_password:<id>`。権限 0600。`services/secrets.rs` の外へ出さず、画面へは登録の有無(bool)だけ返す |
 | `proxy_choice` | エージェントのDB(`app_settings`) | そのエージェントの選択。空は「既定を使う」、`none` は「使わない」、それ以外は登録済みのID |
@@ -40,10 +40,6 @@
 
 - 一覧(名前・URL・ユーザー名)と既定(`proxy_list` / `proxy_default`)は、全体設定の書き出し・取り込みの対象。エージェントの選択(`proxy_choice`)は、エージェント間の設定のコピーの対象。取り込んだ一覧の不正な件(ID・名前・URLが不正、IDが重複)は無視する。
 - **パスワードは設定の書き出し・コピーに含めない**(APIキーと同じ)。取り込み先で必要なら入力し直す。アプリ全体のバックアップ(zip)には、APIキーと同様に平文で含める([backup.md](backup.md))。
-
-## 以前の設定からの移行
-
-プロキシが1つだった頃の設定(`proxy_enabled` / `proxy_url` / `proxy_username` と単一のパスワード)は、起動時に `proxy_list` が未保存なら、「Default」という名前の1件目へ移す(`migrate_legacy`)。有効だったときは既定にして、従来どおり全通信がプロキシ経由になる。無効だったときは1件目として残すが、既定にはしない。移行は一度だけ(以後、一覧を空にしても復活しない)。古いキーは残るが、読まない。
 
 ## 制約
 

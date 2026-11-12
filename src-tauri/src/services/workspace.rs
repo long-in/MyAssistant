@@ -89,18 +89,15 @@ impl WorkspaceCtx {
     /// `dir`を開く(無ければ作る)。
     /// 全体設定は`dir`を保存先の基準にする(パーソナルと、単体で開くテスト用)。
     pub fn open(id: &str, dir: &Path) -> Result<Self, AppError> {
-        Self::open_shared(id, dir, Arc::new(Shared::default()), Arc::new(GlobalStore::open(dir)))
+        Self::open_shared(id, dir, Arc::new(Shared::default()), Arc::new(GlobalStore::open(dir)?))
     }
 
     /// 共有状態と全体設定を指定して開く。同じワークスペースを開き直すときに、前の状態を引き継ぐ。
-    /// リーダーのDBだけが台帳を持つ。全体設定の取り込みが済んでいれば、DBに残る全体設定の古い値を消す。
+    /// リーダーのDBだけが台帳を持つ。
     pub fn open_shared(id: &str, dir: &Path, shared: Arc<Shared>, global: Arc<GlobalStore>) -> Result<Self, AppError> {
         std::fs::create_dir_all(dir).map_err(|e| AppError::Io(e.to_string()))?;
         let role = if id == LEADER_ID { Role::Leader } else { Role::Agent };
         let db = Db::open_as(&dir.join(DB_FILE), role)?;
-        if let Err(e) = global.purge_legacy(&db) {
-            log::warn!("legacy global settings not purged for {id}: {e}");
-        }
         let ctx = Self {
             id: id.to_owned(),
             dir: dir.to_owned(),
@@ -118,6 +115,8 @@ impl WorkspaceCtx {
     /// フォルダ名を小文字にそろえ、アプリが使うフォルダ(`data`・`inbox`・`memory`・`skills`・`captures`・`preferences`)を(無ければ)作る。
     fn prepare_knowledge(&self) {
         let Ok(root) = super::batch::knowledge_root(self) else { return };
+        // 以前のナレッジのコマンド権限のファイルは、DBへ取り込む
+        super::command_policy::import_file(&self.db, &root);
         if root.is_dir() {
             let n = super::knowledge::lowercase_dirs(&root);
             if n > 0 {
@@ -1174,7 +1173,9 @@ mod tests {
         ws.get(PERSONAL_ID).unwrap().db.set_setting(batch::KNOWLEDGE_DIR_KEY, &d.path().to_string_lossy()).unwrap();
         assert!(matches!(ws.create("A", PALETTE[0]), Err(AppError::PathInUse)));
         assert!(ws.list().is_empty(), "一覧もフォルダも作らない");
-        assert!(!d.path().join(DIR_NAME).exists());
+        // 全体設定のDBのほかには、何も作らない
+        let names: Vec<_> = std::fs::read_dir(d.path().join(DIR_NAME)).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, [crate::services::global_settings::DB_FILE]);
     }
 
     #[test]

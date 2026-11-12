@@ -18,12 +18,11 @@
 | `proxy/secrets.json` | 通信のプロキシのパスワード(権限 0600。ワークスペースを問わず1つで、プロキシのIDごと。[proxy.md](proxy.md)) |
 | `tts_dictionary.json` | 読み上げ辞書(ユーザー登録分) |
 | `work/registry.json` | ワークのエージェント一覧(id・名称・イメージカラー・作成日時) |
+| `work/global_settings.db` | 全体設定(専用の SQLite。全エージェント共通。[global-settings.md](global-settings.md)) |
 | `work/<UUID>/` | エージェントのデータ。`timeline.db`・`secrets.json`・`knowledge/`・`tts_dictionary.json` をパーソナルと同じ名前で持つ |
 | `work/<UUID>/sandbox.env` | サンドボックスの環境変数(dotenv 形式。**平文**、権限 0600)。パーソナルはアプリデータ直下の `sandbox.env`([sandbox.md](sandbox.md)) |
 | `sandbox/` | 全エージェント共通の `Dockerfile` と `.dockerignore`(Docker のビルドの文脈)。アプリデータ直下 |
 | `work/<UUID>/agent-sandbox/` | そのエージェント専用の `Dockerfile`(登録したときだけ。共通より優先)。パーソナルはアプリデータ直下の `agent-sandbox/` |
-
-旧名(識別子 `dev.longin.tachicoma-agent`)のフォルダがあり新しいフォルダが無ければ、起動時に丸ごと改名して引き継ぐ(`services/legacy_data.rs`)。ナレッジ内の旧 `.tachicoma/` もコマンド権限の読み書き時に `.my-assistant/` へ改名する。旧名の設定ファイルも取り込める。
 
 ## SQLite スキーマ(`db/`)
 
@@ -98,7 +97,7 @@ erDiagram
 - `conversation_logs.is_processed`: 整理バッチがナレッジへ反映したかどうか([knowledge.md](knowledge.md))。
 - **日時**はすべて UTC・ミリ秒・`Z` 付きの RFC3339(例 `2026-01-01T00:00:00.123Z`)。SQL の既定値(`schema::NOW_SQL`)と Rust で作る値(`db::now()`)を同じ形にしている。
 - 接続は `Mutex<Connection>`。ロックが毒されても(パニック後)中身を使い続ける。同じファイルを複数の接続で開くことがある(整理バッチで一時的に開くなど)ため、WAL(`timeline.db-wal` / `-shm`)と `busy_timeout`(5 秒)を設定する。
-- DB の役割(`db::Role`)は、開くときにワークスペースの ID で決める。リーダーは `leader_tasks` を作り、それ以外は以前のアプリが作っていた空の `leader_tasks` を消す(行があれば残して警告する)。
+- DB の役割(`db::Role`)は、開くときにワークスペースの ID で決める。リーダーだけが `leader_tasks` を作る。
 
 ### 版とマイグレーション(`db/schema.rs`)
 
@@ -123,9 +122,8 @@ erDiagram
 | `routing` | `Route`(JSON) | Claude が使えれば Sonnet | 対話画面のモデル選択 |
 | `web_access` | `0` / `1` | 有効 | Web Search |
 | `sandbox_claude_settings` | 貼り付けた Claude Code の settings.json(JSON。空は未設定=全体設定を利用。全体設定と同じ内容も空として保存) | 未設定 | Sandbox タブ(ワークのエージェント) |
-| `sandbox_llm` | 接続先(Bedrock 固定)・上限時間(分)(JSON)。旧版のモデル・許可するツールは settings.json へ移る | Bedrock・30分 | Sandbox(ワークのエージェント) |
+| `sandbox_llm` | 接続先(Bedrock 固定)・上限時間(分)(JSON) | Bedrock・30分 | Sandbox(ワークのエージェント) |
 | `sandbox_claude_sessions` | 会話 ID と Claude Code のセッション ID の対応(JSON、直近 50 件) | なし | なし(端末の会話と対なので対象外) |
-| `sandbox_claude_settings_deny_migrated` | settings.json へ既定の拒否を足す移行を済ませた印(全体設定の側は `sandbox_claude_settings_shared_deny_migrated`) | なし | なし(書き出しの対象外) |
 | `stt_engine` | `local` / `google` | `local` | Voice Link |
 | `stt_language` | `auto` / `ja` / `en` / `zh` / `ko` | `auto` | Voice Link |
 | `tts_engine` | `google` / `voicevox` | `voicevox` | Voice Link |
@@ -142,7 +140,7 @@ erDiagram
 | `debug_log_dir` | デバッグログの出力先(空なら既定) | 既定 | Debug Mode |
 | `leader_prompt` / `leader_max_active` | リーダーの指示(JSON)と同時に動かす依頼の上限(リーダーのみ) | 既定 | リーダーの設定 |
 
-**全体設定に移した項目**(ベースプロンプト `base_instructions`、OS通知、表示言語、音声入力の待ち時間 `voice_timing`、起動ワード `wake_enabled` / `wake_words`、パーソナルデータ `user_profile`、通信のプロキシの一覧と既定 `proxy_list` / `proxy_default`、チャット以外のプロンプト `global_prompt_*`、Claude Code の settings.json `sandbox_claude_settings_shared`)は、`app_settings` ではなく `work/global_settings.json` に保存する。エージェントのDBに残った同名の古い値は、全体設定の取り込みが済んだあとにDBを開いたとき消す([global-settings.md](global-settings.md))。
+**全体設定に移した項目**(ベースプロンプト `base_instructions`、OS通知、表示言語、音声入力の待ち時間 `voice_timing`、起動ワード `wake_enabled` / `wake_words`、パーソナルデータ `user_profile`、通信のプロキシの一覧と既定 `proxy_list` / `proxy_default`、チャット以外のプロンプト `global_prompt_*`、Claude Code の settings.json `sandbox_claude_settings_shared`)は、`app_settings` ではなく専用の DB `work/global_settings.db` に保存する([global-settings.md](global-settings.md))。
 
 **キーの一覧(`services/settings_registry.rs`)**: すべての設定キーについて、保存先(エージェントのDB / 全体設定)と、書き出し・コピーの対象かどうか(と検証方法)をここで決める。書き出しの項目、全体設定のバックアップの項目、初回の取り込み・古い値の削除の対象は、この一覧から作る。保存先の取り違えを防ぐため、DBは全体設定のキーを、全体設定はエージェントのキーを書き込みで拒否する。新しい設定を足すときは、この一覧にも登録する。
 
@@ -175,7 +173,7 @@ erDiagram
 
 ### 対象
 
-- `app_settings` のうち、キーの一覧(`settings_registry`)で書き出しの対象にした**設定項目**(`routing`・`web_access`・`stt_engine`・`stt_language`・`tts_engine`・`voicevox_style`・`tuning`・`batch_route`・`proofread_route`・`debug_mode`、使うプロキシの選択 `proxy_choice`。全体設定の項目は含まない)と、**コマンド権限**(`command-policy.json`)。
+- `app_settings` のうち、キーの一覧(`settings_registry`)で書き出しの対象にした**設定項目**(`routing`・`web_access`・`stt_engine`・`stt_language`・`tts_engine`・`voicevox_style`・`tuning`・`batch_route`・`proofread_route`・`debug_mode`、使うプロキシの選択 `proxy_choice`。全体設定の項目は含まない)と、**コマンド権限**(`app_settings` のキー `command_policy`。書き出しでは設定項目とは別枠 `command_policy` で扱う)。
 - **含まない**: API キー、エージェントデータ(`agent_data`)、端末ごとに異なるナレッジ・デバッグログの保存先(`knowledge_dir` / `debug_log_dir`)、取得する配布物の版(`whisper_revision` / `voicevox_versions`)、リーダーの設定、会話ごとの要約、会話の履歴。
 - 全体設定の項目(ベースプロンプト・パーソナルデータ・起動ワード・音声入力の待ち時間・ナレッジ整理の間隔・表示言語・OS通知)は含まない。全体設定は App Backup(アプリ全体)で書き出す([backup.md](backup.md))。
 - 書き出し・取り込みの対象は、選択中のワークスペースの設定。ワークスペース間で設定を写すには、各エージェントの設定の「その他」タブにある設定のコピーを使う([workspace.md](workspace.md))。
@@ -188,7 +186,7 @@ erDiagram
   "version": 1,
   "exported_at": "2026-10-29T03:00:00Z",
   "settings": { "routing": "{...}", "web_access": "1" },
-  "command_policy": { "version": 3, "allow": [] }
+  "command_policy": { "allow": [] }
 }
 ```
 

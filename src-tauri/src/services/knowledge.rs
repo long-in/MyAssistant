@@ -118,7 +118,7 @@ pub(crate) fn atomic_write(path: &Path, content: &str) -> Result<(), AppError> {
     fs::rename(&tmp, path).map_err(io)
 }
 
-/// 旧形式(日時見出しの追記)のノートの内容。旧形式からの移行を確かめるテストで使う。
+/// テスト用のノートの内容。
 #[cfg(test)]
 pub struct Entry<'a> {
     pub category: &'a str,
@@ -129,7 +129,7 @@ pub struct Entry<'a> {
     pub source_log_ids: &'a [String],
 }
 
-/// 旧形式のノートを書く(既存ファイルがあれば日時見出しの節を追記、なければ新規作成)。テスト用。
+/// ノートを書く(既存ファイルがあれば日時見出しの節を追記、なければ新規作成)。テスト用。
 #[cfg(test)]
 pub fn upsert(root: &Path, e: &Entry, now: &str) -> Result<String, AppError> {
     let parts = category_parts(e.category);
@@ -208,12 +208,7 @@ pub struct NoteParts {
     pub history: String,
 }
 
-/// 旧形式(`upsert`の追記)の節見出し`## <RFC3339>`か。
-fn is_stamp_heading(line: &str) -> bool {
-    line.strip_prefix("## ").is_some_and(|t| chrono::DateTime::parse_from_rfc3339(t.trim()).is_ok())
-}
-
-/// 本文を現在の内容と経緯に分ける。経緯の見出しが無い旧形式は、最初の日時見出し以降を経緯とし、見出しを1段下げる。
+/// 本文を現在の内容と経緯に分ける。経緯の見出しが無ければ、すべて現在の内容にする。
 pub fn split_body(body: &str) -> (String, String) {
     let lines: Vec<&str> = body.lines().collect();
     // 先頭のタイトル行は現在の内容に含めない(書き戻すときに付け直す)
@@ -222,14 +217,7 @@ pub fn split_body(body: &str) -> (String, String) {
     if let Some(i) = lines.iter().position(|l| l.trim_end() == HISTORY_HEADING) {
         return (lines[..i].join("\n").trim().to_owned(), lines[i + 1..].join("\n").trim().to_owned());
     }
-    match lines.iter().position(|l| is_stamp_heading(l)) {
-        Some(i) => {
-            let history: Vec<String> =
-                lines[i..].iter().map(|l| if is_stamp_heading(l) { format!("#{l}") } else { (*l).to_owned() }).collect();
-            (lines[..i].join("\n").trim().to_owned(), history.join("\n").trim().to_owned())
-        }
-        None => (lines.join("\n").trim().to_owned(), String::new()),
-    }
+    (lines.join("\n").trim().to_owned(), String::new())
 }
 
 /// LLMの書いた現在の内容に経緯の見出しが紛れても、構造を壊さないよう1段下げる。
@@ -1330,19 +1318,10 @@ mod tests {
     }
 
     #[test]
-    fn legacy_notes_move_their_dated_sections_into_history() {
+    fn notes_without_frontmatter_are_read_as_current() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        upsert(root, &entry("dev", "old", "最初のメモ", &[]), "2026-10-01T00:00:00Z").unwrap();
-        upsert(root, &entry("dev", "old", "追記", &[]), "2026-10-02T00:00:00Z").unwrap();
-        let n = read_note(root, "dev/old.md").unwrap();
-        assert_eq!(n.current, "");
-        assert!(n.history.starts_with("### 2026-10-01T00:00:00Z") && n.history.contains("追記"));
-        rewrite(root, "dev/old.md", &update("- まとめ", "- 統合", &[]), "2026-11-01T00:00:00Z").unwrap();
-        let text = read(root, "dev/old.md").unwrap();
-        let body = parse(&text).unwrap().1;
-        assert!(body.contains("\n\n- まとめ\n\n## 経緯\n\n### 2026-10-01T00:00:00Z"), "{body}");
-        // 手書きのノート(Frontmatterなし)も読める
+        fs::create_dir_all(root.join("dev")).unwrap();
         fs::write(root.join("dev/hand.md"), "# 手書き\n\n自由に書いた本文\n\n## 節\n内容").unwrap();
         let n = read_note(root, "dev/hand.md").unwrap();
         assert_eq!((n.fm.title.as_str(), n.current.as_str(), n.history.as_str()), ("hand", "自由に書いた本文\n\n## 節\n内容", ""));

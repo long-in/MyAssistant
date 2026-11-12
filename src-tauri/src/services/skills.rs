@@ -155,11 +155,10 @@ pub fn render(skill: &Skill) -> String {
     )
 }
 
-/// Frontmatterの1項目。`lines`は元の行(キーの行と続きの行)で、書き換えで他のキーをそのまま残すために持つ。
+/// Frontmatterの1項目。
 pub(crate) struct Entry {
     pub key: String,
     pub value: String,
-    pub lines: Vec<String>,
 }
 
 /// `---`で囲まれたFrontmatterと本文に分ける。Frontmatterが無ければ`None`。
@@ -188,7 +187,7 @@ pub(crate) fn split_frontmatter(text: &str) -> Option<(Vec<Entry>, String)> {
         .into_iter()
         .map(|(key, first, lines)| {
             let rest: Vec<&str> = lines[1..].iter().map(String::as_str).collect();
-            Entry { value: decode_scalar(&first, &rest), key, lines }
+            Entry { value: decode_scalar(&first, &rest), key }
         })
         .collect();
     Some((entries, after.trim().to_owned()))
@@ -242,21 +241,7 @@ pub fn parse(name: &str, text: &str) -> Skill {
     Skill { name: name.to_owned(), description, body }
 }
 
-/// 旧形式の`triggers`(呼び出し語)。標準には無いので、移行で説明へ統合する。
-pub(crate) fn legacy_triggers(text: &str) -> Vec<String> {
-    let Some((entries, _)) = split_frontmatter(text) else { return Vec::new() };
-    let value = entries.iter().find(|e| e.key == "triggers").map(|e| e.value.as_str()).unwrap_or("");
-    let list: Vec<String> = serde_json::from_str(value).unwrap_or_default();
-    let mut seen = Vec::<String>::new();
-    for t in list.iter().map(|t| t.trim()).filter(|t| !t.is_empty()) {
-        if !seen.iter().any(|s| s == t) {
-            seen.push(t.to_owned());
-        }
-    }
-    seen
-}
-
-/// 説明の末尾へ呼び出し語を足す(旧形式からの移行用)。
+/// 説明の末尾へ呼び出し語を足す。
 pub(crate) fn merge_triggers(description: &str, triggers: &[String]) -> String {
     if triggers.is_empty() {
         return description.to_owned();
@@ -883,13 +868,9 @@ mod tests {
     }
 
     #[test]
-    fn legacy_triggers_are_read_and_merged() {
-        let legacy = "---\nname: \"daily\"\ndescription: \"日報\"\ntriggers: [\"日報\",\"日報\",\" \",\"daily\"]\n---\n\n手順";
-        assert_eq!(legacy_triggers(legacy), ["日報", "daily"]);
-        assert_eq!(parse("daily", legacy).description, "日報");
-        assert_eq!(merge_triggers("日報", &legacy_triggers(legacy)), "日報 呼び出し語は「日報」「daily」");
+    fn triggers_are_merged_into_the_description() {
+        assert_eq!(merge_triggers("日報", &["日報".to_owned(), "daily".to_owned()]), "日報 呼び出し語は「日報」「daily」");
         assert_eq!(merge_triggers("日報", &[]), "日報");
-        assert!(legacy_triggers("手書き").is_empty());
     }
 
     #[test]

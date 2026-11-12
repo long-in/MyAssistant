@@ -1,23 +1,24 @@
 //! 全体設定。すべてのエージェント(パーソナルを含む)で共通の設定を1か所に持つ。
 //!
-//! - 保存先はアプリデータの`work/global_settings.json`(キーと文字列値の対応)。エージェントを削除しても残る。
+//! - 保存先はアプリデータの`work/global_settings.db`(専用のSQLite。キーと文字列値の対応)。エージェントを削除しても残る。
 //! - 項目は`settings_registry`で保存先が全体設定(`Scope::Global`)のキー。エージェントごとのキーは書き込みで拒否する。
-//! - 初回(ファイルが無いとき)だけ、パーソナルのDBの現在値を初期値として取り込む(`migrate_from`)。
-//! - 取り込んだあと(ファイルがあるとき)は、各エージェントのDBに残る同名の古い値を消す(`purge_legacy`)。ファイルが無いうちは消さない。
+//! - 以前の`work/global_settings.json`があれば、開くときに一度だけ取り込んで削除する(`import_json`)。
 //!
 //! 項目の読み書きは`SettingsStore`を通すので、DBの設定と同じ形で扱える。
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-    sync::Mutex,
-};
+use std::{collections::BTreeMap, path::Path, sync::Mutex};
 
-use serde_json::Value;
+use rusqlite::{Connection, OptionalExtension, params};
 
-use super::settings_registry::{self, Scope};
+use super::settings_registry;
 use crate::{db::Db, utils::error::AppError};
 
-const FILE: &str = "global_settings.json";
+/// 全体設定のDBのファイル名(`work/`の下)。
+pub const DB_FILE: &str = "global_settings.db";
+/// 以前の保存先(JSON)。あれば開くときに取り込む。
+pub const LEGACY_JSON_FILE: &str = "global_settings.json";
+
+/// 同じファイルをほかの接続が書いているとき、待つ時間(ミリ秒)。
+const BUSY_TIMEOUT_MS: u64 = 5_000;
 
 /// 表示言語(`ja` / `en`)。画面が最初に決めた値を保存する。未保存ならnull扱い。
 pub const LANGUAGE_KEY: &str = "language";
@@ -40,46 +41,63 @@ impl SettingsStore for Db {
     }
 }
 
-/// 全体設定のファイル。読み書きは1つのロックで直列にし、書き込みは一時ファイルからのリネームで途中の破損を避ける。
+/// 全体設定のDB。読み書きは1つの接続で直列にし、複数項目の書き込みは1つのトランザクションにする。
 #[derive(Debug)]
 pub struct GlobalStore {
-    path: PathBuf,
-    lock: Mutex<()>,
+    conn: Mutex<Connection>,
 }
 
 impl GlobalStore {
-    /// `root`(アプリデータ)の全体設定を指す。ファイルは書き込むときまで作らない。
-    pub fn open(root: &Path) -> Self {
-        Self { path: root.join(super::workspace::DIR_NAME).join(FILE), lock: Mutex::new(()) }
+    /// `root`(アプリデータ)の全体設定を開く(無ければ作る)。以前のJSONがあれば取り込んで削除する。
+    pub fn open(root: &Path) -> Result<Self, AppError> {
+        let dir = root.join(super::workspace::DIR_NAME);
+        std::fs::create_dir_all(&dir).map_err(|e| AppError::Io(e.to_string()))?;
+        let conn = Connection::open(dir.join(DB_FILE))?;
+        conn.busy_timeout(std::time::Duration::from_millis(BUSY_TIMEOUT_MS))?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS global_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            );",
+        )?;
+        let store = Self { conn: Mutex::new(conn) };
+        store.import_json(&dir.join(LEGACY_JSON_FILE));
+        Ok(store)
     }
 
-    /// 読めなければ(無い・壊れている)空。
-    fn read(&self) -> BTreeMap<String, String> {
-        std::fs::read_to_string(&self.path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    /// 接続。ロックが毒されても(パニック後)中身を使い続ける。
+    fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    fn write(&self, map: &BTreeMap<String, String>) -> Result<(), AppError> {
-        let io = |e: std::io::Error| AppError::Io(e.to_string());
-        std::fs::create_dir_all(self.path.parent().unwrap_or(Path::new("."))).map_err(io)?;
-        let tmp = self.path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_string_pretty(map).map_err(|e| AppError::Io(e.to_string()))?).map_err(io)?;
-        std::fs::rename(&tmp, &self.path).map_err(io)
-    }
-
-    /// 壊れたファイルは`.corrupt`へ退避する(次の書き込みで消してしまわないため)。
-    fn read_for_update(&self) -> BTreeMap<String, String> {
-        match std::fs::read_to_string(&self.path) {
-            Ok(t) => serde_json::from_str(&t).unwrap_or_else(|_| {
-                let _ = std::fs::rename(&self.path, self.path.with_extension("json.corrupt"));
-                BTreeMap::new()
-            }),
-            Err(_) => BTreeMap::new(),
+    /// 以前のJSONを取り込んで削除する。すでにDBにある項目は上書きしない。読めない・書き込めないときはファイルを残す。
+    fn import_json(&self, path: &Path) {
+        let Ok(text) = std::fs::read_to_string(path) else { return };
+        let map: BTreeMap<String, String> = match serde_json::from_str(&text) {
+            Ok(m) => m,
+            Err(e) => {
+                log::warn!("global settings file is invalid, kept as is: {e}");
+                return;
+            }
+        };
+        let result = (|| -> Result<(), AppError> {
+            let mut conn = self.conn();
+            let tx = conn.transaction()?;
+            for (key, value) in map.iter().filter(|(k, _)| settings_registry::check_global_write(k).is_ok()) {
+                tx.execute("INSERT OR IGNORE INTO global_settings (key, value) VALUES (?1, ?2)", params![key, value])?;
+            }
+            tx.commit()?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                if let Err(e) = std::fs::remove_file(path) {
+                    log::warn!("global settings file imported but not removed: {e}");
+                }
+            }
+            Err(e) => log::warn!("global settings import failed, file kept: {e}"),
         }
-    }
-
-    /// ファイルがあるか(初回の取り込みが済んだか)。
-    pub fn exists(&self) -> bool {
-        self.path.exists()
     }
 
     /// 複数の項目をまとめて書く(途中で失敗したら、どれも書かれない)。
@@ -87,59 +105,23 @@ impl GlobalStore {
         for (k, _) in items {
             settings_registry::check_global_write(k)?;
         }
-        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
-        let mut map = self.read_for_update();
-        for (k, v) in items {
-            map.insert((*k).to_owned(), (*v).to_owned());
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        for (key, value) in items {
+            tx.execute(
+                "INSERT INTO global_settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+                params![key, value],
+            )?;
         }
-        self.write(&map)
-    }
-
-    /// ファイルがまだ無いときだけ、パーソナルのDBの現在値を初期値として写す。VOICE TIMINGは調整項目から取り出す。
-    /// 写せたら(またはファイルが既にあれば)、パーソナルのDBに残る古い値を消す。
-    pub fn migrate_from(&self, personal: &Db) -> Result<(), AppError> {
-        {
-            let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
-            if !self.path.exists() {
-                self.write(&Self::initial_values(personal)?)?;
-            }
-        }
-        self.purge_legacy(personal)
-    }
-
-    fn initial_values(personal: &Db) -> Result<BTreeMap<String, String>, AppError> {
-        let mut map = BTreeMap::new();
-        for key in settings_registry::keys(Scope::Global) {
-            if let Some(v) = personal.get_setting(key)? {
-                map.insert(key.to_owned(), v);
-            }
-        }
-        if let Some(t) = personal.get_setting(super::tuning::KEY)?.and_then(|v| serde_json::from_str::<Value>(&v).ok()) {
-            let pick: serde_json::Map<String, Value> = super::tuning::VOICE_FIELDS
-                .iter()
-                .filter_map(|f| t.get(*f).map(|v| ((*f).to_owned(), v.clone())))
-                .collect();
-            if !pick.is_empty() {
-                map.insert(super::tuning::VOICE_KEY.to_owned(), Value::Object(pick).to_string());
-            }
-        }
-        Ok(map)
-    }
-
-    /// DBに残る全体設定の古い値を消す。ファイルがまだ無ければ(初回の取り込み前なので)消さない。
-    pub fn purge_legacy(&self, db: &Db) -> Result<(), AppError> {
-        if !self.exists() {
-            return Ok(());
-        }
-        db.delete_settings(settings_registry::keys(Scope::Global))?;
+        tx.commit()?;
         Ok(())
     }
 }
 
 impl SettingsStore for GlobalStore {
     fn get_setting(&self, key: &str) -> Result<Option<String>, AppError> {
-        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
-        Ok(self.read().remove(key))
+        Ok(self.conn().query_row("SELECT value FROM global_settings WHERE key = ?1", [key], |r| r.get(0)).optional()?)
     }
 
     fn set_setting(&self, key: &str, value: &str) -> Result<(), AppError> {
@@ -151,95 +133,65 @@ impl SettingsStore for GlobalStore {
 mod tests {
     use super::*;
 
-    fn personal(dir: &Path) -> Db {
-        Db::open(&dir.join("t.db")).unwrap()
-    }
-
     #[test]
     fn roundtrips_and_survives_reopen() {
         let d = tempfile::tempdir().unwrap();
-        let g = GlobalStore::open(d.path());
+        let g = GlobalStore::open(d.path()).unwrap();
         assert_eq!(g.get_setting("a").unwrap(), None);
         g.set_setting("a", "1").unwrap();
         g.set_settings(&[("b", "2"), ("a", "3")]).unwrap();
-        let g = GlobalStore::open(d.path());
+        drop(g);
+        let g = GlobalStore::open(d.path()).unwrap();
         assert_eq!(g.get_setting("a").unwrap().as_deref(), Some("3"));
         assert_eq!(g.get_setting("b").unwrap().as_deref(), Some("2"));
     }
 
     #[test]
-    fn first_run_adopts_personal_values_once() {
-        let d = tempfile::tempdir().unwrap();
-        let db = personal(d.path());
-        db.set_legacy_setting("base_instructions", "敬語で");
-        db.set_legacy_setting("batch_interval_minutes", "60");
-        db.set_setting("web_access", "0").unwrap(); // 全体設定の対象外
-        db.set_setting("tuning", r#"{"web_search_max":9,"voice_idle_secs":7.0}"#).unwrap();
-        let g = GlobalStore::open(d.path());
-        g.migrate_from(&db).unwrap();
-        assert_eq!(g.get_setting("base_instructions").unwrap().as_deref(), Some("敬語で"));
-        assert_eq!(g.get_setting("web_access").unwrap(), None);
-        let voice: Value = serde_json::from_str(&g.get_setting("voice_timing").unwrap().unwrap()).unwrap();
-        assert_eq!(voice["voice_idle_secs"], 7.0);
-        assert!(voice.get("web_search_max").is_none());
-        // 取り込んだら、パーソナルのDBに残る古い値は消す(エージェントごとの設定は残す)
-        assert_eq!(db.get_setting("base_instructions").unwrap(), None);
-        assert_eq!(db.get_setting("web_access").unwrap().as_deref(), Some("0"));
-        assert!(db.get_setting("tuning").unwrap().is_some());
-        // 2回目以降は、パーソナルが変わっても取り込み直さない
-        db.set_legacy_setting("base_instructions", "別の値");
-        g.migrate_from(&db).unwrap();
-        assert_eq!(g.get_setting("base_instructions").unwrap().as_deref(), Some("敬語で"));
-        assert_eq!(db.get_setting("base_instructions").unwrap(), None);
-    }
-
-    #[test]
-    fn legacy_values_are_kept_until_the_first_import() {
-        use crate::services::workspace::WorkspaceCtx;
-        let d = tempfile::tempdir().unwrap();
-        let legacy = Db::open(&d.path().join("timeline.db")).unwrap();
-        legacy.set_legacy_setting("base_instructions", "敬語で");
-        drop(legacy);
-        // ファイルが無いうちに開いても消さない(このあと取り込むため)
-        let personal = WorkspaceCtx::open("personal", d.path()).unwrap();
-        assert_eq!(personal.db.get_setting("base_instructions").unwrap().as_deref(), Some("敬語で"));
-        personal.global.migrate_from(&personal.db).unwrap();
-        assert_eq!(personal.global.get_setting("base_instructions").unwrap().as_deref(), Some("敬語で"));
-        // 取り込んだあとに開いたエージェントは、開いたときに消す
-        let agent = d.path().join("agent");
-        std::fs::create_dir_all(&agent).unwrap();
-        let old = Db::open(&agent.join("timeline.db")).unwrap();
-        old.set_legacy_setting("wake_words", r#"["旧"]"#);
-        drop(old);
-        let s = WorkspaceCtx::open_shared("s", &agent, Default::default(), personal.global.clone()).unwrap();
-        assert_eq!(s.db.get_setting("wake_words").unwrap(), None);
-    }
-
-    #[test]
     fn agent_keys_are_rejected() {
         let d = tempfile::tempdir().unwrap();
-        let g = GlobalStore::open(d.path());
+        let g = GlobalStore::open(d.path()).unwrap();
         assert!(g.set_settings(&[("base_instructions", "x"), ("routing", "{}")]).is_err());
         assert_eq!(g.get_setting("base_instructions").unwrap(), None);
     }
 
     #[test]
-    fn corrupt_file_is_set_aside_not_overwritten() {
+    fn json_file_is_imported_once_and_removed() {
         let d = tempfile::tempdir().unwrap();
-        let g = GlobalStore::open(d.path());
-        g.set_setting("a", "1").unwrap();
-        std::fs::write(d.path().join("work").join(FILE), "{broken").unwrap();
-        assert_eq!(g.get_setting("a").unwrap(), None);
-        g.set_setting("b", "2").unwrap();
-        assert!(d.path().join("work").join("global_settings.json.corrupt").exists());
-        assert_eq!(g.get_setting("b").unwrap().as_deref(), Some("2"));
+        let work = d.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let file = work.join(LEGACY_JSON_FILE);
+        std::fs::write(&file, r#"{"language":"en","os_notifications":"0","routing":"{}"}"#).unwrap();
+        let g = GlobalStore::open(d.path()).unwrap();
+        assert_eq!(g.get_setting("language").unwrap().as_deref(), Some("en"));
+        assert_eq!(g.get_setting("os_notifications").unwrap().as_deref(), Some("0"));
+        // エージェントごとのキーは取り込まない
+        assert_eq!(g.get_setting("routing").unwrap(), None);
+        assert!(!file.exists());
+        // すでにDBにある値は、残っていたJSONで上書きしない
+        g.set_setting("language", "ja").unwrap();
+        std::fs::write(&file, r#"{"language":"en"}"#).unwrap();
+        drop(g);
+        let g = GlobalStore::open(d.path()).unwrap();
+        assert_eq!(g.get_setting("language").unwrap().as_deref(), Some("ja"));
     }
 
     #[test]
-    fn agent_db_values_are_ignored_and_all_agents_share_one_file() {
+    fn broken_json_file_is_kept() {
+        let d = tempfile::tempdir().unwrap();
+        let work = d.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let file = work.join(LEGACY_JSON_FILE);
+        std::fs::write(&file, "{broken").unwrap();
+        let g = GlobalStore::open(d.path()).unwrap();
+        assert_eq!(g.get_setting("language").unwrap(), None);
+        assert!(file.exists());
+    }
+
+    #[test]
+    fn agent_db_values_are_ignored_and_all_agents_share_one_store() {
         use crate::services::{workspace::WorkspaceCtx, wake};
         let d = tempfile::tempdir().unwrap();
-        let global = std::sync::Arc::new(GlobalStore::open(d.path()));
+        let global = std::sync::Arc::new(GlobalStore::open(d.path()).unwrap());
         let a = WorkspaceCtx::open_shared("a", &d.path().join("a"), Default::default(), global.clone()).unwrap();
         let b = WorkspaceCtx::open_shared("b", &d.path().join("b"), Default::default(), global).unwrap();
         // エージェントのDBに古い値があっても、全体設定は読まない

@@ -100,7 +100,7 @@ Windows / Linux は未対応です(コマンド実行が `/bin/sh` 前提、音�
     - 読み取り系以外のコマンドは、ナレッジのディレクトリ内でしか実行できません。
     - アプリのデータ(API キー・会話の記録・ほかのエージェントのデータ)の場所は、読み取りもできません。
     - 計画外・破壊的なコマンドと、許可リストへの追加は、画面のボタンでだけ承認できます(音声の「はい」では通りません)。
-  - 許可・拒否・都度承認のコマンドは、設定画面の Command Policy で JSON として編集できます(実体はナレッジ内の `.my-assistant/command-policy.json`)。
+  - 許可・拒否・都度承認のコマンドは、設定画面の Command Policy で JSON として編集できます(実体はエージェントごとの DB の設定 `command_policy`)。
   - コンテナ内の Claude Code(ワーク、Bedrock 方式)で拒否するコマンドは、Claude Code の settings.json の `permissions.deny` で決めます(雛形に `rm`・`sudo` などの初期値が入っています)。
 - **サンドボックス** ([sandbox.md](docs/sandbox.md))
   - ワークのエージェントへの指示は、常に、エージェントごとの専用 Docker コンテナの中の Claude Code が受け持ちます(切り替えはありません)。パーソナルとリーダーは、AI Link の接続方式に Bedrock を選んだときだけコンテナで動きます。続きの指示は同じセッションで引き継ぎます。
@@ -287,7 +287,6 @@ npm run tauri build
 
 - 識別子: `MyAssistant`
 - macOS のパス: `~/Library/Application Support/MyAssistant/`
-- 旧識別子(`dev.longin.tachicoma-agent`)のフォルダがあれば、初回起動時に自動で引き継ぎます。
 
 | パス | 内容 |
 | --- | --- |

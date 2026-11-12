@@ -1,6 +1,7 @@
 //! `run_command`で実行するシェルコマンドの可否判定。
-//! 許可・ask・拒否・機密・システム領域などの規則はすべてナレッジの`.my-assistant/command-policy.json`で管理し、コマンドごとに読み直す。
-//! `rm`系・OSに影響するコマンド・機密ファイルの拒否も初期値としてファイルに書き出すだけで、ユーザーが編集できる。
+//! 許可・ask・拒否・機密・システム領域などの規則はすべてエージェントのDB(`app_settings`のキー`command_policy`、JSON)で管理し、コマンドごとに読み直す。
+//! `rm`系・OSに影響するコマンド・機密ファイルの拒否も初期値としてDBに書き出すだけで、ユーザーが編集できる。
+//! 以前のナレッジの`.my-assistant/command-policy.json`があれば、開くときに一度だけ取り込んで削除する(`import_file`)。
 //! 既定では、読み取り系(承認不要のもの)を除き、作業ディレクトリとパス引数はナレッジ配下に限る(`Scope`)。
 use std::{
     fs,
@@ -9,23 +10,24 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::utils::path::ensure_dir;
+use super::global_settings::SettingsStore;
+use crate::utils::path::resolve_existing;
 
-const POLICY_DIR: &str = ".my-assistant";
-/// 改名前のフォルダ名。見つかれば`POLICY_DIR`へ移す。
-const LEGACY_POLICY_DIR: &str = ".tachicoma";
-const POLICY_FILE: &str = "command-policy.json";
+/// コマンド権限を保存する設定のキー(エージェントのDB)。
+pub const KEY: &str = "command_policy";
+/// 以前の保存先(ナレッジ直下からの相対)。あれば`import_file`が取り込む。
+const LEGACY_FILE: &str = ".my-assistant/command-policy.json";
 /// 再帰的に解析する入れ子(`sh -c`、`$(...)`など)の深さの上限。超えたら個別承認にする。
 const MAX_DEPTH: usize = 4;
 
-/// 承認なしで実行してよい読み取り系コマンド。ポリシーファイルの初期値になる。
+/// 承認なしで実行してよい読み取り系コマンド。ポリシーの初期値になる。
 const DEFAULT_ALLOW: [&str; 24] = [
     "ls", "pwd", "cat", "head", "tail", "wc", "file", "stat", "du", "df", "which", "whoami", "date", "uname", "sw_vers",
     "echo", "grep", "rg", "find", "tree", "git status", "git log", "git diff", "git show",
 ];
 
-/// 版3で足した読み取り系。古いポリシーファイルにも移行時に足す。
-const ALLOW_ADDED_V3: [&str; 24] = [
+/// 読み取り系の許可の初期値(`DEFAULT_ALLOW`の続き)。
+const DEFAULT_ALLOW_MORE: [&str; 24] = [
     "ps", "id", "hostname", "uptime", "printenv", "basename", "dirname", "realpath", "readlink", "diff", "cut", "tr",
     "lsof", "git rev-parse", "git ls-files", "git blame", "git remote -v", "git branch --show-current",
     "git branch -a", "git branch --list", "git branch -v", "git tag -l", "git tag --list", "git config --get",
@@ -96,21 +98,11 @@ const DEFAULT_ASK: [&str; 22] = [
     "brew uninstall", "brew remove", "npm publish", "cargo publish", "git rebase",
 ];
 
-/// ポリシーファイルの現在の版。この版より古いファイルは、初期値の拒否・askを足して読み込む。
-const POLICY_VERSION: u32 = 5;
-
-fn legacy_version() -> u32 {
-    1
-}
-
 /// ナレッジで管理するコマンド権限。各要素は`git status`のようなコマンド名と引数の接頭辞。
 /// 欠けている項目は初期値になる(`Default`が初期値)。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Policy {
-    /// ファイルの版。無ければ版を持たなかった頃のファイルとして扱う。
-    #[serde(default = "legacy_version")]
-    pub version: u32,
     /// 承認なしで実行する(拒否・askより弱い)。コマンド名と引数の先頭が一致したときだけ有効。
     pub allow: Vec<String>,
     /// 常に個別承認を求める。引数の途中にあっても一致する。
@@ -137,8 +129,7 @@ impl Default for Policy {
     fn default() -> Self {
         let owned = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
         Self {
-            version: POLICY_VERSION,
-            allow: owned(&DEFAULT_ALLOW).into_iter().chain(owned(&ALLOW_ADDED_V3)).collect(),
+            allow: owned(&DEFAULT_ALLOW).into_iter().chain(owned(&DEFAULT_ALLOW_MORE)).collect(),
             ask: owned(&DEFAULT_ASK),
             deny: owned(&DEFAULT_DENY),
             deny_words: owned(&DEFAULT_DENY_WORDS),
@@ -161,30 +152,6 @@ impl Policy {
     /// ファイルを読めないときの退避。許可リストは空で、拒否・askなどの規則は初期値のまま。
     fn fallback() -> Self {
         Self { allow: Vec::new(), ..Self::default() }
-    }
-
-    /// 古い版のファイルに、後から規則へ移した初期値の拒否・askなどを足す(ユーザーの項目は残す)。
-    fn migrated(mut self) -> Self {
-        if self.version >= POLICY_VERSION {
-            return self;
-        }
-        let d = Self::default();
-        let union = |mine: &mut Vec<String>, add: Vec<String>| {
-            for item in add {
-                if !mine.contains(&item) {
-                    mine.push(item);
-                }
-            }
-        };
-        union(&mut self.deny, d.deny);
-        union(&mut self.ask, d.ask);
-        union(&mut self.allow, ALLOW_ADDED_V3.iter().map(|s| (*s).to_owned()).collect());
-        self.deny_words = d.deny_words;
-        self.protected = d.protected;
-        self.system_paths = d.system_paths;
-        self.system_exceptions = d.system_exceptions;
-        self.version = POLICY_VERSION;
-        self
     }
 }
 
@@ -364,47 +331,50 @@ impl Verdict {
     }
 }
 
-/// 旧名のフォルダだけがあれば、新名へ改名する。両方ある場合は新名を優先して触らない。
-fn migrate_legacy_dir(knowledge_root: &Path) {
-    let (old, new) = (knowledge_root.join(LEGACY_POLICY_DIR), knowledge_root.join(POLICY_DIR));
-    if old.is_dir()
-        && !new.exists()
-        && let Err(e) = fs::rename(&old, &new)
-    {
-        log::warn!("command policy dir migration failed: {e}");
+/// 保存済みのポリシーを読む。無ければ初期値を書き出す。読めない・壊れている場合は許可リストが空になる(拒否などは初期値のまま)。
+pub fn load(store: &(impl SettingsStore + ?Sized)) -> Policy {
+    match store.get_setting(KEY) {
+        Ok(Some(text)) => serde_json::from_str::<Policy>(&text).unwrap_or_else(|e| {
+            log::warn!("command policy is invalid: {e}");
+            Policy::fallback()
+        }),
+        Ok(None) => {
+            let defaults = Policy::defaults();
+            if let Err(e) = write(store, &defaults) {
+                log::warn!("command policy write failed: {e}");
+            }
+            defaults
+        }
+        Err(e) => {
+            log::warn!("command policy not readable: {e}");
+            Policy::fallback()
+        }
     }
 }
 
-/// ナレッジのポリシーを読む。無ければ初期値を書き出す。読めない・壊れている場合は許可リストが空になる(拒否などは初期値のまま)。
-pub fn load(knowledge_root: &Path) -> Policy {
-    migrate_legacy_dir(knowledge_root);
-    let Ok(dir) = ensure_dir(knowledge_root, &[POLICY_DIR.to_owned()]) else {
-        return Policy::fallback();
-    };
-    let file = dir.join(POLICY_FILE);
-    let write = |p: &Policy| {
-        if let Ok(json) = serde_json::to_string_pretty(p)
-            && let Err(e) = fs::write(&file, json + "\n")
-        {
-            log::warn!("command policy write failed: {e}");
-        }
-    };
-    if !file.exists() {
-        let defaults = Policy::defaults();
-        write(&defaults);
-        return defaults;
+fn write(store: &(impl SettingsStore + ?Sized), policy: &Policy) -> Result<(), String> {
+    let json = serde_json::to_string(policy).map_err(|e| e.to_string())?;
+    store.set_setting(KEY, &json).map_err(|e| e.to_string())
+}
+
+/// 以前のナレッジのファイル(`.my-assistant/command-policy.json`)を、DBへ一度だけ取り込んで削除する。
+/// すでにDBに保存があるときは、DBを優先してファイルには触れない。読めない・書き込めないときもファイルを残す。
+pub fn import_file(store: &(impl SettingsStore + ?Sized), knowledge_root: &Path) {
+    let Ok(file) = resolve_existing(knowledge_root, LEGACY_FILE) else { return };
+    if !file.is_file() || matches!(store.get_setting(KEY), Ok(Some(_))) {
+        return;
     }
-    match fs::read_to_string(&file).map_err(|e| e.to_string()).and_then(|s| serde_json::from_str::<Policy>(&s).map_err(|e| e.to_string())) {
-        Ok(p) if p.version < POLICY_VERSION => {
-            let p = p.migrated();
-            write(&p);
-            p
+    let policy = fs::read_to_string(&file)
+        .map_err(|e| e.to_string())
+        .and_then(|text| serde_json::from_str::<Policy>(&text).map_err(|e| e.to_string()))
+        .and_then(|p| p.cleaned());
+    match policy.and_then(|p| write(store, &p)) {
+        Ok(()) => {
+            if let Err(e) = fs::remove_file(&file) {
+                log::warn!("command policy file imported but not removed: {e}");
+            }
         }
-        Ok(p) => p,
-        Err(e) => {
-            log::warn!("command policy is invalid: {e}");
-            Policy::fallback()
-        }
+        Err(e) => log::warn!("command policy file not imported, kept as is: {e}"),
     }
 }
 
@@ -433,7 +403,6 @@ impl Policy {
             Ok(out)
         };
         Ok(Self {
-            version: POLICY_VERSION,
             allow: clean(&self.allow)?,
             ask: clean(&self.ask)?,
             deny: clean(&self.deny)?,
@@ -447,23 +416,20 @@ impl Policy {
 }
 
 /// 許可リストへパターンを加えて保存する(ユーザーが承認したときだけ呼ぶ)。
-pub fn add_allow(knowledge_root: &Path, patterns: &[String]) -> Result<Policy, String> {
-    let mut policy = load(knowledge_root);
+pub fn add_allow(store: &(impl SettingsStore + ?Sized), patterns: &[String]) -> Result<Policy, String> {
+    let mut policy = load(store);
     for p in patterns {
         if !policy.allow.contains(p) {
             policy.allow.push(p.clone());
         }
     }
-    save(knowledge_root, &policy)
+    save(store, &policy)
 }
 
 /// ポリシーを検証して保存し、保存した内容を返す。次のコマンドから有効になる。
-pub fn save(knowledge_root: &Path, policy: &Policy) -> Result<Policy, String> {
+pub fn save(store: &(impl SettingsStore + ?Sized), policy: &Policy) -> Result<Policy, String> {
     let policy = policy.cleaned()?;
-    migrate_legacy_dir(knowledge_root);
-    let dir = ensure_dir(knowledge_root, &[POLICY_DIR.to_owned()]).map_err(|e| e.to_string())?;
-    let json = serde_json::to_string_pretty(&policy).map_err(|e| e.to_string())?;
-    fs::write(dir.join(POLICY_FILE), json + "\n").map_err(|e| e.to_string())?;
+    write(store, &policy)?;
     Ok(policy)
 }
 
@@ -972,6 +938,10 @@ pub fn classify_in(cmd: &str, policy: &Policy, scope: Option<&Scope>) -> Verdict
 mod tests {
     use super::*;
 
+    fn store() -> crate::db::Db {
+        crate::db::Db::open_in_memory(crate::db::Role::Agent)
+    }
+
     fn v(cmd: &str) -> Verdict {
         classify(cmd, &Policy::defaults())
     }
@@ -1268,15 +1238,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("knowledge");
         fs::create_dir_all(&root).unwrap();
+        let db = store();
         let outside = Scope::new(&root, &dir.path().canonicalize().unwrap());
-        let before = load(&root);
+        let before = load(&db);
         assert_eq!(classify_in("mkdir a", &before, Some(&outside)), Verdict::Unlisted(vec!["mkdir".into()]));
-        let after = add_allow(&root, &["mkdir".to_owned(), "mkdir".to_owned()]).unwrap();
+        let after = add_allow(&db, &["mkdir".to_owned(), "mkdir".to_owned()]).unwrap();
         assert_eq!(after.allow.iter().filter(|a| *a == "mkdir").count(), 1);
-        assert_eq!(classify_in("mkdir a", &load(&root), Some(&outside)), Verdict::Auto);
+        assert_eq!(classify_in("mkdir a", &load(&db), Some(&outside)), Verdict::Auto);
         // 拒否は許可に加えても緩まない
-        add_allow(&root, &["rm".to_owned()]).unwrap();
-        assert!(matches!(classify_in("rm x", &load(&root), Some(&outside)), Verdict::Deny(_)));
+        add_allow(&db, &["rm".to_owned()]).unwrap();
+        assert!(matches!(classify_in("rm x", &load(&db), Some(&outside)), Verdict::Deny(_)));
     }
 
     #[test]
@@ -1342,33 +1313,17 @@ mod tests {
     }
 
     #[test]
-    fn old_policy_files_gain_the_default_rules() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join("knowledge");
-        let file = ensure_dir(&root, &[POLICY_DIR.to_owned()]).unwrap().join(POLICY_FILE);
-        fs::write(&file, r#"{ "allow": ["make"], "deny": ["curl"] }"#).unwrap();
-        let p = load(&root);
-        assert!(p.allow.contains(&"make".to_owned()) && p.allow.contains(&"ps".to_owned()));
-        assert!(p.deny.contains(&"curl".to_owned()) && p.deny.contains(&"shutdown".to_owned()));
-        assert!(p.ask.contains(&"git push".to_owned()));
-        assert!(matches!(classify("rm x", &p), Verdict::Deny(_)));
-        // 移行した内容が書き戻されている
-        assert!(fs::read_to_string(&file).unwrap().contains("\"version\": 5"));
-    }
-
-    #[test]
     fn save_cleans_and_roundtrips() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join("knowledge");
+        let db = store();
         let p = Policy { allow: vec!["  git   status ".into(), "".into(), "git status".into(), "make".into()], ask: vec![], deny: vec!["curl".into()], ..Policy::default() };
-        let saved = save(&root, &p).unwrap();
+        let saved = save(&db, &p).unwrap();
         assert_eq!(saved.allow, ["git status", "make"]);
-        assert_eq!(load(&root).deny, ["curl"]);
+        assert_eq!(load(&db).deny, ["curl"]);
         let long = Policy { allow: vec!["a".repeat(MAX_ENTRY_CHARS + 1)], ..Policy::default() };
-        assert!(save(&root, &long).is_err());
+        assert!(save(&db, &long).is_err());
         // 許可に書いても、拒否の語が残っていれば拒否される
         let p = Policy { allow: vec!["rm".into()], ..Policy::default() };
-        let saved = save(&root, &p).unwrap();
+        let saved = save(&db, &p).unwrap();
         assert!(matches!(classify("rm x", &saved), Verdict::Deny(_)));
     }
 
@@ -1380,22 +1335,51 @@ mod tests {
     }
 
     #[test]
-    fn load_seeds_defaults_and_tolerates_broken_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join("knowledge");
-        let p = load(&root);
+    fn load_seeds_defaults_and_tolerates_broken_value() {
+        let db = store();
+        let p = load(&db);
         assert!(p.allow.contains(&"git status".to_owned()));
-        let file = root.join(POLICY_DIR).join(POLICY_FILE);
-        assert!(file.is_file());
-        // ユーザーが編集した内容が次回から使われる(空のリストも空のまま)
-        fs::write(&file, r#"{ "version": 5, "allow": ["make"], "deny": ["curl"], "ask": [] }"#).unwrap();
-        let p = load(&root);
+        assert!(db.get_setting(KEY).unwrap().is_some());
+        // 保存した内容が次回から使われる(空のリストも空のまま)
+        db.set_setting(KEY, r#"{ "allow": ["make"], "deny": ["curl"], "ask": [] }"#).unwrap();
+        let p = load(&db);
         assert_eq!((p.allow, p.deny, p.ask), (vec!["make".to_owned()], vec!["curl".to_owned()], vec![]));
         // 壊れていれば許可リストは空。拒否などは初期値のまま
-        fs::write(&file, "{ not json").unwrap();
-        let p = load(&root);
+        db.set_setting(KEY, "{ not json").unwrap();
+        let p = load(&db);
         assert!(p.allow.is_empty());
         assert!(matches!(classify("rm x", &p), Verdict::Deny(_)));
         assert_eq!(classify("ls", &p), Verdict::Plan);
+    }
+
+    #[test]
+    fn legacy_file_is_imported_once_and_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let file = root.join(LEGACY_FILE);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, r#"{ "version": 4, "allow": ["make"], "deny": ["curl"], "ask": [] }"#).unwrap();
+        let db = store();
+        import_file(&db, root);
+        assert!(!file.exists());
+        let p = load(&db);
+        assert_eq!((p.allow, p.deny), (vec!["make".to_owned()], vec!["curl".to_owned()]));
+        // DBに保存があるときは、ファイルは取り込まず触れない
+        fs::write(&file, r#"{ "allow": ["other"] }"#).unwrap();
+        import_file(&db, root);
+        assert!(file.exists());
+        assert_eq!(load(&db).allow, ["make"]);
+    }
+
+    #[test]
+    fn broken_legacy_file_is_kept_and_not_imported() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(LEGACY_FILE);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, "{ not json").unwrap();
+        let db = store();
+        import_file(&db, dir.path());
+        assert!(file.exists());
+        assert_eq!(db.get_setting(KEY).unwrap(), None);
     }
 }

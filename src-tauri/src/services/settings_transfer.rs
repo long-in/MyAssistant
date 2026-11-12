@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    aws, batch,
+    aws,
     command_policy::{self, Policy},
     profile, pronunciation,
     settings_registry::{self, Kind, Scope},
@@ -17,8 +17,6 @@ use crate::{db::Db, utils::error::AppError};
 
 /// ファイルの形式を識別する値と版。
 const APP_ID: &str = "MyAssistant";
-/// 改名前のアプリ名で書き出されたファイルも取り込めるようにする。
-const LEGACY_APP_ID: &str = "tachicoma-agent";
 const FORMAT_VERSION: u32 = 1;
 /// 取り込むファイルの大きさの上限(バイト)。
 pub const MAX_FILE_BYTES: u64 = 1_000_000;
@@ -81,7 +79,7 @@ impl SettingsFile {
 /// 文字列からファイルの内容を読み、形式を確認する。
 pub fn parse(text: &str) -> Result<SettingsFile, AppError> {
     let file: SettingsFile = serde_json::from_str(text).map_err(|e| AppError::InvalidSettings(e.to_string()))?;
-    if file.app != APP_ID && file.app != LEGACY_APP_ID {
+    if file.app != APP_ID {
         return Err(AppError::InvalidSettings("このアプリの設定ファイルではありません".into()));
     }
     if file.version != FORMAT_VERSION {
@@ -164,7 +162,7 @@ pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result
     if from.id == to.id {
         return Err(AppError::InvalidAgent("same workspace".into()));
     }
-    let policy = command_policy::load(&batch::knowledge_root(from)?);
+    let policy = command_policy::load(&from.db);
     let file = collect(&from.db, policy, String::new())?;
     let v = validate(&file)?;
     // 辞書は、書き込みの前に整形・検証しておく(上限を超えるなら、何も書かずに失敗する)
@@ -174,13 +172,10 @@ pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result
     // キーは選んだときだけ写す(失敗したら戻す)
     let keys_backup = to.secrets.backup();
     let keys = if opts.include_keys { to.secrets.copy_from(&from.secrets)? } else { 0 };
-    let policy_root = batch::knowledge_root(to);
-    let prev_policy = v.policy.as_ref().and_then(|_| policy_root.as_ref().ok()).map(|root| command_policy::load(root));
+    let prev_policy = v.policy.as_ref().map(|_| command_policy::load(&to.db));
     let written = (|| {
         if let Some(policy) = &v.policy {
-            // 保存先のフォルダは、作ったばかりのワークスペースに無くても`save`が作る
-            let root = policy_root.as_ref().map_err(|e| AppError::Io(e.to_string()))?;
-            command_policy::save(root, policy).map_err(AppError::Io)?;
+            command_policy::save(&to.db, policy).map_err(AppError::Io)?;
         }
         if let Some(words) = &words {
             pronunciation::save_user(&to.dir, words.clone())?;
@@ -189,8 +184,8 @@ pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result
     })();
     if let Err(e) = written {
         // 元へ戻す(戻せなければ警告だけ残す)。コピー先の設定は書かれていない
-        if let (Some(prev), Ok(root)) = (&prev_policy, &policy_root)
-            && let Err(err) = command_policy::save(root, prev)
+        if let Some(prev) = &prev_policy
+            && let Err(err) = command_policy::save(&to.db, prev)
         {
             log::warn!("command policy not restored: {err}");
         }
@@ -305,7 +300,7 @@ mod tests {
         a.db.set_setting("knowledge_dir", &custom.path().to_string_lossy()).unwrap();
         a.db.save_summary("abc", &crate::db::Summary { upto_id: "x".into(), text: "要約".into() }).unwrap();
         a.secrets.set_tts_key("tts-a").unwrap();
-        command_policy::add_allow(custom.path(), &["mytool".to_owned()]).unwrap();
+        command_policy::add_allow(&a.db, &["mytool".to_owned()]).unwrap();
         b.db.set_setting(voice::STT_ENGINE_KEY, "google").unwrap(); // コピー元に無い項目は残る
 
         let report = copy(&a, &b, CopyOptions::default()).unwrap();
@@ -317,7 +312,7 @@ mod tests {
         }
         assert_eq!(b.db.summary("abc").unwrap(), None);
         assert!(!b.secrets.has_tts_key().unwrap());
-        assert!(command_policy::load(&batch::knowledge_root(&b).unwrap()).allow.contains(&"mytool".to_owned()));
+        assert!(command_policy::load(&b.db).allow.contains(&"mytool".to_owned()));
         // コピー元は変わらない
         assert_eq!(a.db.get_setting(profile::KEY).unwrap().as_deref(), Some(r#"{"enabled":true,"name":"山田"}"#));
         assert!(a.secrets.has_tts_key().unwrap());
@@ -395,7 +390,7 @@ mod tests {
         let (_db, b) = ctx("b");
         let custom = tempfile::tempdir().unwrap();
         a.db.set_setting("knowledge_dir", &custom.path().to_string_lossy()).unwrap();
-        command_policy::add_allow(custom.path(), &["mytool".to_owned()]).unwrap();
+        command_policy::add_allow(&a.db, &["mytool".to_owned()]).unwrap();
         a.db.set_setting(chat::WEB_ACCESS_KEY, "0").unwrap(); // 書き込む設定がないと、失敗が起きない
         a.secrets.set_tts_key("tts-a").unwrap();
         b.secrets.set_proxy_password("p1", "pw-b").unwrap();
@@ -404,7 +399,7 @@ mod tests {
         assert!(copy(&a, &b, CopyOptions { include_keys: true, ..Default::default() }).is_err());
         assert!(!b.secrets.has_tts_key().unwrap(), "コピーしたキーは戻る");
         assert!(b.secrets.has_proxy_password("p1").unwrap(), "元からあったキーは残る");
-        let policy = command_policy::load(&batch::knowledge_root(&b).unwrap());
+        let policy = command_policy::load(&b.db);
         assert!(!policy.allow.contains(&"mytool".to_owned()), "コマンド権限も戻る");
     }
 }

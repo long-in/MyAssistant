@@ -410,7 +410,6 @@ export const revealSandboxFile = (kind: "env" | "dockerfile" | "agent_dockerfile
 
 /** コマンド権限。各項目は`git status`のようなコマンド名と引数の接頭辞。 */
 export type CommandPolicy = {
-  version: number;
   allow: string[];
   ask: string[];
   deny: string[];

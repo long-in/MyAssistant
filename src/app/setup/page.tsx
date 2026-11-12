@@ -239,7 +239,7 @@ function CommandPolicyEditor() {
           <li><strong>*</strong> {t("が使えます。")}<strong>aws s3 *</strong> {t("は aws s3 以下すべて、")}<strong>aws * delete-*</strong> {t("は語の中や途中の指定です。")}</li>
           <li>{t("rm・sudo・OSの設定に影響するコマンド、APIキーのファイルの拒否なども、初期値として入っているだけで、すべて編集できます。消すとその保護は無くなります。")}</li>
           <li>{t("「初期値に戻す」で初期値に戻せます。")}</li>
-          <li>{t("ナレッジ内の")} <strong>.my-assistant/command-policy.json</strong> {t("に保存されます。")}</li>
+          <li>{t("エージェントごとに、アプリの設定(データベース)に保存されます。")}</li>
         </ul>
       </Heading>
       <Textarea

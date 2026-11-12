@@ -245,7 +245,6 @@ pub fn run() {
     .setup(|app| {
       use tauri::Manager;
       let dir = app.path().app_data_dir()?;
-      services::legacy_data::migrate(&dir);
       std::fs::create_dir_all(&dir)?;
       // 予約されたリストアは、DBを開く前に差し替える(失敗しても元に戻して通常どおり起動する)
       match services::backup::apply_pending(&dir) {
@@ -259,10 +258,6 @@ pub fn run() {
       services::sandbox::init(app.handle());
       // パーソナルは従来どおりアプリデータ直下(`timeline.db` / `secrets.json` / `knowledge`)
       let personal = services::workspace::WorkspaceCtx::open(services::workspace::PERSONAL_ID, &dir)?;
-      // 全体設定は、初回だけパーソナルの現在値を初期値として取り込む
-      if let Err(e) = personal.global.migrate_from(&personal.db) {
-        log::warn!("global settings migration failed: {e}");
-      }
       // 通信のプロキシは、保存済みの設定を使い始める
       if let Err(e) = services::proxy::init(&dir, &personal.global) {
         log::warn!("proxy init failed: {e}");
