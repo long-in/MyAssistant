@@ -586,7 +586,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   /** 入力欄の文章を送る。送信が始まったら欄を空にし、読み上げ中なら止めてから送る。 */
   const submitDraft = () => {
     const text = draft.trim();
-    if (!text || busy || needModel || needSandbox || mic !== "idle") return;
+    if (!text || busy || needSandbox || mic !== "idle") return;
     stopSpeech();
     setDraft("");
     setSkill(null);
@@ -1166,8 +1166,8 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
         onDraft={setDraft}
         onSubmit={submitDraft}
         placeholder={status}
-        inputDisabled={busy || needModel || needSandbox}
-        sendDisabled={!draft.trim() || busy || needModel || needSandbox || mic !== "idle"}
+        inputDisabled={busy || needSandbox}
+        sendDisabled={!draft.trim() || busy || needSandbox || mic !== "idle"}
         busy={busy}
         onStop={abortAll}
         model={

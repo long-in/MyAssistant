@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Download, Loader2 } from "lucide-react";
+import { useState } from "react";
+import { Download, Loader2, X } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { DownloadBar } from "@/components/DownloadBar";
@@ -9,6 +10,9 @@ import type { DownloadProgress, KeyStatus, SttEngine, TtsEngine } from "@/lib/ap
 
 /** 設定の読み込み済みの状況(案内の判定に使う)。 */
 export type SetupState = { tts: TtsEngine; stt: SttEngine; sttKey: boolean };
+
+/** 音声認識モデルの案内を閉じたか。アプリの起動中だけ覚え、次の起動ではまた出す(取得は設定画面からもできる)。 */
+let modelNoticeClosed = false;
 
 /** チャット画面上部の、設定不足の案内。条件を満たすものだけが並ぶ。 */
 export default function ChatNotices({
@@ -42,6 +46,11 @@ export default function ChatNotices({
 }) {
   const t = useT();
   const router = useRouter();
+  const [modelClosed, setModelClosed] = useState(modelNoticeClosed);
+  const closeModel = () => {
+    modelNoticeClosed = true;
+    setModelClosed(true);
+  };
   const open = () => router.push("/setup");
   const openSandbox = () => {
     try {
@@ -73,14 +82,19 @@ export default function ChatNotices({
           }
         />
       )}
-      {needModel && (
+      {needModel && !modelClosed && (
         <div className="hud-panel hud-accent px-5 py-3 text-sm">
           <div className="flex items-center justify-between gap-3">
             <span>{t("音声入力にはローカル音声認識モデル(約470MB)のダウンロードが必要です。")}</span>
-            <Button size="sm" disabled={downloading} onClick={onDownload}>
-              {downloading ? <Loader2 className="animate-spin" /> : <Download />}
-              {downloading ? t("ダウンロード中…") : t("ダウンロード")}
-            </Button>
+            <div className="flex shrink-0 gap-2">
+              <Button size="sm" disabled={downloading} onClick={onDownload}>
+                {downloading ? <Loader2 className="animate-spin" /> : <Download />}
+                {downloading ? t("ダウンロード中…") : t("ダウンロード")}
+              </Button>
+              <Button size="icon-sm" variant="ghost" aria-label={t("閉じる")} disabled={downloading} onClick={closeModel}>
+                <X />
+              </Button>
+            </div>
           </div>
           {downloading && <DownloadBar progress={progress} className="mt-2" />}
         </div>
