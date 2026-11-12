@@ -30,6 +30,7 @@ pub mod llm_client;
 pub mod llm_router;
 pub mod local_llm;
 pub mod memory;
+pub mod playback;
 pub mod proofread;
 pub mod proposals;
 pub mod prompts;

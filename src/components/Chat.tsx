@@ -69,7 +69,6 @@ import {
   setWakeConfig,
   startRecording,
   stopSpeech,
-  unlockAudio,
   stopRecordingAndCheckWake,
   stopRecordingAndTranscribe,
   sttModelReady,
@@ -528,7 +527,6 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   const submit = async (raw: string, skillName: string | null = null): Promise<"spoke" | "replied" | "none"> => {
     const text = raw.trim();
     if (!text || busy) return "none";
-    unlockAudio(); // 操作のタイミングで有効化し、応答の自動再生を可能にする
     await sessionReady.promise; // 前回の会話の読み込みを待つ
     const sessionId = session.current.id;
     const epoch = resetEpoch.current;
@@ -577,7 +575,6 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
 
   /** 字幕の返答を、読み上げボタンから再生する。ミュート中でも、押したときは読み上げる。 */
   const speakOnDemand = async (text: string) => {
-    unlockAudio();
     stopSpeech();
     try {
       const audio = await synthesizeSpeech(speechText(text));
@@ -604,7 +601,6 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     if (micLock.current || state === "starting" || state === "transcribing") return;
     if (state !== "recording" && isSpeaking()) return; // 読み上げ中は手動でもマイクを開かない(音声を拾って割り込むため)
     micLock.current = true;
-    unlockAudio();
     const epoch = resetEpoch.current;
     let text: string | null = null;
     try {
@@ -968,7 +964,6 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   }, [standbyOn]);
 
   const toggleStandby = () => {
-    unlockAudio(); // 応答音声を操作なしで再生できるようにする
     setWakeConfig({ ...wake, enabled: !wake.enabled })
       .then(setWake)
       .catch(fail);
@@ -1023,16 +1018,10 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
       holdRef.current(false);
     };
     const onBlur = () => holdRef.current(false); // 離したキーを取りこぼさない
-    // 常時待機の応答は操作なしで鳴らすため、最初の操作で音声出力を有効にしておく
-    const unlock = () => unlockAudio();
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKeyUp);
     window.addEventListener("blur", onBlur);
-    window.addEventListener("pointerdown", unlock);
-    window.addEventListener("keydown", unlock);
     return () => {
-      window.removeEventListener("pointerdown", unlock);
-      window.removeEventListener("keydown", unlock);
       window.removeEventListener("blur", onBlur);
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKeyUp);

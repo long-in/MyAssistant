@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { getOutputAnalyser, recordingWaveform } from "@/lib/api";
+import { isSpeaking, playbackWaveform, recordingWaveform } from "@/lib/api";
 import { PHASE_HUE, type Phase } from "./OrbReadout";
 
 /** canvasを表示サイズ×devicePixelRatioに合わせ、CSS座標で描けるようにして描画領域を返す。 */
@@ -45,7 +45,7 @@ const BARS = 96;
 const POINTS = 180;
 
 /**
- * 音声の円形波形。HUD風のリングと周波数バー、中心の波形リングで構成する。
+ * 音声の円形波形。HUD風のリングと振幅バー、中心の波形リングで構成する。
  * 読み上げ音声と、録音中(`micActive`)のマイク入力を同じ枠に描き、処理段階(`phase`)ごとに色相を変える。
  */
 export function VoiceOrb({
@@ -59,16 +59,16 @@ export function VoiceOrb({
   thinking?: boolean;
   className?: string;
 }) {
-  const time = useRef<Uint8Array<ArrayBuffer> | null>(null);
-  const freq = useRef<Uint8Array<ArrayBuffer> | null>(null);
   const bars = useRef(new Float32Array(BARS));
   const level = useRef(0);
   const spin = useRef(0);
   const last = useRef(0);
   const hue = useRef(PHASE_HUE.standby);
   const mic = useRef<number[]>([]);
-  const micWave = useRef<Uint8Array<ArrayBuffer> | null>(null);
-  const micSpec = useRef<Uint8Array<ArrayBuffer> | null>(null);
+  /** 読み上げ音声の直近波形(再生はRust側のため、取得して描く)。 */
+  const out = useRef<number[]>([]);
+  const waveBuf = useRef<Uint8Array<ArrayBuffer> | null>(null);
+  const specBuf = useRef<Uint8Array<ArrayBuffer> | null>(null);
 
   useEffect(() => {
     if (!micActive) {
@@ -83,6 +83,30 @@ export function VoiceOrb({
         mic.current = await recordingWaveform();
       } catch {
         mic.current = [];
+      } finally {
+        busy = false;
+      }
+    }, 40);
+    return () => clearInterval(id);
+  }, [micActive]);
+
+  useEffect(() => {
+    if (micActive) {
+      out.current = [];
+      return;
+    }
+    let busy = false;
+    const id = setInterval(async () => {
+      if (!isSpeaking()) {
+        out.current = [];
+        return;
+      }
+      if (busy) return;
+      busy = true;
+      try {
+        out.current = await playbackWaveform();
+      } catch {
+        out.current = [];
       } finally {
         busy = false;
       }
@@ -106,30 +130,24 @@ export function VoiceOrb({
     hue.current = (hue.current + diff * 0.06 + 360) % 360;
     const H = hue.current;
 
-    const analyser = getOutputAnalyser();
     let wave: Uint8Array<ArrayBuffer> | null = null;
     let spec: Uint8Array<ArrayBuffer> | null = null;
-    if (micActive && mic.current.length) {
-      // マイク入力は小さいので増幅し、出力側の波形・周波数と同じ形式(0..255)に変換する
-      const n = mic.current.length;
-      if (micWave.current?.length !== n) {
-        micWave.current = new Uint8Array(n);
-        micSpec.current = new Uint8Array(n);
+    // マイク入力は小さいので増幅する。読み上げ音声はそのまま描く
+    const [samples, gain] = micActive ? [mic.current, 4] : [out.current, 1];
+    if (samples.length) {
+      // 波形(0..255、128が無音)と、バー用の振幅(0..255)に変換する
+      const n = samples.length;
+      if (waveBuf.current?.length !== n) {
+        waveBuf.current = new Uint8Array(n);
+        specBuf.current = new Uint8Array(n);
       }
       for (let i = 0; i < n; i++) {
-        const v = Math.max(-1, Math.min(1, mic.current[i] * 4));
-        micWave.current[i] = 128 + v * 127;
-        micSpec.current![i] = Math.abs(v) * 255;
+        const v = Math.max(-1, Math.min(1, samples[i] * gain));
+        waveBuf.current[i] = 128 + v * 127;
+        specBuf.current![i] = Math.abs(v) * 255;
       }
-      wave = micWave.current;
-      spec = micSpec.current;
-    } else if (analyser) {
-      if (time.current?.length !== analyser.fftSize) time.current = new Uint8Array(analyser.fftSize);
-      if (freq.current?.length !== analyser.frequencyBinCount) freq.current = new Uint8Array(analyser.frequencyBinCount);
-      analyser.getByteTimeDomainData(time.current);
-      analyser.getByteFrequencyData(freq.current);
-      wave = time.current;
-      spec = freq.current;
+      wave = waveBuf.current;
+      spec = specBuf.current;
     }
 
     let peak = 0;
@@ -139,10 +157,10 @@ export function VoiceOrb({
     spin.current += dt * (0.00012 + lv * 0.0006 + (thinking ? 0.0012 : 0));
     const rot = spin.current;
 
-    // 周波数バー: 低音域を中心に使い、左右対称にして円全体へ配置する
+    // 振幅バー: 左右対称にして円全体へ配置する
     const half = BARS / 2;
     for (let i = 0; i < half; i++) {
-      const bin = spec ? Math.floor(micActive ? (i / half) * (spec.length - 1) : (i / half) ** 1.6 * spec.length * 0.35) : 0;
+      const bin = spec ? Math.floor((i / half) * (spec.length - 1)) : 0;
       const v = spec ? spec[bin] / 255 : 0;
       const prev = bars.current[i];
       bars.current[i] = v > prev ? prev + (v - prev) * 0.5 : prev + (v - prev) * 0.12;
