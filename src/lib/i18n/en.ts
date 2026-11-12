@@ -2,6 +2,12 @@
 export const EN: Record<string, string> = {
   "コマンドの拒否は permissions.deny で決めます。雛形には rm・sudo などの初期値が入っています。ここもエージェントの settings.json も空のときは、初期値の拒否だけを渡します。": "Command denials are set by permissions.deny. The template includes defaults such as rm and sudo. When both this and the agent's settings.json are empty, only the default denials are passed.",
   "Sandbox は Amazon Bedrock 方式のときだけ使えます。LLM タブで接続方式を Amazon Bedrock にしてください。": "Sandbox is only available with the Amazon Bedrock connection mode. Set the connection mode to Amazon Bedrock in the LLM tab.",
+  "コマンドごとの実行ルールを JSON で編集します。リストには、コマンド名と引数を1項目ずつ書きます。": "Edit the execution rules for each command as JSON. In each list, write one command name and its arguments per item.",
+  "JSONの構文が正しくありません: {msg}": "Invalid JSON syntax: {msg}",
+  "JSONはオブジェクトで書いてください。": "Write the JSON as an object.",
+  "{key} は文字列の配列にしてください。": "{key} must be an array of strings.",
+  "{key} は true か false にしてください。": "{key} must be true or false.",
+  "書いていない項目は、いまの値のままです。「保存」を押すと反映されます。": "Items you leave out keep their current values. Press Save to apply.",
   "コンテナ内の Claude Code で拒否するコマンドは、Sandbox タブの settings.json(permissions.deny)で決めます。": "Commands denied to Claude Code in the container are set in settings.json (permissions.deny) on the Sandbox tab.",
   "右のパネルを畳む": "Hide the side panel",
   "右のパネルを開く": "Show the side panel",

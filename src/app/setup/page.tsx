@@ -198,71 +198,62 @@ function ShellAccess({ bedrock }: { bedrock: boolean }) {
   );
 }
 
-type ListKey = "allow" | "ask" | "deny" | "deny_words" | "protected" | "system_paths" | "system_exceptions";
-type FlagKey = "confirm_overwrite" | "confirm_pipe_to_shell" | "restrict_to_knowledge";
+const POLICY_LIST_KEYS = ["allow", "ask", "deny", "deny_words", "protected", "system_paths", "system_exceptions"] as const;
+const POLICY_FLAG_KEYS = ["confirm_overwrite", "confirm_pipe_to_shell", "restrict_to_knowledge"] as const;
 
-const POLICY_FIELDS: { key: ListKey; title: string; hint: string }[] = [
-  { key: "allow", title: "承認なしで実行", hint: "コマンド名と引数の先頭が一致したときだけ有効(例: git status)" },
-  { key: "ask", title: "毎回承認", hint: "引数の途中にあっても一致(例: npm publish)" },
-  { key: "deny", title: "実行を拒否", hint: "引数の途中にあっても一致。最優先(例: defaults write)" },
-  { key: "deny_words", title: "拒否する語(位置を問わない)", hint: "xargs rm や git rm のように、どこに現れても拒否" },
-  { key: "protected", title: "機密データ", hint: "引数にこの文字列を含むコマンドを拒否(APIキー等のファイル名)" },
-  { key: "system_paths", title: "システム領域", hint: "ここへの書き込み・リダイレクトを拒否(接頭辞)" },
-  { key: "system_exceptions", title: "システム領域の例外", hint: "上のうち書き込みを許す接頭辞(例: /usr/local)" },
-];
-
-const POLICY_FLAGS: { key: FlagKey; title: string; hint: string }[] = [
-  { key: "confirm_overwrite", title: "上書きリダイレクトを毎回承認", hint: "> でファイルを上書きするとき" },
-  { key: "confirm_pipe_to_shell", title: "パイプ先のコード実行を毎回承認", hint: "curl … | sh のとき" },
-  { key: "restrict_to_knowledge", title: "読み取り系以外はナレッジ内に限る", hint: "作業ディレクトリとパスがナレッジの外なら拒否" },
-];
-
-const toLines = (list: string[]) => list.join("\n");
-const fromLines = (text: string) => text.split("\n");
-const cleanLines = (text: string) => text.trim().replace(/\n{2,}/g, "\n");
+const toJson = (p: CommandPolicy) => JSON.stringify(p, null, 2);
 
 /**
- * コマンド権限の編集。1行1項目。入力欄を離れると自動で保存し、次のコマンドから使われる。rm・sudo・機密の拒否なども初期値として入っており、すべて編集できる。
+ * コマンド権限の編集。JSON で表示・編集し、「保存」で検証して保存する。次のコマンドから使われる。rm・sudo・機密の拒否なども初期値として入っており、すべて編集できる。
  * アプリ自身がコマンドを実行する API 方式だけで使う(Bedrock 方式では出さない)。
  */
 function CommandPolicyEditor() {
   const t = useT();
   const [saved, setSaved] = useState<CommandPolicy | null>(null);
-  const [draft, setDraft] = useState<CommandPolicy | null>(null);
-  const [text, setText] = useState<Record<ListKey, string>>(() =>
-    Object.fromEntries(POLICY_FIELDS.map(({ key }) => [key, ""])) as Record<ListKey, string>,
-  );
+  const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const apply = (p: CommandPolicy) => {
-    setSaved(p);
-    setDraft(p);
-    setText(Object.fromEntries(POLICY_FIELDS.map(({ key }) => [key, toLines(p[key])])) as Record<ListKey, string>);
-  };
   useEffect(() => {
     getCommandPolicy()
-      .then(apply)
+      .then((p) => {
+        setSaved(p);
+        setText(toJson(p));
+      })
       .catch((e) => toast.error(reportError(e)));
   }, []);
 
-  const dirty =
-    saved !== null &&
-    draft !== null &&
-    (POLICY_FIELDS.some(({ key }) => toLines(saved[key]) !== cleanLines(text[key])) ||
-      POLICY_FLAGS.some(({ key }) => saved[key] !== draft[key]));
-
-  const current = (): CommandPolicy | null =>
-    draft && {
-      ...draft,
-      ...(Object.fromEntries(POLICY_FIELDS.map(({ key }) => [key, fromLines(text[key])])) as Record<ListKey, string[]>),
-    };
-
-  /** 保存する。入力中の欄を上書きしないよう、画面の入力は触らず保存済みの値だけ更新する。 */
-  const persist = async (policy: CommandPolicy | null) => {
-    if (!policy) return;
+  /** JSON を検証して保存する。構文・型が不正なら保存せず、理由だけ出す。書いていない項目は保存済みの値のまま。 */
+  const save = async () => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      toast.error(t("JSONの構文が正しくありません: {msg}", { msg: e instanceof Error ? e.message : String(e) }));
+      return;
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      toast.error(t("JSONはオブジェクトで書いてください。"));
+      return;
+    }
+    const obj = parsed as Record<string, unknown>;
+    for (const key of POLICY_LIST_KEYS) {
+      if (key in obj && !(Array.isArray(obj[key]) && (obj[key] as unknown[]).every((v) => typeof v === "string"))) {
+        toast.error(t("{key} は文字列の配列にしてください。", { key }));
+        return;
+      }
+    }
+    for (const key of POLICY_FLAG_KEYS) {
+      if (key in obj && typeof obj[key] !== "boolean") {
+        toast.error(t("{key} は true か false にしてください。", { key }));
+        return;
+      }
+    }
+    if (!saved || busy) return;
     setBusy(true);
     try {
-      setSaved(await setCommandPolicy(policy));
+      const result = await setCommandPolicy({ ...saved, ...obj } as CommandPolicy);
+      setSaved(result);
+      setText(toJson(result));
       toast.success(t("コマンド権限を保存しました"));
     } catch (e) {
       toast.error(reportError(e));
@@ -271,25 +262,26 @@ function CommandPolicyEditor() {
     }
   };
 
-  /** 入力欄を離れたとき、変更があれば保存する。 */
-  const saveIfDirty = () => dirty && !busy && persist(current());
-
   /** 初期値を読み込んで保存する。 */
   const loadDefaults = async () => {
+    if (busy) return;
+    setBusy(true);
     try {
-      const d = await getDefaultCommandPolicy();
-      setDraft(d);
-      setText(Object.fromEntries(POLICY_FIELDS.map(({ key }) => [key, toLines(d[key])])) as Record<ListKey, string>);
-      await persist(d);
+      const result = await setCommandPolicy(await getDefaultCommandPolicy());
+      setSaved(result);
+      setText(toJson(result));
+      toast.success(t("コマンド権限を保存しました"));
     } catch (e) {
       toast.error(reportError(e));
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
     <section className="hud-panel hud-accent space-y-3 px-5 py-4">
       <Heading title="Command Policy" help={t("コマンドの権限")}>
-        <p>{t("コマンドごとの実行ルールです。1行に1つ、コマンド名と引数を書きます。")}</p>
+        <p>{t("コマンドごとの実行ルールを JSON で編集します。リストには、コマンド名と引数を1項目ずつ書きます。")}</p>
         <ul>
           <li><strong>*</strong> {t("が使えます。")}<strong>aws s3 *</strong> {t("は aws s3 以下すべて、")}<strong>aws * delete-*</strong> {t("は語の中や途中の指定です。")}</li>
           <li>{t("rm・sudo・OSの設定に影響するコマンド、APIキーのファイルの拒否なども、初期値として入っているだけで、すべて編集できます。消すとその保護は無くなります。")}</li>
@@ -297,47 +289,22 @@ function CommandPolicyEditor() {
           <li>{t("ナレッジ内の")} <strong>.my-assistant/command-policy.json</strong> {t("に保存されます。")}</li>
         </ul>
       </Heading>
-      <div className="grid gap-3 md:grid-cols-3">
-        {POLICY_FIELDS.map(({ key, title, hint }) => (
-          <label key={key} className="space-y-1 text-xs">
-            <span className="font-medium text-foreground">{t(title)}</span>
-            <Textarea
-              value={text[key]}
-              disabled={saved === null}
-              rows={7}
-              spellCheck={false}
-              className="font-mono text-xs"
-              onChange={(e) => setText((t) => ({ ...t, [key]: e.target.value }))}
-              onBlur={saveIfDirty}
-            />
-            <span className="block text-muted-foreground">{t(hint)}</span>
-          </label>
-        ))}
-      </div>
-      <div className="space-y-2">
-        {POLICY_FLAGS.map(({ key, title, hint }) => (
-          <div key={key} className="flex items-center justify-between gap-3 text-xs">
-            <div>
-              <p className="font-medium text-foreground">{t(title)}</p>
-              <p className="text-muted-foreground">{t(hint)}</p>
-            </div>
-            <Switch
-              checked={draft?.[key] ?? false}
-              disabled={draft === null}
-              onCheckedChange={(v) => {
-                const policy = current();
-                if (!policy) return;
-                setDraft({ ...draft!, [key]: v });
-                persist({ ...policy, [key]: v });
-              }}
-              aria-label={title}
-            />
-          </div>
-        ))}
-      </div>
+      <Textarea
+        value={text}
+        disabled={saved === null}
+        rows={22}
+        spellCheck={false}
+        className="font-mono text-xs"
+        onChange={(e) => setText(e.target.value)}
+        aria-label="Command Policy JSON"
+      />
+      <p className="text-xs text-muted-foreground">{t("書いていない項目は、いまの値のままです。「保存」を押すと反映されます。")}</p>
       <div className="flex justify-end gap-2">
         <Button variant="outline" disabled={saved === null || busy} onClick={loadDefaults}>
-          {busy && <Loader2 className="animate-spin" />} {t("初期値に戻す")}
+          {t("初期値に戻す")}
+        </Button>
+        <Button disabled={saved === null || busy} onClick={save}>
+          {busy && <Loader2 className="animate-spin" />} {t("保存")}
         </Button>
       </div>
     </section>
