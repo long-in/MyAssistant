@@ -598,7 +598,12 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     // 開始・停止処理の最中の再入力(キーのリピートや連打)は無視し、録音を勝手に止めない
     const state = micNow.current;
     if (micLock.current || state === "starting" || state === "transcribing") return;
-    if (state !== "recording" && isSpeaking()) return; // 読み上げ中は手動でもマイクを開かない(音声を拾って割り込むため)
+    if (state !== "recording" && isSpeaking()) {
+      // 読み上げ中にマイクを開いたら、読み上げを止めて割り込む。
+      // 読み上げの終了を待つ会話の続きの待ち受けは終わらせ、この録音の結果から会話を続ける(二重に聞き取らない)
+      stopSpeech();
+      resetEpoch.current++;
+    }
     micLock.current = true;
     const epoch = resetEpoch.current;
     let text: string | null = null;
@@ -1150,7 +1155,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
         standby={{ on: standbyOn, available: wake.words.length > 0, onToggle: toggleStandby }}
         mic={{
           state: mic,
-          disabled: (busy && !approval) || mic === "starting" || mic === "transcribing" || needModel || needSandbox || (speaking && mic !== "recording"),
+          disabled: (busy && !approval) || mic === "starting" || mic === "transcribing" || needModel || needSandbox,
           hint: micHint,
           onToggle: () => void toggleMic(),
         }}
