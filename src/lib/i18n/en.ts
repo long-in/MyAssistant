@@ -753,6 +753,8 @@ export const EN: Record<string, string> = {
   "ナレッジ画面へ移動します。": "Go to the knowledge screen.",
   "設定を開く": "Open Settings",
   "APIキーなどの設定画面へ移動します。": "Go to the settings screen for API keys and more.",
+  "新しい会話を始める": "Start a new conversation",
+  "これまでの文脈を引き継がず、新しい会話を始めます。実行中の処理と読み上げは止まります。": "Starts a new conversation without carrying over the previous context. Running tasks and speech are stopped.",
   "ショートカット一覧を開く": "Open the shortcut list",
   "エージェントを検索して切り替え": "Search and switch agents",
   "エージェント名で検索し、Enterでそのエージェントのチャットへ切り替えます(↑↓で選択、Escで閉じる)。": "Search by agent name and press Enter to open its chat (↑↓ to select, Esc to close).",

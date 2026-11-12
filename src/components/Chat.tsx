@@ -517,6 +517,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     toast.info(t("中断しました。"));
   };
   const abortRef = useRef(abortAll);
+  const newConversationRef = useRef(startNewConversation);
   const working = useRef(false);
 
   /**
@@ -983,6 +984,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   useEffect(() => {
     gate.current = { busy, needModel: needModel || needSandbox };
     abortRef.current = abortAll;
+    newConversationRef.current = startNewConversation;
     working.current = busy || speaking || switching || !!approval || awake || mic === "starting" || mic === "recording" || mic === "transcribing";
     holdRef.current = (down) => {
       keyHeld.current = down;
@@ -1008,6 +1010,9 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
       } else if (id === "abort" && working.current && !e.isComposing) {
         e.preventDefault();
         abortRef.current();
+      } else if (id === "new") {
+        e.preventDefault();
+        if (!e.repeat) newConversationRef.current(true);
       }
     };
     // ボタンにフォーカスがあるとエージェントのkeyupでクリックが発火し、二重に切り替わるため止める
