@@ -10,7 +10,6 @@ pub mod batch;
 pub mod chat_session;
 pub mod cancel;
 pub mod command_policy;
-pub mod legacy_data;
 pub mod compact;
 pub mod debug_log;
 pub mod download_progress;

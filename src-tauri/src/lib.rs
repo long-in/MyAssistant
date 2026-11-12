@@ -245,7 +245,6 @@ pub fn run() {
     .setup(|app| {
       use tauri::Manager;
       let dir = app.path().app_data_dir()?;
-      services::legacy_data::migrate(&dir);
       std::fs::create_dir_all(&dir)?;
       // 予約されたリストアは、DBを開く前に差し替える(失敗しても元に戻して通常どおり起動する)
       match services::backup::apply_pending(&dir) {

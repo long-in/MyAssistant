@@ -23,8 +23,6 @@
 | `sandbox/` | 全エージェント共通の `Dockerfile` と `.dockerignore`(Docker のビルドの文脈)。アプリデータ直下 |
 | `work/<UUID>/agent-sandbox/` | そのエージェント専用の `Dockerfile`(登録したときだけ。共通より優先)。パーソナルはアプリデータ直下の `agent-sandbox/` |
 
-旧名(識別子 `dev.longin.tachicoma-agent`)のフォルダがあり新しいフォルダが無ければ、起動時に丸ごと改名して引き継ぐ(`services/legacy_data.rs`)。ナレッジ内の旧 `.tachicoma/` もコマンド権限の読み書き時に `.my-assistant/` へ改名する。旧名の設定ファイルも取り込める。
-
 ## SQLite スキーマ(`db/`)
 
 表ごとの読み書きは `db/{logs,summaries,usage,settings,ledger,proposals}.rs`、スキーマと版の管理は `db/schema.rs` に分けている。

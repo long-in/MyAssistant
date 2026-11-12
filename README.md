@@ -287,7 +287,6 @@ npm run tauri build
 
 - 識別子: `MyAssistant`
 - macOS のパス: `~/Library/Application Support/MyAssistant/`
-- 旧識別子(`dev.longin.tachicoma-agent`)のフォルダがあれば、初回起動時に自動で引き継ぎます。
 
 | パス | 内容 |
 | --- | --- |
