@@ -9,6 +9,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  RefreshCw,
 } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -76,6 +77,7 @@ export default function KnowledgeTree({
   onRename,
   onDelete,
   onInvalidName,
+  onReload,
 }: {
   files: KnowledgeFile[];
   dirs: string[];
@@ -85,6 +87,8 @@ export default function KnowledgeTree({
   onRename: (kind: NodeKind, from: string, to: string) => Promise<boolean>;
   onDelete: (kind: NodeKind, path: string) => void;
   onInvalidName: () => void;
+  /** 指定すると、一覧の再読み込みボタンを出す。 */
+  onReload?: () => void;
 }) {
   const t = useT();
   const tree = useMemo(() => buildTree(files, dirs), [files, dirs]);
@@ -256,7 +260,7 @@ export default function KnowledgeTree({
       <div className="flex items-center justify-end gap-0.5 px-2 pb-1">
         <button
           className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-          title={t("新規ノート")}
+          title={t("新規ファイル")}
           disabled={!canCreateIn(focusDir)}
           onClick={() => startNew("new-file", focusDir)}
         >
@@ -270,6 +274,15 @@ export default function KnowledgeTree({
         >
           <FolderPlus className="size-4" />
         </button>
+        {onReload && (
+          <button
+            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            title={t("再読み込み")}
+            onClick={onReload}
+          >
+            <RefreshCw className="size-4" />
+          </button>
+        )}
       </div>
       <ul className="select-none">
         {render(tree, 0)}
@@ -283,7 +296,7 @@ export default function KnowledgeTree({
         >
           {menu.kind !== "file" && (
             <button className={menuItem} onClick={() => startNew("new-file", menu.path)}>
-              {t("新規ノート")}
+              {t("新規ファイル")}
             </button>
           )}
           {menu.kind !== "file" && canNestDir(menu.path) && (

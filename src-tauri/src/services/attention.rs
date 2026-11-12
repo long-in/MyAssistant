@@ -79,6 +79,7 @@ fn truncate(text: &str) -> String {
 fn kind_name(kind: ApprovalKind) -> &'static str {
     match kind {
         ApprovalKind::File => "file",
+        ApprovalKind::FileOverwrite => "file_overwrite",
         ApprovalKind::Plan => "plan",
         ApprovalKind::Command => "command",
         ApprovalKind::AllowCommand => "allow_command",
@@ -91,7 +92,7 @@ fn kind_name(kind: ApprovalKind) -> &'static str {
 /// 承認を求められている内容(ファイルは作成先、コマンドはその内容)を、1行にまとめる。計画は内容が長いので空にする。
 pub fn detail_of(a: &Approval) -> String {
     match a.kind {
-        ApprovalKind::File => truncate(&a.path),
+        ApprovalKind::File | ApprovalKind::FileOverwrite => truncate(&a.path),
         ApprovalKind::Plan => String::new(),
         ApprovalKind::Command => truncate(&a.preview),
         ApprovalKind::AllowCommand => truncate(&a.steps.join(", ")),
@@ -119,6 +120,7 @@ mod tests {
     fn describes_each_kind_in_one_line() {
         let d = |kind, path, preview, steps: &[&str]| detail_of(&approval(kind, path, preview, steps));
         assert_eq!(d(ApprovalKind::File, "notes/a.md", "body", &[]), "notes/a.md");
+        assert_eq!(d(ApprovalKind::FileOverwrite, "data/reports/a.md", "body", &[]), "data/reports/a.md");
         assert_eq!(d(ApprovalKind::Plan, "", "overview", &["1", "2"]), "", "計画は内容を載せない");
         assert_eq!(d(ApprovalKind::Command, "", "git\n  status", &[]), "git status");
         assert_eq!(d(ApprovalKind::AllowCommand, "", "", &["git status", "ls"]), "git status, ls");
@@ -126,6 +128,7 @@ mod tests {
         assert_eq!(d(ApprovalKind::SkillDelete, "daily", "全文", &[]), "daily");
         let names = [
             ApprovalKind::File,
+            ApprovalKind::FileOverwrite,
             ApprovalKind::Plan,
             ApprovalKind::Command,
             ApprovalKind::AllowCommand,
@@ -134,7 +137,7 @@ mod tests {
             ApprovalKind::ToolUse,
         ]
         .map(kind_name);
-        assert_eq!(names, ["file", "plan", "command", "allow_command", "skill_update", "skill_delete", "tool_use"]);
+        assert_eq!(names, ["file", "file_overwrite", "plan", "command", "allow_command", "skill_update", "skill_delete", "tool_use"]);
         assert_eq!(d(ApprovalKind::ToolUse, "Bash", "git  push", &[]), "Bash git push");
     }
 

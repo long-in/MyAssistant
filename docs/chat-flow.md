@@ -1,8 +1,24 @@
 # 対話の処理(`send_chat`)
 
-ユーザー発話 1 回分の処理。実装は `commands/chat.rs`(`send_chat`)、モデル選択は `services/llm_router.rs`、HTTP は `services/llm_client.rs`、会話の要約は `services/compact.rs`。
+ユーザー発話 1 回分の処理。実装は `commands/chat.rs`(`send_chat` / `run_recorded`)、HTTP は `services/llm_client.rs`、会話の要約は `services/compact.rs`。モデルと接続方式は [llm-settings.md](llm-settings.md)。
 
-## 全体の流れ
+## 2 つの経路
+
+`send_chat` は、エージェントの接続方式で処理の場所を分ける。
+
+| 経路 | 対象 | 処理 |
+| --- | --- | --- |
+| ホスト | API 方式のパーソナル・リーダー | このアプリが LLM(Anthropic・端末内の Qwen)をツール付きで呼ぶ(`send_chat_inner`。本書の以降の節) |
+| コンテナ | ワークのエージェント(常に)、Bedrock 方式のパーソナル・リーダー | 専用コンテナの Claude Code へ指示を渡し、途中経過と回答を受け取る(`send_chat_sandbox`。[sandbox.md](sandbox.md#1回の指示の流れ)) |
+
+どちらの経路も、受付・記録・通知は共通にする。
+
+- 受付: ワークスペースごとに依頼は同時に 1 つ(`TaskState::try_begin`。実行中なら `busy`)。進捗(`TaskEvent`)は `Channel` で画面へ流すとともに、ワークスペースの記録にも残す(切り替えても止めない。[workspace.md](workspace.md#依頼の継続と再開))。
+- 記録(`run_recorded`): 終わったら発話ごとの実行ログを `turn_events` へ保存し、リーダーから配布した依頼なら台帳へ完了/失敗を書く([leader.md](leader.md))。開いていないエージェントなら完了・失敗を通知する。
+- 発話と応答は `conversation_logs` に保存し、1 往復をナレッジの「キャプチャ」へ追記して `knowledge-updated` を通知する。LLM を使う整理はここでは行わない([knowledge.md](knowledge.md))。
+- 削除中のエージェントには、応答もキャプチャも書かない(`ensure_alive`)。
+
+## ホストの経路の流れ
 
 ```mermaid
 sequenceDiagram
@@ -11,14 +27,14 @@ sequenceDiagram
   participant DB as SQLite
   participant K as ナレッジ
   participant LLM as LLM
-  FE->>C: session_id, text, route, Channel
+  FE->>C: session_id, text, route, skill, Channel
   C->>C: モデル解決(キー登録の確認)
   C->>DB: ユーザー発話を保存
   C->>LLM: (必要なら)古い会話を要約
-  C->>K: 関連ノートを想起(グラフ)
+  C->>K: 関連ノートを想起(グラフ)・スキルの候補を選定
   C->>C: システムプロンプトを組み立てる
   C->>LLM: ツール付きループ(agent-file-tools / command-tasks)
-  C->>DB: 応答を保存、トークン使用量を記録
+  C->>DB: 応答を保存
   C->>K: キャプチャへ1往復を追記
   C-->>FE: ChatReply { content, provider, model }
 ```
@@ -26,25 +42,10 @@ sequenceDiagram
 1. **モデルの解決**: フロントエンドが渡した `route`(プロバイダー + モデル ID)を、カタログとキー登録状況で検証する(`llm_router::resolve`)。未登録のプロバイダーなら `key_missing`。
 2. **発話の保存**: `conversation_logs` に `user` として保存する。
 3. **会話の用意**: 往復数が上限(調整項目 `history_exchanges`、既定 10)を超えていれば、古い分を要約して「要約 + 直近の会話」だけを LLM へ渡す(後述)。
-4. **システムプロンプトの組み立て**(後述)。
-5. **LLM 呼び出し**: ファイル操作・コマンド実行・Web 検索(Bedrock とローカルは除く)のツールを付けたループ(`commands/task.rs::run_with_tools`)で呼ぶ。
-6. **後処理**: 応答を `assistant` として保存し、1 往復をナレッジの「キャプチャ」へ追記して `knowledge-updated` を通知する。LLM を使う整理はここでは行わない([knowledge.md](knowledge.md))。
-
-使用量(入力・出力トークン)は LLM 呼び出しごとに `usage_logs` へ記録する。途中で失敗しても、そこまでに使った分は残る。
-
-## モデル選択(`llm_router`)
-
-- カタログ(`CATALOG`)にあるモデルだけ使える。モデルの入れ替えはカタログだけを編集する。
-
-  | プロバイダー | モデル |
-  | --- | --- |
-  | Anthropic | `claude-haiku-5-5`、`claude-sonnet-5-5`、`claude-opus-5-5` |
-  | Amazon Bedrock | 利用者が設定画面で登録したモデル ID(認証は [security.md](security.md) の「AWS 認証」) |
-  | ローカル | `qwen2.5-7b-instruct`(取得済みのときだけ。カタログの末尾。[local-llm.md](local-llm.md)) |
-
-- 自動ルーティングは無く、ユーザーが画面(`ModelSelector`)で選んだ `Route` を使う。選択は `app_settings.routing` に保存する。
-- 保存済みの選択が使えない(キーを削除した、ローカルのモデルを削除した等)ときは既定へ戻す。既定は、Claude が使えれば Sonnet、なければ使えるプロバイダーのカタログ先頭。
-- 整理バッチ(`batch_route`)、スキルの選定(`skills_route`。既定は軽量モデル)、音声認識の校正(`proofread_route`)は、対話とは別に、エージェントごとにモデルを指定できる。
+4. **想起と選定**: 関連ナレッジを想起し(後述)、スキルがあれば候補を選ぶ([skills.md](skills.md))。
+5. **システムプロンプトの組み立て**(後述)。
+6. **LLM 呼び出し**: ファイル操作・設計書の参照・コマンド実行・Web 検索(Anthropic のときだけ)のツールを付けたループ(`commands/task.rs::run_with_tools` → `services/tool_loop.rs`)で呼ぶ。リーダーはツールを台帳と配布の下書きに差し替える([leader.md](leader.md))。
+7. **後処理**: 応答を `assistant` として保存し、キャプチャへ追記する。
 
 ## システムプロンプトの構成
 
@@ -53,6 +54,7 @@ sequenceDiagram
 ```text
 【固定部分】会話中ほぼ変わらない。末尾にキャッシュ点を置く
 <ベース指示>                       ← 常に先頭
+<leader_prompt>                    リーダープロンプト(リーダーのみ。有効かつ入力があるとき。ユーザーの指示)
 <shared_data>                      共通データ(エージェントのみ。有効かつ入力があるとき。ユーザーの指示)
 <agent_data>                       エージェントデータ(エージェントのみ。同上)
 <pinned_memory>                    覚えておくこと(リーダー以外。あるとき。ユーザーの指示)
@@ -85,7 +87,7 @@ sequenceDiagram
 
 | 節 | 内容と生成タイミング |
 | --- | --- |
-| ベース指示 | 音声対話向けの既定文。設定の Base Prompt で上書きでき、空にすると既定へ戻る。一問一答で終わらせず会話を重ねること、結論から一〜三文で答えること、読み上げに不要な記号(Markdown・URL・絵文字)を使わないことなどを指示する |
+| ベース指示 | 音声対話向けの既定文。全体設定の Base Prompt(`base_instructions`)と、エージェントごとの AI Settings の「チャット」(`prompt_chat`)で上書きでき、空にすると既定へ戻る([llm-settings.md](llm-settings.md#プロンプト))。一問一答で終わらせず会話を重ねること、結論から一〜三文で答えること、読み上げに不要な記号(Markdown・URL・絵文字)を使わないこと、資料はナレッジの `data/reports/` に作り、同じ会話での修正は追加せず更新することなどを指示する |
 | `<user_profile>` | 設定の内容から**毎回**生成する(変更を次の発話から反映するためキャッシュしない)。[user-profile.md](user-profile.md) |
 | `<stt_corrections>` | `preferences/stt_corrections.md` の直近 30 件(「誤」→「正」)。会話の最初の発話で 1 回だけ読んで使い回す。訂正を保存すると次の発話から反映される |
 | `<pinned_memory>` | 記憶。発話のたびに `memory/` から読む(会話中のツール・画面での編集を次の発話から反映する)。[memory.md](memory.md) |
@@ -107,7 +109,7 @@ sequenceDiagram
 
 ## 長い会話の要約(`compact.rs`)
 
-毎回送る過去の会話を一定の往復数に抑え、トークンの増加を防ぐ。
+毎回送る過去の会話を一定の往復数に抑え、トークンの増加を防ぐ。ホストの経路だけで行う(コンテナの経路では、会話の文脈は Claude Code のセッションが持つ)。
 
 ```mermaid
 flowchart LR
@@ -128,7 +130,15 @@ flowchart LR
 
 | 設定 | キー | 既定 |
 | --- | --- | --- |
-| 使用モデル | `routing` | Claude が使えれば Sonnet |
-| ベース指示(全体設定) | `base_instructions` | 既定文 |
+| 使用モデル | `routing` | Claude が使えれば Sonnet([llm-settings.md](llm-settings.md)) |
+| ベース指示 | `base_instructions`(全体設定)/ `prompt_chat`(エージェント) | 既定文 |
 | インターネット検索 | `web_access` | 有効 |
 | 往復数の上限、検索・取得の上限(エージェントごと) | `tuning` | [data-and-settings.md](data-and-settings.md) |
+
+## コンテナの経路との違い
+
+コンテナの経路(`send_chat_sandbox`)では、上記のうち次だけを行う。詳細は [sandbox.md](sandbox.md)。
+
+- システムプロンプトは、ベース指示・リーダープロンプト / 共通データ・エージェントデータ・覚えておくこと・パーソナルデータ・聞き取りの訂正履歴と、作業環境の説明(リーダーは台帳とエージェントの一覧)を、`--append-system-prompt` で毎回渡す。関連ナレッジ・スキルの候補・会話の要約・実行記録は渡さない(Claude Code が `/knowledge` を読み、会話の文脈は `--resume` のセッションが持つ)。
+- モデルの選択(`route`)は使わず、Claude Code の settings.json と、AI Settings・モデル選択で選んだ許可モデルに従う([llm-settings.md](llm-settings.md#機能ごとのモデル))。
+- 応答は `provider = claude_code` として保存する。

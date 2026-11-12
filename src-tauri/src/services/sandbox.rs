@@ -870,7 +870,7 @@ async fn prune_old_images(bin: &Path, id: &str, spec: &ImageSpec) {
     }
     for (filter, keep_current) in targets {
         let Ok(o) = docker(bin, &["images", "--filter", &filter, "--format", "{{.Repository}}:{{.Tag}}"], CLI_TIMEOUT).await else { continue };
-        for tag in o.stdout.lines().map(str::trim).filter(|t| !t.is_empty() && !(keep_current && *t == spec.tag)) {
+        for tag in o.stdout.lines().map(str::trim).filter(|t| !(t.is_empty() || (keep_current && *t == spec.tag))) {
             let _ = docker(bin, &["rmi", tag], CLI_TIMEOUT).await;
         }
     }
@@ -1483,7 +1483,7 @@ mod tests {
     #[test]
     fn masker_releases_complete_lines_without_waiting_for_more_output() {
         let secret = "x".repeat(1_000);
-        let mut m = Masker::new(&[secret.clone()]);
+        let mut m = Masker::new(std::slice::from_ref(&secret));
         // 承認要求の行は、続きの出力を待たずに出る(相手は応答を待って止まっている)
         let line = "{\"type\":\"control_request\",\"request_id\":\"r-1\"}\n";
         assert_eq!(m.push(line), line);

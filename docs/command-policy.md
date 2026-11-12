@@ -1,11 +1,13 @@
 # コマンドの許可・拒否(Command Policy)
 
-`run_command` で実行するシェルコマンドの可否を判定する仕組み。実装は `services/command_policy.rs`、画面は設定の Command Policy。使われ方は [agent-command-tasks.md](agent-command-tasks.md)。
+`run_command` で実行するシェルコマンドの可否を判定する仕組み。実装は `services/command_policy.rs`、画面は設定の「権限」タブの Command Policy。使われ方は [agent-command-tasks.md](agent-command-tasks.md)。
+
+ホストのツールループで動くとき(API 方式のパーソナル)だけ使う。コンテナ内の Claude Code で動くエージェント(ワークは常に、パーソナルは Bedrock 方式のとき)では使わず、リーダーはコマンドを実行しない([実行範囲](#実行範囲scope)の末尾)。
 
 ## 設計方針
 
-- 許可・ask・拒否・機密・システム領域などの**規則はすべてナレッジの JSON ファイルで管理**し、コマンドごとに読み直す(再起動不要)。ファイルはワークスペースのナレッジごとにあるため、ワークスペース(パーソナル / エージェント)ごとに別のポリシーを持つ。設定のコピーでコマンド権限も写せる([workspace.md](workspace.md))。
-- `rm` 系・OS に影響するコマンド・機密ファイルの拒否も、**初期値としてファイルに書き出すだけ**で、ユーザーが編集できる。消せばその保護は無くなる。
+- 許可・ask・拒否・機密・システム領域などの**規則はすべてエージェントの DB に JSON で保存**し、コマンドごとに読み直す(再起動不要)。ワークスペース(パーソナル / エージェント)ごとに別のポリシーを持つ。設定のコピーでコマンド権限も写せる([workspace.md](workspace.md))。
+- `rm` 系・OS に影響するコマンド・機密ファイルの拒否も、**初期値として保存するだけ**で、ユーザーが編集できる。消せばその保護は無くなる。
 - 構文解析による**静的な検査**。解釈できないものは安全側(承認が必要)に倒す。
 
 ## 判定(`classify_in`)
@@ -44,7 +46,7 @@ flowchart TD
 
 ### 許可(Auto): 読み取り系
 
-`ls` `pwd` `cat` `head` `tail` `wc` `file` `stat` `du` `df` `which` `whoami` `date` `uname` `sw_vers` `echo` `grep` `rg` `find` `tree` `git status` `git log` `git diff` `git show`。版 3 で `ps` `id` `hostname` `uptime` `printenv` `basename` `dirname` `realpath` `readlink` `diff` `cut` `tr` `lsof` と、`git rev-parse` `git ls-files` `git blame` `git remote -v` `git branch --list` `git tag -l` など読み取りだけのサブコマンドを加えた。
+`ls` `pwd` `cat` `head` `tail` `wc` `file` `stat` `du` `df` `which` `whoami` `date` `uname` `sw_vers` `echo` `grep` `rg` `find` `tree` `git status` `git log` `git diff` `git show`、`ps` `id` `hostname` `uptime` `printenv` `basename` `dirname` `realpath` `readlink` `diff` `cut` `tr` `lsof` と、`git rev-parse` `git ls-files` `git blame` `git remote -v` `git branch --list` `git tag -l` など読み取りだけのサブコマンド。
 
 ### 拒否(Deny)
 
@@ -90,13 +92,13 @@ flowchart TD
 - 外を指すもの(`/tmp/x`、`../x`、`~/x`、`$HOME/x` など変数で組み立てたパス)は、`Deny`(理由: 読み取り系以外はナレッジの中でしか実行できない)。ただし、パス引数・リダイレクト先を持たない単純なコマンドが作業ディレクトリだけ外にある場合は、許可リストへ加える承認(`Unlisted`)を求める。`Ask` の規則に当たったものは対象外で、`Deny` になる。
 - `..` とシンボリックリンクは解決して判定する(存在する最も深い祖先を正規化して残りを付け直す)。
 - `ls /etc` や `cat ~/x` のような**読み取りはナレッジの外でも実行できる**。
-- コンテナで動くエージェント(ワークは常に、パーソナルは Bedrock 方式のとき)は、会話をコンテナ内の Claude Code が受け持ち、このファイルは使わない。コマンドの拒否は Claude Code の settings.json(`permissions.deny`)で決める。その雛形と、settings.json が空のときに渡す既定の拒否は、このファイルの初期値の拒否(`deny`)と拒否する語(`deny_words`)を `Bash(<コマンド>:*)` へ変換したもの([sandbox.md](sandbox.md))。
+- コンテナで動くエージェント(ワークは常に、パーソナルは Bedrock 方式のとき)は、会話をコンテナ内の Claude Code が受け持ち、このポリシーは使わない。コマンドの拒否は Claude Code の settings.json(`permissions.deny`)で決める。その雛形と、settings.json が空のときに渡す既定の拒否は、このポリシーの初期値の拒否(`deny`)と拒否する語(`deny_words`)を `Bash(<コマンド>:*)` へ変換したもの([sandbox.md](sandbox.md))。
 - Bedrock 方式では端末内のモデルも選べないため、コマンドはホストで動かない。画面でも、Bedrock 方式(ワークは常に)では Command Policy を出さない。
 - コマンドを区切り単位ごとに見るので、`ls /etc && mkdir a` は後者だけが検査される。
 
 ## ポリシーの保存先
 
-エージェントごとのDB(`timeline.db` の `app_settings`)のキー `command_policy`(JSON)。`run_command` のたびに読み直し、未保存なら既定値を書き出す。以前のナレッジの `.my-assistant/command-policy.json` があれば、エージェントを開くときに一度だけ取り込んで削除する(DB に保存があるときは DB を優先し、ファイルには触れない)。
+エージェントごとのDB(`timeline.db` の `app_settings`)のキー `command_policy`(JSON)。`run_command` のたびに読み直し、未保存なら既定値を書き出す。
 
 ```json
 {
@@ -113,7 +115,7 @@ flowchart TD
 }
 ```
 
-設定画面では、ポリシー全体(各リストと 3 つのフラグ)を JSON のまま編集して保存できる(項目ごとの入力欄は無い)。「保存」で、JSON の構文と型(リストは文字列の配列、フラグは true / false)を検証してから保存し、不正なら保存しない。書いていない項目は保存済みの値のままになる。保存は空行・重複を除き(1 リスト 200 件・1 項目 200 文字まで)、次のコマンドから有効になる。ファイルを直接編集してもよい。
+設定画面では、ポリシー全体(各リストと 3 つのフラグ)を JSON のまま編集して保存できる(項目ごとの入力欄は無い)。「保存」で、JSON の構文と型(リストは文字列の配列、フラグは true / false)を検証してから保存し、不正なら保存しない。書いていない項目は保存済みの値のままになる。保存は空行・重複を除き(1 リスト 200 件・1 項目 200 文字まで)、次のコマンドから有効になる。
 
 ### マッチの規則
 
@@ -126,7 +128,7 @@ flowchart TD
 
 - ポリシーはナレッジのファイルではなく DB に保存するので、LLM のファイルツール(一覧・読み取り・作成)からは触れない。
 - 保存した内容が壊れていれば(JSON として読めない、形式が違う)許可リストは空として扱う(拒否などは初期値のまま)。
-- 保存した内容はそのまま使う。初期値の更新は保存済みの内容へ自動では足さない(「初期値に戻す」で反映する)。取り込んだ旧ファイルに `version` があっても読み飛ばす。
+- 保存した内容はそのまま使う。初期値の更新は保存済みの内容へ自動では足さない(「初期値に戻す」で反映する)。
 - 設定画面の「初期値に戻す」で初期値に戻せる(押すとすぐ保存する)。
 
 ### 許可リストへの追加

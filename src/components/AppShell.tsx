@@ -21,14 +21,14 @@ import { startWorkspaceSync, useWorkspace } from "@/lib/workspace";
 /** 主要な機能。 */
 const MAIN_NAV = [
   { href: "/", label: "Chat", icon: MessageSquare },
-  { href: "/knowledge", label: "Knowledge base", icon: BookOpen },
+  { href: "/knowledge", label: "Knowledge", icon: BookOpen },
   { href: "/skills", label: "Skills", icon: ScrollText },
   { href: "/setup", label: "Settings", icon: Settings },
 ] as const;
 
 /** 補助的な項目(メニューの下側にまとめる)。 */
 /** 全エージェントのナレッジ。エージェントに依存しないので補助の側に置く。 */
-const ALL_KNOWLEDGE_NAV = { href: "/knowledge/all", label: "All Knowledge bases", icon: Library } as const;
+const ALL_KNOWLEDGE_NAV = { href: "/knowledge/all", label: "All Knowledge", icon: Library } as const;
 const GLOBAL_NAV = { href: "/global", label: "Global Settings", icon: Globe } as const;
 const HELP_NAV = { href: "/shortcuts", label: "Shortcuts", icon: Keyboard } as const;
 /** デバッグ(デバッグモードがオンのときだけ)。ログはワークスペースごとなので、主要メニューに置く。 */

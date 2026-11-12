@@ -222,6 +222,15 @@ impl<W: Write + Seek> Packer<W> {
     }
 }
 
+/// `dir`直下の、名前が`name`(大文字小文字を区別しない)のフォルダ。シンボリックリンクは含めない。
+fn child_dirs(dir: &Path, name: &str) -> Vec<PathBuf> {
+    let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
+    rd.flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) && e.file_name().to_string_lossy().eq_ignore_ascii_case(name))
+        .map(|e| e.path())
+        .collect()
+}
+
 /// DBの一貫したスナップショットを`dest`へ作る。
 fn snapshot_db(src: &Path, dest: &Path) -> Result<(), AppError> {
     let conn = Connection::open_with_flags(src, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
@@ -306,10 +315,19 @@ fn create_inner(root: &Path, dest: &Path, part: &Path, work: &Path, now: String,
         // アプリデータごと含んでしまう保存先(モデル等まで入る)は取り込まない
         let encloses_root = knowledge.canonicalize().is_ok_and(|k| root_canon.starts_with(&k));
         if knowledge.is_absolute() && !encloses_root {
-            // 担当システムのフォルダ(`data/`。ソースコードなど)は含めない(以前の`/workspace`のフォルダも含めていなかった)
-            let data = std::fs::read_dir(&knowledge).into_iter().flatten().flatten().map(|e| e.path());
-            p.exclude.extend(data.filter(|path| path.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(knowledge::DATA_DIR))));
+            // 担当システムのフォルダ(`data/`。ソースコードなど)は含めない(以前の`/workspace`のフォルダも含めていなかった)。
+            // ただし、その中の資料の置き場(`data/reports/`)は、アプリで作った生成物なので含める
+            let data: Vec<PathBuf> = child_dirs(&knowledge, knowledge::DATA_DIR);
+            p.exclude.extend(data.iter().cloned());
             p.add_tree(&format!("ws/{id}/{KNOWLEDGE_DIR}"), &knowledge)?;
+            for dir in &data {
+                for reports in child_dirs(dir, knowledge::REPORTS_DIR) {
+                    let rel = reports.strip_prefix(&knowledge).ok().and_then(Path::to_str).map(str::to_owned);
+                    if let Some(rel) = rel {
+                        p.add_tree(&format!("ws/{id}/{KNOWLEDGE_DIR}/{rel}"), &reports)?;
+                    }
+                }
+            }
         } else {
             log::warn!("backup skipped knowledge of {id}: {}", knowledge.display());
         }
@@ -635,6 +653,9 @@ mod tests {
         std::fs::write(agent.join(KNOWLEDGE_DIR).join("data/src/main.rs"), marker).unwrap();
         std::fs::create_dir_all(external.join("Data")).unwrap();
         std::fs::write(external.join("Data/README.md"), marker).unwrap();
+        // 資料の置き場(data/reports)だけは含める
+        std::fs::create_dir_all(agent.join(KNOWLEDGE_DIR).join("data/reports/2026")).unwrap();
+        std::fs::write(agent.join(KNOWLEDGE_DIR).join("data/reports/2026/週次.md"), marker).unwrap();
         std::fs::write(agent.join(SANDBOX_ENV_FILE), format!("TOKEN={marker}\n")).unwrap();
         std::fs::create_dir_all(agent.join(SANDBOX_DIR)).unwrap();
         std::fs::write(agent.join(SANDBOX_DIR).join("Dockerfile"), format!("FROM {marker}\n")).unwrap();
@@ -686,6 +707,8 @@ mod tests {
         assert_eq!(db.get_setting(KNOWLEDGE_DIR_KEY).unwrap(), None);
         assert_eq!(std::fs::read_to_string(dst.join(SECRETS_FILE)).unwrap(), "{\"k\":\"new\"}");
         assert_eq!(std::fs::read_to_string(dst.join("work/agent-a/knowledge/a.md")).unwrap(), "new");
+        assert_eq!(std::fs::read_to_string(dst.join("work/agent-a/knowledge/data/reports/2026/週次.md")).unwrap(), "new");
+        assert!(!dst.join("work/agent-a/knowledge/data/src").exists());
         // プロキシのパスワードも戻り、古いものは退避に残る
         assert_eq!(std::fs::read_to_string(dst.join(PROXY_DIR).join(SECRETS_FILE)).unwrap(), "{\"proxy_password:p\":\"new\"}");
         // サンドボックスの環境変数とDockerfileも戻る
@@ -703,7 +726,8 @@ mod tests {
         // 取り込まれたのはモデル以外
         let names: Vec<_> = ZipArchive::new(File::open(&zip).unwrap()).unwrap().file_names().map(str::to_owned).collect();
         assert!(names.iter().all(|n| !n.contains("models")));
-        assert!(names.iter().all(|n| !n.contains("/knowledge/data/") && !n.contains("/knowledge/Data/")), "{names:?}");
+        let data: Vec<_> = names.iter().filter(|n| n.contains("/knowledge/data/") || n.contains("/knowledge/Data/")).collect();
+        assert_eq!(data, ["ws/agent-a/knowledge/data/reports/2026/週次.md"], "data/ は資料の置き場だけ含める");
         assert!(names.iter().any(|n| n.ends_with("/knowledge/a.md")));
         #[cfg(unix)]
         {

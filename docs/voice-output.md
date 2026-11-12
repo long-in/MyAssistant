@@ -1,6 +1,6 @@
 # 音声出力(TTS・字幕・定型音声)
 
-応答を読み上げ、その再生位置に字幕を合わせる。実装は `services/tts.rs`、`services/voice_phrases.rs`、フロントエンドの `lib/api.ts`(再生)、`lib/speech-sync.ts`、`components/Subtitles.tsx`。
+応答を読み上げ、その再生位置に字幕を合わせる。実装は `services/tts.rs`、`services/voice_phrases.rs`、フロントエンドの `lib/api.ts`(再生)、`lib/speech-sync.ts`、`components/Reply.tsx`(字幕の表示)。
 
 ## 音声合成(`tts.rs`)
 
@@ -8,7 +8,7 @@
 
 ### Google Cloud
 
-- Google Cloud Text-to-Speech(REST)。キーは Google Cloud API キー(設定の Voice Link)で、Google STT と共通。
+- Google Cloud Text-to-Speech(REST)。キーは Google Cloud API キー(設定の音声タブの Voice Output で登録)で、Google STT と共通。
 - 言語は本文で判定する(`voice_for`): かな・漢字を含めば日本語(`ja-JP-Neural2-B`)、それ以外は英語(`en-US-Neural2-F`)。
 - 入力の上限は 5,000 バイトのため、UTF-8 の文字境界で 4,500 バイトに切って送る。**これを超える長文は先頭部分だけが読み上げられる**。
 

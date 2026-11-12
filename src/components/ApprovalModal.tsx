@@ -17,6 +17,7 @@ const TITLES: Record<Approval["kind"], string> = {
   command: "このコマンドを実行してよいですか？",
   allow_command: "このコマンドは許可リストにありません。実行してよいですか？",
   file: "ファイルの作成を許可しますか？",
+  file_overwrite: "資料を次の内容で上書きしてよいですか？",
   skill_update: "スキルを次の内容で上書きしてよいですか？",
   skill_delete: "このスキルを削除してよいですか？",
   tool_use: "このツールを実行してよいですか？",
@@ -138,7 +139,7 @@ export default function ApprovalModal({
           </>
         )}
 
-        {(approval.kind === "file" || approval.kind === "skill_update" || approval.kind === "skill_delete") && (
+        {(approval.kind === "file" || approval.kind === "file_overwrite" || approval.kind === "skill_update" || approval.kind === "skill_delete") && (
           <>
             <p className="mt-2 font-mono text-xs break-all">{approval.path}</p>
             <pre className="mt-2 max-h-48 overflow-auto rounded-md border bg-background/60 p-2 text-xs whitespace-pre-wrap">

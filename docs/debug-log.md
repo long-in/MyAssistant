@@ -12,13 +12,14 @@
 
 | `kind` | 内容 | 記録元 |
 | --- | --- | --- |
-| `api` | API の 1 往復(`api` 名、URL、リクエスト、ステータス、レスポンス)。`api` は `anthropic` / `bedrock` / `google_tts` / `google_stt` | `llm_client.rs`、`tts.rs`、`stt_google.rs` |
+| `api` | API の 1 往復(`api` 名、URL、リクエスト、ステータス、レスポンス)。`api` は `anthropic` / `local`(端末内の LLM)/ `google_tts` / `google_stt` | `llm_client.rs`、`local_llm.rs`、`tts.rs`、`stt_google.rs` |
 | `transcription` | 音声認識の結果(エンジン、言語、秒数、語彙ヒント、文字起こし)。VAD で発話なしと判定して認識を省いた場合は、その理由 | `commands/voice.rs` |
 
 - API キーはヘッダーにのみ載るため、本文には含まれない。
 - 音声データなど長大な base64 の値は、サイズだけ残して置き換える(`redact_at`)。
 - 応答本文が JSON として読めなければ、文字列のまま記録する。
 - 失敗した LLM リクエスト(ネットワークエラーなど)も、ステータス 0 で記録する。
+- コンテナ内の Claude Code の通信(Bedrock)は記録しない(アプリのログに、回答の費用・使用量だけを残す)。
 - **無効なときは何もしない**。書き込みに失敗しても本来の処理は止めない(警告ログのみ)。
 
 ## 出力先の決定

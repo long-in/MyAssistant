@@ -245,8 +245,8 @@ export const sendChat = (sessionId: string, text: string, route: Route, skill: s
   return invoke<ChatReply>("send_chat", { sessionId, text, route, skill, onEvent: channel });
 };
 
-/** 承認の種類。file=ファイル作成、plan=作業計画、command=計画外・破壊的なコマンドの個別承認、allow_command=許可リストにないコマンドを許可に加えて実行、skill_update=スキルの上書き、skill_delete=スキルの削除。 */
-export type ApprovalKind = "file" | "plan" | "command" | "allow_command" | "skill_update" | "skill_delete" | "tool_use";
+/** 承認の種類。file=ファイル作成、file_overwrite=資料(data/reports)の上書き、plan=作業計画、command=計画外・破壊的なコマンドの個別承認、allow_command=許可リストにないコマンドを許可に加えて実行、skill_update=スキルの上書き、skill_delete=スキルの削除。 */
+export type ApprovalKind = "file" | "file_overwrite" | "plan" | "command" | "allow_command" | "skill_update" | "skill_delete" | "tool_use";
 
 /** 配布の下書きの宛先(エージェント)。 */
 export type DraftTarget = { id: string; name: string; color: string };
