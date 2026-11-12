@@ -167,7 +167,7 @@ struct Packer<W: Write + Seek> {
 }
 
 /// エントリの書き込み設定。パスワードがあればAES-256。
-fn options(password: &Option<String>) -> FileOptions<'_, ()> {
+fn options(password: &Option<String>) -> FileOptions<'_, '_, ()> {
     let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     match password {
         Some(pw) => opts.with_aes_encryption(AesMode::Aes256, pw),
@@ -724,7 +724,7 @@ mod tests {
         assert!(old.path().join("work/agent-a/timeline.db").is_file());
         assert_eq!(std::fs::read_to_string(old.path().join(PROXY_DIR).join(SECRETS_FILE)).unwrap(), "{\"proxy_password:p\":\"old\"}");
         // 取り込まれたのはモデル以外
-        let names: Vec<_> = ZipArchive::new(File::open(&zip).unwrap()).unwrap().file_names().map(str::to_owned).collect();
+        let names: Vec<_> = ZipArchive::new(File::open(&zip).unwrap()).unwrap().file_names().map(|n| n.unwrap().into_owned()).collect();
         assert!(names.iter().all(|n| !n.contains("models")));
         let data: Vec<_> = names.iter().filter(|n| n.contains("/knowledge/data/") || n.contains("/knowledge/Data/")).collect();
         assert_eq!(data, ["ws/agent-a/knowledge/data/reports/2026/週次.md"], "data/ は資料の置き場だけ含める");
