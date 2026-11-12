@@ -8,8 +8,6 @@ use crate::{db::Db, utils::error::AppError};
 pub const KEY: &str = "tuning";
 /// 音声入力の待ち時間(全体設定)のキー。
 pub const VOICE_KEY: &str = "voice_timing";
-/// `VoiceTiming`の項目名。旧`tuning`から取り込むときに使う。
-pub const VOICE_FIELDS: [&str; 3] = ["voice_idle_secs", "utterance_silence_secs", "release_tail_secs"];
 
 /// エージェントごとの上限。未保存・欠けた項目は既定値になる。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

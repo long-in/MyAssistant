@@ -1,6 +1,6 @@
 # スキル
 
-特定の依頼に対して、あらかじめ登録した決まった手順で対応させる機能(Claude Code のスキルに近い)。実装は `services/skills.rs`(保存・検証・選定)、`services/skills_migration.rs`(旧形式からの移行)、ツールは `services/tool_loop.rs`(`list_skills` / `use_skill` / `create_skill` / `update_skill` / `delete_skill`)、コマンドは `commands/skills.rs`、画面は `src/app/skills/page.tsx`。
+特定の依頼に対して、あらかじめ登録した決まった手順で対応させる機能(Claude Code のスキルに近い)。実装は `services/skills.rs`(保存・検証・選定)、ツールは `services/tool_loop.rs`(`list_skills` / `use_skill` / `create_skill` / `update_skill` / `delete_skill`)、コマンドは `commands/skills.rs`、画面は `src/app/skills/page.tsx`。
 
 対象はパーソナルとエージェントとリーダー。スキルは**エージェントごと**に持ち、ほかのエージェントとは共有しない([workspace.md](workspace.md))。
 
@@ -35,20 +35,6 @@ description: 朝の報告をまとめる。「朝の報告」「日報」と頼�
 - 名前は標準どおり小文字の英数字とハイフンのみ(先頭・末尾・連続のハイフン不可)。重複は拒否する。作成後に名前は変えられない(削除して作り直す)。
 - 説明に `<` `>`・制御文字(改行を含む)は使えない。候補の一覧を `<candidate_skills>` で囲んで渡すため、タグの偽装でプロンプトを壊させない。
 - シンボリックリンクのファイル・フォルダ(`skills/` 自体を含む)は読まず、書き込みも拒否する。パスは `utils/path.rs` のサンドボックス(`ensure_dir`)を通す。
-
-## 旧形式からの移行
-
-スキル画面のコマンドとチャットの送信の前に、`skills_migration` が次を標準形式の `skills/<名前>/SKILL.md` へ移す(スキル画面を開いたときとチャットの送信前。冪等)。旧フォルダが無ければ存在を確かめるだけで終わる。
-
-| 移行元 | 内容 |
-| --- | --- |
-| `.my-assistant/skills/<名前>.md` | 旧形式のスキル。`triggers` は説明の末尾へ「呼び出し語は「…」」として統合する |
-| `skills/<名前>/SKILL.md`(旧書式) | `triggers` を持つスキル。標準の Frontmatter へ書き換える(他のキーは残す)。標準のスキルには触れない |
-| `Harness/<名前>.md` | 廃止したハーネス。説明(呼び出し語を統合)・本文を移し、`output` は本文の末尾へ「出力形式: …」として足す。`paths`・`tools`・`max_steps` は捨てる |
-
-- 名前が規約に合わない(日本語・大文字・`_` など)スキルは、選定と同じ軽量モデルで英訳した名前(例: `天気確認` → `check-weather`)へフォルダごと改名する。本文・説明は変えない。英訳できなければ元のまま残し、次の起動で再試行する(同じ起動中は1回だけ)。既存の名前と重なるときは `-2` を付ける。
-- 移せたものは元のファイルを消し、空になった旧フォルダも消す(`.my-assistant/` はコマンド権限があるので残る)。
-- 同名のスキルがある、検証に通らない(説明が無い、本文が長すぎる、など)ものは元のまま残し、ログに出す。`Harness/` に残ったファイルは通常のナレッジになる。
 
 ## 発話ごとの処理(トークンを抑える設計)
 

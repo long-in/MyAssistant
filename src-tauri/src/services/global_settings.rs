@@ -2,8 +2,6 @@
 //!
 //! - 保存先はアプリデータの`work/global_settings.json`(キーと文字列値の対応)。エージェントを削除しても残る。
 //! - 項目は`settings_registry`で保存先が全体設定(`Scope::Global`)のキー。エージェントごとのキーは書き込みで拒否する。
-//! - 初回(ファイルが無いとき)だけ、パーソナルのDBの現在値を初期値として取り込む(`migrate_from`)。
-//! - 取り込んだあと(ファイルがあるとき)は、各エージェントのDBに残る同名の古い値を消す(`purge_legacy`)。ファイルが無いうちは消さない。
 //!
 //! 項目の読み書きは`SettingsStore`を通すので、DBの設定と同じ形で扱える。
 use std::{
@@ -12,9 +10,7 @@ use std::{
     sync::Mutex,
 };
 
-use serde_json::Value;
-
-use super::settings_registry::{self, Scope};
+use super::settings_registry;
 use crate::{db::Db, utils::error::AppError};
 
 const FILE: &str = "global_settings.json";
@@ -77,11 +73,6 @@ impl GlobalStore {
         }
     }
 
-    /// ファイルがあるか(初回の取り込みが済んだか)。
-    pub fn exists(&self) -> bool {
-        self.path.exists()
-    }
-
     /// 複数の項目をまとめて書く(途中で失敗したら、どれも書かれない)。
     pub fn set_settings(&self, items: &[(&str, &str)]) -> Result<(), AppError> {
         for (k, _) in items {
@@ -95,45 +86,6 @@ impl GlobalStore {
         self.write(&map)
     }
 
-    /// ファイルがまだ無いときだけ、パーソナルのDBの現在値を初期値として写す。VOICE TIMINGは調整項目から取り出す。
-    /// 写せたら(またはファイルが既にあれば)、パーソナルのDBに残る古い値を消す。
-    pub fn migrate_from(&self, personal: &Db) -> Result<(), AppError> {
-        {
-            let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
-            if !self.path.exists() {
-                self.write(&Self::initial_values(personal)?)?;
-            }
-        }
-        self.purge_legacy(personal)
-    }
-
-    fn initial_values(personal: &Db) -> Result<BTreeMap<String, String>, AppError> {
-        let mut map = BTreeMap::new();
-        for key in settings_registry::keys(Scope::Global) {
-            if let Some(v) = personal.get_setting(key)? {
-                map.insert(key.to_owned(), v);
-            }
-        }
-        if let Some(t) = personal.get_setting(super::tuning::KEY)?.and_then(|v| serde_json::from_str::<Value>(&v).ok()) {
-            let pick: serde_json::Map<String, Value> = super::tuning::VOICE_FIELDS
-                .iter()
-                .filter_map(|f| t.get(*f).map(|v| ((*f).to_owned(), v.clone())))
-                .collect();
-            if !pick.is_empty() {
-                map.insert(super::tuning::VOICE_KEY.to_owned(), Value::Object(pick).to_string());
-            }
-        }
-        Ok(map)
-    }
-
-    /// DBに残る全体設定の古い値を消す。ファイルがまだ無ければ(初回の取り込み前なので)消さない。
-    pub fn purge_legacy(&self, db: &Db) -> Result<(), AppError> {
-        if !self.exists() {
-            return Ok(());
-        }
-        db.delete_settings(settings_registry::keys(Scope::Global))?;
-        Ok(())
-    }
 }
 
 impl SettingsStore for GlobalStore {
@@ -151,10 +103,6 @@ impl SettingsStore for GlobalStore {
 mod tests {
     use super::*;
 
-    fn personal(dir: &Path) -> Db {
-        Db::open(&dir.join("t.db")).unwrap()
-    }
-
     #[test]
     fn roundtrips_and_survives_reopen() {
         let d = tempfile::tempdir().unwrap();
@@ -165,54 +113,6 @@ mod tests {
         let g = GlobalStore::open(d.path());
         assert_eq!(g.get_setting("a").unwrap().as_deref(), Some("3"));
         assert_eq!(g.get_setting("b").unwrap().as_deref(), Some("2"));
-    }
-
-    #[test]
-    fn first_run_adopts_personal_values_once() {
-        let d = tempfile::tempdir().unwrap();
-        let db = personal(d.path());
-        db.set_legacy_setting("base_instructions", "敬語で");
-        db.set_legacy_setting("batch_interval_minutes", "60");
-        db.set_setting("web_access", "0").unwrap(); // 全体設定の対象外
-        db.set_setting("tuning", r#"{"web_search_max":9,"voice_idle_secs":7.0}"#).unwrap();
-        let g = GlobalStore::open(d.path());
-        g.migrate_from(&db).unwrap();
-        assert_eq!(g.get_setting("base_instructions").unwrap().as_deref(), Some("敬語で"));
-        assert_eq!(g.get_setting("web_access").unwrap(), None);
-        let voice: Value = serde_json::from_str(&g.get_setting("voice_timing").unwrap().unwrap()).unwrap();
-        assert_eq!(voice["voice_idle_secs"], 7.0);
-        assert!(voice.get("web_search_max").is_none());
-        // 取り込んだら、パーソナルのDBに残る古い値は消す(エージェントごとの設定は残す)
-        assert_eq!(db.get_setting("base_instructions").unwrap(), None);
-        assert_eq!(db.get_setting("web_access").unwrap().as_deref(), Some("0"));
-        assert!(db.get_setting("tuning").unwrap().is_some());
-        // 2回目以降は、パーソナルが変わっても取り込み直さない
-        db.set_legacy_setting("base_instructions", "別の値");
-        g.migrate_from(&db).unwrap();
-        assert_eq!(g.get_setting("base_instructions").unwrap().as_deref(), Some("敬語で"));
-        assert_eq!(db.get_setting("base_instructions").unwrap(), None);
-    }
-
-    #[test]
-    fn legacy_values_are_kept_until_the_first_import() {
-        use crate::services::workspace::WorkspaceCtx;
-        let d = tempfile::tempdir().unwrap();
-        let legacy = Db::open(&d.path().join("timeline.db")).unwrap();
-        legacy.set_legacy_setting("base_instructions", "敬語で");
-        drop(legacy);
-        // ファイルが無いうちに開いても消さない(このあと取り込むため)
-        let personal = WorkspaceCtx::open("personal", d.path()).unwrap();
-        assert_eq!(personal.db.get_setting("base_instructions").unwrap().as_deref(), Some("敬語で"));
-        personal.global.migrate_from(&personal.db).unwrap();
-        assert_eq!(personal.global.get_setting("base_instructions").unwrap().as_deref(), Some("敬語で"));
-        // 取り込んだあとに開いたエージェントは、開いたときに消す
-        let agent = d.path().join("agent");
-        std::fs::create_dir_all(&agent).unwrap();
-        let old = Db::open(&agent.join("timeline.db")).unwrap();
-        old.set_legacy_setting("wake_words", r#"["旧"]"#);
-        drop(old);
-        let s = WorkspaceCtx::open_shared("s", &agent, Default::default(), personal.global.clone()).unwrap();
-        assert_eq!(s.db.get_setting("wake_words").unwrap(), None);
     }
 
     #[test]

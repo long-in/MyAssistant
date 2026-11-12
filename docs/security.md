@@ -38,7 +38,6 @@
 - 設定画面の「保存先をFinderで開く」(`reveal_secrets_file`)は、現在のワークスペースの `secrets.json` を Finder で選択表示する(未作成ならフォルダを開く)。パスは `ctx.dir` から Rust 内で組み立て、中身は読まない。
 - Bedrock は、このアプリから直接は呼ばない(モデルの一覧も持たない)。登録した AWS の設定から発行した一時クレデンシャルを、コンテナ内の Claude Code へ環境変数で渡して使う。モデルは Claude Code の settings.json で決める([sandbox.md](sandbox.md))。
 - 「接続テスト」は、STS の `GetCallerIdentity` で認証(プロファイル・MFA・SSO・ロールの引き受け)が通るかだけを確かめる。モデルは呼ばない。
-- 以前のバージョンが `secrets.json` に保存した `aws_models`(Bedrock のモデル一覧)は使わない。AWS の登録を削除するときに一緒に消す。
 
 ## API キー(`secrets.rs`)
 

@@ -26,10 +26,6 @@ pub const LLM_KEY: &str = "sandbox_llm";
 pub const CLAUDE_SETTINGS_KEY: &str = "sandbox_claude_settings";
 /// 全体設定の側の settings.json のキー。エージェントが自分の settings.json を持たない(空)ときは、これを使う。
 pub const SHARED_CLAUDE_SETTINGS_KEY: &str = "sandbox_claude_settings_shared";
-/// エージェントの settings.json へ既定の拒否を足す移行を済ませた印のキー。
-pub const DENY_MIGRATED_KEY: &str = "sandbox_claude_settings_deny_migrated";
-/// 全体設定の settings.json へ既定の拒否を足す移行を済ませた印のキー。
-pub const SHARED_DENY_MIGRATED_KEY: &str = "sandbox_claude_settings_shared_deny_migrated";
 /// チャットで選んだモデル(settings.json の許可するモデルのうち、`--model`で指定するもの)のキー。
 const MODEL_KEY: &str = "sandbox_model";
 /// モデル名の上限(文字数)。
@@ -64,7 +60,7 @@ pub enum Provider {
 }
 
 /// 接続の設定。未保存・欠けた項目は既定値になる。
-/// モデルと許可するツールは settings.json で決める(旧設定の値は`migrate_legacy_llm`が settings.json へ移す)。
+/// モデルと許可するツールは settings.json で決める。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LlmConfig {
@@ -105,38 +101,6 @@ pub fn save(db: &impl SettingsStore, cfg: LlmConfig) -> Result<LlmConfig, AppErr
     let cfg = cfg.normalized()?;
     db.set_setting(LLM_KEY, &serde_json::to_string(&cfg).map_err(|e| AppError::Io(e.to_string()))?)?;
     Ok(cfg)
-}
-
-/// 旧設定(`sandbox_llm`のモデル・許可するツール)を、settings.json(`model`・`permissions.allow`)へ一度だけ移す。
-/// settings.json がすでに書かれているときは上書きせず、そちらを優先する。移したあと(または不要なとき)は、旧項目を`sandbox_llm`から外す。
-pub fn migrate_legacy_llm(db: &impl SettingsStore) -> Result<(), AppError> {
-    let Some(raw) = db.get_setting(LLM_KEY)? else { return Ok(()) };
-    let Ok(Value::Object(old)) = serde_json::from_str::<Value>(&raw) else { return Ok(()) };
-    if !old.contains_key("model") && !old.contains_key("allowed_tools") {
-        return Ok(());
-    }
-    if load_settings(db)?.trim().is_empty() {
-        let mut root = serde_json::Map::new();
-        if let Some(model) = old.get("model").and_then(Value::as_str).map(str::trim).filter(|m| !m.is_empty()) {
-            root.insert("model".into(), Value::String(model.to_owned()));
-        }
-        let tools: Vec<Value> = old
-            .get("allowed_tools")
-            .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(Value::as_str).map(str::trim).filter(|t| !t.is_empty()).map(|t| Value::String(t.to_owned())).collect())
-            .unwrap_or_default();
-        if !tools.is_empty() {
-            root.insert("permissions".into(), serde_json::json!({ "allow": tools }));
-        }
-        if !root.is_empty() {
-            let text = serde_json::to_string_pretty(&Value::Object(root)).map_err(|e| AppError::Io(e.to_string()))?;
-            save_settings(db, &text)?;
-        }
-    }
-    // 旧項目を外す(読めない・範囲外の値は既定値へ丸める)
-    let cfg: LlmConfig = serde_json::from_value(Value::Object(old)).unwrap_or_default();
-    save(db, cfg)?;
-    Ok(())
 }
 
 /// 貼り付けた settings.json を検証する。空(空白のみ)は未設定として通す。JSON のオブジェクトで、上限以内であること。
@@ -232,45 +196,6 @@ fn fallback_settings() -> String {
 
 /// settings.json の`permissions.deny`へ、無い拒否を足した内容。
 /// JSON のオブジェクトでない、または`permissions`・`deny`の形が違うときは`None`(触らない)。
-fn with_deny(text: &str, rules: &[String]) -> Option<String> {
-    let Ok(Value::Object(mut root)) = serde_json::from_str::<Value>(text) else { return None };
-    let permissions = root.entry("permissions").or_insert_with(|| Value::Object(serde_json::Map::new())).as_object_mut()?;
-    let deny = permissions.entry("deny").or_insert_with(|| Value::Array(Vec::new())).as_array_mut()?;
-    for rule in rules {
-        if !deny.iter().any(|d| d.as_str() == Some(rule)) {
-            deny.push(Value::String(rule.clone()));
-        }
-    }
-    serde_json::to_string_pretty(&Value::Object(root)).ok()
-}
-
-/// 保存済みの settings.json(`key`)へ、既定の拒否を一度だけ足す。空なら足さない(空のときは実行時に既定の拒否を渡す)。
-/// 以前はコマンド権限の拒否を`--disallowedTools`で渡していたため、その保護を settings.json へ引き継ぐ。
-fn migrate_deny_in(store: &impl SettingsStore, key: &str, done_key: &str) -> Result<(), AppError> {
-    if store.get_setting(done_key)?.is_some() {
-        return Ok(());
-    }
-    let text = store.get_setting(key)?.unwrap_or_default();
-    if !text.trim().is_empty() {
-        match with_deny(&text, &default_deny_rules()) {
-            Some(merged) => store.set_setting(key, &merged)?,
-            None => log::warn!("settings.json の形が想定と違うため、既定の拒否を足しませんでした"),
-        }
-    }
-    store.set_setting(done_key, "1")
-}
-
-/// エージェントと全体設定の settings.json へ、既定の拒否を一度だけ足す。
-pub fn migrate_default_deny(db: &impl SettingsStore, global: &impl SettingsStore) -> Result<(), AppError> {
-    migrate_deny_in(db, CLAUDE_SETTINGS_KEY, DENY_MIGRATED_KEY)?;
-    migrate_shared_default_deny(global)
-}
-
-/// 全体設定の settings.json へ、既定の拒否を一度だけ足す。
-pub fn migrate_shared_default_deny(global: &impl SettingsStore) -> Result<(), AppError> {
-    migrate_deny_in(global, SHARED_CLAUDE_SETTINGS_KEY, SHARED_DENY_MIGRATED_KEY)
-}
-
 /// 検証して保存する。空にすると未設定に戻る。
 pub fn save_settings(db: &impl SettingsStore, text: &str) -> Result<(), AppError> {
     validate_settings(text).map_err(AppError::Sandbox)?;
@@ -596,8 +521,6 @@ pub async fn run_turn(
     if turn.prompt.trim().is_empty() {
         return Err("指示が空です。".into());
     }
-    migrate_legacy_llm(&turn.ctx.db).map_err(|e| e.to_string())?;
-    migrate_default_deny(&turn.ctx.db, &*turn.ctx.global).map_err(|e| e.to_string())?;
     let cfg = load(&turn.ctx.db).map_err(|e| e.to_string())?;
     let mounts = sandbox::mounts_for(turn.knowledge_root)?;
     let mut vars = merge_env(sandbox::env_for(turn.ctx).await?);
@@ -805,28 +728,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_llm_settings_are_moved_into_claude_settings_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = crate::db::Db::open(&dir.path().join("t.db")).unwrap();
-        // 旧設定がなければ何もしない
-        migrate_legacy_llm(&db).unwrap();
-        assert_eq!(load_settings(&db).unwrap(), "");
-        db.set_setting(LLM_KEY, r#"{"provider":"bedrock","model":" us.anthropic.claude-x ","timeout_mins":45,"allowed_tools":["Bash"," Read ","Bash(git status:*)",""]}"#).unwrap();
-        migrate_legacy_llm(&db).unwrap();
-        let moved: Value = serde_json::from_str(&load_settings(&db).unwrap()).unwrap();
-        assert_eq!(moved["model"], "us.anthropic.claude-x");
-        assert_eq!(moved["permissions"]["allow"], serde_json::json!(["Bash", "Read", "Bash(git status:*)"]));
-        // 上限時間は残り、旧項目は外れる
-        assert_eq!(load(&db).unwrap().timeout_mins, 45);
-        let left: Value = serde_json::from_str(&db.get_setting(LLM_KEY).unwrap().unwrap()).unwrap();
-        assert!(left.get("model").is_none() && left.get("allowed_tools").is_none());
-        // 2回目は何もしない(利用者が書き換えた内容を上書きしない)
-        save_settings(&db, r#"{"model":"mine"}"#).unwrap();
-        migrate_legacy_llm(&db).unwrap();
-        assert_eq!(load_settings(&db).unwrap(), r#"{"model":"mine"}"#);
-    }
-
-    #[test]
     fn available_models_come_from_settings_and_selection_is_checked() {
         let dir = tempfile::tempdir().unwrap();
         let db = crate::db::Db::open(&dir.path().join("t.db")).unwrap();
@@ -861,17 +762,6 @@ mod tests {
         assert_eq!(configured_model(&db, &db).as_deref(), Some("us.anthropic.claude-x"));
         save_settings(&db, r#"{"permissions":{}}"#).unwrap();
         assert_eq!(configured_model(&db, &db), None);
-    }
-
-    #[test]
-    fn legacy_llm_settings_do_not_overwrite_existing_claude_settings() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = crate::db::Db::open(&dir.path().join("t.db")).unwrap();
-        save_settings(&db, r#"{"model":"mine"}"#).unwrap();
-        db.set_setting(LLM_KEY, r#"{"model":"old","timeout_mins":10,"allowed_tools":["Bash"]}"#).unwrap();
-        migrate_legacy_llm(&db).unwrap();
-        assert_eq!(load_settings(&db).unwrap(), r#"{"model":"mine"}"#);
-        assert_eq!(load(&db).unwrap().timeout_mins, 10);
     }
 
     #[test]
@@ -993,39 +883,6 @@ mod tests {
         assert_eq!(fallback["permissions"]["deny"], serde_json::json!(rules));
         assert!(fallback["permissions"].get("allow").is_none());
         assert!(validate_settings(&settings_template()).is_ok() && validate_settings(&fallback_settings()).is_ok());
-    }
-
-    #[test]
-    fn deny_is_merged_without_duplicates_and_odd_shapes_are_left_alone() {
-        let rules = vec!["Bash(rm:*)".to_owned(), "Bash(sudo:*)".to_owned()];
-        let merged: Value = serde_json::from_str(&with_deny(r#"{"model":"m","permissions":{"allow":["Bash"],"deny":["Bash(rm:*)","Read"]}}"#, &rules).unwrap()).unwrap();
-        assert_eq!(merged["permissions"]["deny"], serde_json::json!(["Bash(rm:*)", "Read", "Bash(sudo:*)"]));
-        assert_eq!(merged["permissions"]["allow"], serde_json::json!(["Bash"]));
-        assert_eq!(merged["model"], "m");
-        let added: Value = serde_json::from_str(&with_deny(r#"{"model":"m"}"#, &rules).unwrap()).unwrap();
-        assert_eq!(added["permissions"]["deny"], serde_json::json!(rules));
-        assert_eq!(with_deny(r#"{"permissions":[]}"#, &rules), None);
-        assert_eq!(with_deny(r#"{"permissions":{"deny":"x"}}"#, &rules), None);
-        assert_eq!(with_deny("[]", &rules), None);
-    }
-
-    #[test]
-    fn default_deny_is_added_to_saved_settings_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = crate::db::Db::open(&dir.path().join("t.db")).unwrap();
-        let global = crate::services::global_settings::GlobalStore::open(dir.path());
-        save_settings(&db, r#"{"permissions":{"allow":["Bash"]}}"#).unwrap();
-        migrate_default_deny(&db, &global).unwrap();
-        let own: Value = serde_json::from_str(&load_settings(&db).unwrap()).unwrap();
-        assert_eq!(own["permissions"]["deny"], serde_json::json!(default_deny_rules()));
-        // 空の全体設定には足さない(実行時に既定の拒否を渡す)
-        assert_eq!(load_shared_settings(&global).unwrap(), "");
-        // 2回目は何もしない(利用者が外した拒否を戻さない)
-        save_settings(&db, r#"{"permissions":{"allow":["Bash"]}}"#).unwrap();
-        save_shared_settings(&global, r#"{"model":"m"}"#).unwrap();
-        migrate_default_deny(&db, &global).unwrap();
-        assert_eq!(load_settings(&db).unwrap(), r#"{"permissions":{"allow":["Bash"]}}"#);
-        assert_eq!(load_shared_settings(&global).unwrap(), r#"{"model":"m"}"#);
     }
 
     #[test]

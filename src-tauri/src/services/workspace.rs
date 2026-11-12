@@ -93,14 +93,11 @@ impl WorkspaceCtx {
     }
 
     /// 共有状態と全体設定を指定して開く。同じワークスペースを開き直すときに、前の状態を引き継ぐ。
-    /// リーダーのDBだけが台帳を持つ。全体設定の取り込みが済んでいれば、DBに残る全体設定の古い値を消す。
+    /// リーダーのDBだけが台帳を持つ。
     pub fn open_shared(id: &str, dir: &Path, shared: Arc<Shared>, global: Arc<GlobalStore>) -> Result<Self, AppError> {
         std::fs::create_dir_all(dir).map_err(|e| AppError::Io(e.to_string()))?;
         let role = if id == LEADER_ID { Role::Leader } else { Role::Agent };
         let db = Db::open_as(&dir.join(DB_FILE), role)?;
-        if let Err(e) = global.purge_legacy(&db) {
-            log::warn!("legacy global settings not purged for {id}: {e}");
-        }
         let ctx = Self {
             id: id.to_owned(),
             dir: dir.to_owned(),

@@ -84,8 +84,6 @@ pub const ALL: &[Setting] = &[
     agent(batch::KNOWLEDGE_DIR_KEY, None),
     // アプリの会話とコンテナ内の Claude Code のセッションの対応。端末の履歴(DB)と対なので対象外
     agent(sandbox_agent::SESSIONS_KEY, None),
-    // settings.json へ既定の拒否を足す移行を済ませた印。端末の状態なので対象外
-    agent(sandbox_agent::DENY_MIGRATED_KEY, None),
     agent(debug_log::DIR_KEY, None),
     agent(stt::REVISION_KEY, None),
     agent(voicevox::VERSIONS_KEY, None),
@@ -116,12 +114,6 @@ pub const ALL: &[Setting] = &[
     // 通信のプロキシの一覧(ID・名前・URL・ユーザー名)と既定。パスワードは含まない
     global(proxy::LIST_KEY, Some(Kind::Json)),
     global(proxy::DEFAULT_KEY, Some(Kind::Text)),
-    // プロキシが1つだった頃のキー。起動時に一覧へ移すためだけに残す
-    global(proxy::LEGACY_ENABLED_KEY, None),
-    global(proxy::LEGACY_URL_KEY, None),
-    global(proxy::LEGACY_USERNAME_KEY, None),
-    // 全体設定の settings.json へ既定の拒否を足す移行を済ませた印。端末の状態なので対象外
-    global(sandbox_agent::SHARED_DENY_MIGRATED_KEY, None),
 ];
 
 /// キーの定義。一覧に無ければ`None`。
@@ -130,6 +122,7 @@ pub fn find(key: &str) -> Option<&'static Setting> {
 }
 
 /// 保存先が`scope`のキー。
+#[cfg(test)]
 pub fn keys(scope: Scope) -> impl Iterator<Item = &'static str> {
     ALL.iter().filter(move |s| s.scope == scope).map(|s| s.key)
 }
@@ -181,7 +174,7 @@ mod tests {
     #[test]
     fn global_backup_covers_all_global_keys_except_device_local_ones() {
         let exported: Vec<_> = transferable(Scope::Global).map(|(k, _)| k).collect();
-        let expected: Vec<_> = keys(Scope::Global).filter(|k| !matches!(*k, workspace::WORK_ENABLED_KEY | proxy::LEGACY_ENABLED_KEY | proxy::LEGACY_URL_KEY | proxy::LEGACY_USERNAME_KEY | sandbox_agent::SHARED_DENY_MIGRATED_KEY)).collect();
+        let expected: Vec<_> = keys(Scope::Global).filter(|k| !matches!(*k, workspace::WORK_ENABLED_KEY)).collect();
         assert_eq!(exported, expected);
     }
 }

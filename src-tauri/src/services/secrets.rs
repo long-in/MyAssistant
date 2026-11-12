@@ -54,16 +54,12 @@ const TTS_ACCOUNT: &str = "google_tts";
 
 /// 通信のプロキシのパスワード(`proxy.rs`専用の保管庫に置く)。プロキシのIDごとに`proxy_password:<id>`で持つ。
 const PROXY_PASSWORD_PREFIX: &str = "proxy_password:";
-/// プロキシが1つだった頃のパスワード。起動時の移行(`move_legacy_proxy_password`)でだけ読む。
-const LEGACY_PROXY_PASSWORD_ACCOUNT: &str = "proxy_password";
 
 /// AWS Bedrock用。`~/.aws/config`と`~/.aws/credentials`の貼り付け内容をそのまま保持する。
 const AWS_CONFIG_ACCOUNT: &str = "aws_config";
 const AWS_CREDENTIALS_ACCOUNT: &str = "aws_credentials";
 /// 使うプロファイル名(秘密ではないが、保存先を分けないため同じストアに置く)。
 const AWS_PROFILE_ACCOUNT: &str = "aws_profile";
-/// 以前は、使うBedrockのモデルID一覧(JSON配列)を置いていた。今は使わず、AWSの登録を消すときに残りを消すだけ。
-const LEGACY_AWS_MODELS_ACCOUNT: &str = "aws_models";
 
 /// `Secrets::backup`で控えた内容。中身はこのモジュールの外へ出さない。
 pub struct SecretsBackup(HashMap<String, String>);
@@ -218,20 +214,6 @@ impl Secrets {
         self.delete_secret(&proxy_account(id))
     }
 
-    /// プロキシが1つだった頃のパスワードを、指定したIDのものへ移す(無ければ何もしない)。
-    pub(crate) fn move_legacy_proxy_password(&self, id: &str) -> Result<(), AppError> {
-        if let Some(pw) = self.get_secret(LEGACY_PROXY_PASSWORD_ACCOUNT)? {
-            self.set_secret(&proxy_account(id), &pw)?;
-            self.delete_secret(LEGACY_PROXY_PASSWORD_ACCOUNT)?;
-        }
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_legacy_proxy_password_for_test(&self, password: &str) {
-        self.set_secret(LEGACY_PROXY_PASSWORD_ACCOUNT, password).unwrap();
-    }
-
     /// そのプロバイダーを使えるか。ローカルはキーではなく、取得済みかどうか(全ワークスペース共通)。
     pub fn has_key(&self, provider: Provider) -> Result<bool, AppError> {
         match provider {
@@ -290,7 +272,6 @@ impl Secrets {
     }
 
     pub fn delete_aws(&self) -> Result<(), AppError> {
-        self.delete_secret(LEGACY_AWS_MODELS_ACCOUNT)?;
         self.delete_secret(AWS_CONFIG_ACCOUNT)?;
         self.delete_secret(AWS_CREDENTIALS_ACCOUNT)?;
         self.delete_secret(AWS_PROFILE_ACCOUNT)

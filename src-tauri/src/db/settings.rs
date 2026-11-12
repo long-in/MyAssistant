@@ -38,18 +38,6 @@ impl Db {
         Ok(())
     }
 
-    /// 指定したキーの設定を消す(無ければ何もしない)。
-    pub fn delete_settings<'a>(&self, keys: impl IntoIterator<Item = &'a str>) -> Result<usize, AppError> {
-        let mut conn = self.conn();
-        let tx = conn.transaction()?;
-        let mut n = 0;
-        for key in keys {
-            n += tx.execute("DELETE FROM app_settings WHERE key = ?1", [key])?;
-        }
-        tx.commit()?;
-        Ok(n)
-    }
-
     /// テスト用: 確認を通さずに書く(全体設定へ移す前の、古いDBを作るため)。
     #[cfg(test)]
     pub fn set_legacy_setting(&self, key: &str, value: &str) {
@@ -87,14 +75,5 @@ mod tests {
         let err = db.set_settings(&[("routing", "{}"), (crate::commands::chat::BASE_INSTRUCTIONS_KEY, "x")]);
         assert!(err.is_err());
         assert_eq!(db.get_setting("routing").unwrap(), None);
-    }
-
-    #[test]
-    fn delete_settings_removes_only_given_keys() {
-        let db = Db::open_in_memory(Role::Agent);
-        db.set_settings(&[("a", "1"), ("b", "2")]).unwrap();
-        assert_eq!(db.delete_settings(["a", "missing"]).unwrap(), 1);
-        assert_eq!(db.get_setting("a").unwrap(), None);
-        assert_eq!(db.get_setting("b").unwrap().as_deref(), Some("2"));
     }
 }

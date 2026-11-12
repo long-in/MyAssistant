@@ -183,7 +183,7 @@
 - Bedrock のモデル一覧は秘密ではない設定項目なので、キーをコピーしないときも写す(AWS の認証情報は写さない)。
 - 依頼の記録(進捗・承認待ち・結果)はメモリ上のみ。アプリを再起動すると、裏で動いていた依頼は終わり、依頼を始める前の状態で起動する(会話の本文はDBに残る)。再起動後に再開はしない。
 - エージェントの切り替えは、画面・メニューバー・トレイのほか、`Mod`+`K` の検索パレット(`AgentPalette`。パーソナルと全エージェントを名称で絞り込み、Enterでそのエージェントのチャットへ移る)からも行える。
-- コード上の識別子も「Agent」に統一している(`Agent`・`create_agent`・`list_agents` など)。旧「Space」の名称は、DB の台帳の列(`space_id`→`agent_id` など)と設定キー(`space_data`→`agent_data`)を起動時に移す。`registry.json` の項目は変えていない(フォルダは後に `work/` から `work/` へ改名した。移行処理は無い)。ファイル操作・コマンドを行う従来の「agent」は「task」系の名前(`services/tool_loop.rs`・`services/task_run.rs`・`TaskEvent` など)へ改めた。
+- コード上の識別子も「Agent」に統一している(`Agent`・`create_agent`・`list_agents` など)。旧「Space」の名称のうち、設定キー `space_data` は DB のマイグレーションで `agent_data` へ移している。`registry.json` の項目は変えていない(フォルダは後に `work/` から `work/` へ改名した。移行処理は無い)。ファイル操作・コマンドを行う従来の「agent」は「task」系の名前(`services/tool_loop.rs`・`services/task_run.rs`・`TaskEvent` など)へ改めた。
 - 聞き取り訂正のキャッシュ(`SessionContexts`)は、ワークスペースとセッションの組で持つ。訂正の追加はそのワークスペースの分だけ、エージェントの削除はその分を捨てる。
 - 一覧ファイルが壊れていたら`registry.json.corrupt`へ退避して空から始める。エージェントのフォルダは消さない。
 

@@ -237,17 +237,12 @@ pub struct ClaudeSettings {
 #[tauri::command]
 pub fn get_sandbox_claude_settings(ctx: Ctx) -> Result<ClaudeSettings, AppError> {
     supported(&ctx)?;
-    // 旧設定のモデル・許可するツールは、初めて開いたときに settings.json へ移す
-    sandbox_agent::migrate_legacy_llm(&ctx.db)?;
-    // 以前はコマンド権限から渡していた拒否を、保存済みの settings.json へ一度だけ足す
-    sandbox_agent::migrate_default_deny(&ctx.db, &*ctx.global)?;
     Ok(ClaudeSettings { own: sandbox_agent::load_settings(&ctx.db)?, shared: sandbox_agent::load_shared_settings(&*ctx.global)? })
 }
 
 /// 全体設定の settings.json(未設定は空文字)。自分の settings.json を持たないエージェントが使う。
 #[tauri::command]
 pub fn get_shared_claude_settings(ctx: Ctx) -> Result<String, AppError> {
-    sandbox_agent::migrate_shared_default_deny(&*ctx.global)?;
     sandbox_agent::load_shared_settings(&*ctx.global)
 }
 
@@ -273,7 +268,6 @@ pub struct SandboxModels {
 #[tauri::command]
 pub fn get_sandbox_models(ctx: Ctx) -> Result<SandboxModels, AppError> {
     supported(&ctx)?;
-    sandbox_agent::migrate_legacy_llm(&ctx.db)?;
     Ok(SandboxModels { models: sandbox_agent::available_models(&ctx.db, &*ctx.global), selected: sandbox_agent::selected_model(&ctx.db, &*ctx.global) })
 }
 

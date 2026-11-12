@@ -8,7 +8,6 @@
 //! - 使う設定はメモリに持ち(`reload`)、通信のたびに読む。保存すれば次の通信から反映される。
 //! - `localhost` / `127.0.0.1` / `::1`宛て(VOICEVOX・ローカルLLM)は常にプロキシを通さない。
 //! - パスワードの生値はこのモジュールと`secrets.rs`の外へ出さない。画面へは登録の有無だけを返す。
-//! - プロキシが1つだった頃の設定(`proxy_enabled` / `proxy_url` / `proxy_username`と単一のパスワード)は、起動時に1件目の「Default」へ移す(`migrate_legacy`)。
 use std::{
     collections::HashMap,
     path::Path,
@@ -32,11 +31,6 @@ pub const DEFAULT_KEY: &str = "proxy_default";
 pub const CHOICE_KEY: &str = "proxy_choice";
 /// 選択の値: プロキシを使わない。
 pub const NONE_CHOICE: &str = "none";
-
-/// プロキシが1つだった頃のキー。移行のためにだけ読む。
-pub const LEGACY_ENABLED_KEY: &str = "proxy_enabled";
-pub const LEGACY_URL_KEY: &str = "proxy_url";
-pub const LEGACY_USERNAME_KEY: &str = "proxy_username";
 
 /// 一覧の名前の長さの上限(文字数)。
 const MAX_NAME_CHARS: usize = 60;
@@ -99,12 +93,11 @@ pub struct ProxyList {
     pub default_id: String,
 }
 
-/// 起動時に呼ぶ。パスワードの保管庫を開き、古い設定を移して、保存済みの設定を使い始める。
+/// 起動時に呼ぶ。パスワードの保管庫を開き、保存済みの設定を使い始める。
 pub fn init(root: &Path, global: &GlobalStore) -> Result<(), AppError> {
     let dir = root.join("proxy");
     std::fs::create_dir_all(&dir).map_err(|e| AppError::Io(e.to_string()))?;
     let _ = SECRETS.set(Secrets::open(&dir)?);
-    migrate_legacy(global, secrets()?)?;
     reload(global)
 }
 
@@ -158,29 +151,6 @@ fn registry_from(global: &impl SettingsStore, secrets: &Secrets) -> Result<Regis
         map.insert(e.id, Active { url: e.url, auth });
     }
     Ok(Registry { default, entries: map })
-}
-
-/// プロキシが1つだった頃の設定を、一覧の1件目(Default)へ移す。一覧が保存済みなら何もしない。
-/// 有効だったものは既定にして、従来どおり全通信がプロキシ経由になるようにする。
-fn migrate_legacy(global: &GlobalStore, secrets: &Secrets) -> Result<(), AppError> {
-    if global.get_setting(LIST_KEY)?.is_some() {
-        return Ok(());
-    }
-    let url = global.get_setting(LEGACY_URL_KEY)?.unwrap_or_default();
-    if validate_url(&url).is_err() {
-        return Ok(());
-    }
-    let enabled = global.get_setting(LEGACY_ENABLED_KEY)?.as_deref() == Some("1");
-    let entry = Entry {
-        id: new_id(),
-        name: "Default".to_owned(),
-        url,
-        username: global.get_setting(LEGACY_USERNAME_KEY)?.unwrap_or_default(),
-    };
-    secrets.move_legacy_proxy_password(&entry.id)?;
-    let json = serde_json::to_string(&[&entry]).map_err(|e| AppError::Io(e.to_string()))?;
-    let default = if enabled { entry.id.as_str() } else { "" };
-    global.set_settings(&[(LIST_KEY, &json), (DEFAULT_KEY, default)])
 }
 
 fn new_id() -> String {
@@ -469,39 +439,5 @@ mod tests {
         assert_eq!(list.default_id, "");
         g.set_settings(&[(LIST_KEY, "not json")]).unwrap();
         assert!(load(&g, &s).unwrap().proxies.is_empty());
-    }
-
-    #[test]
-    fn legacy_settings_move_to_the_first_entry() {
-        // 有効だった: 既定にして、パスワードも移る
-        let d = tempfile::tempdir().unwrap();
-        let (g, s) = stores(d.path());
-        g.set_settings(&[(LEGACY_ENABLED_KEY, "1"), (LEGACY_URL_KEY, "http://old:8080"), (LEGACY_USERNAME_KEY, "alice")]).unwrap();
-        s.set_legacy_proxy_password_for_test("pw");
-        migrate_legacy(&g, &s).unwrap();
-        let list = load(&g, &s).unwrap();
-        assert_eq!((list.proxies.len(), list.proxies[0].name.as_str(), list.proxies[0].username.as_str()), (1, "Default", "alice"));
-        assert!(list.proxies[0].has_password);
-        assert_eq!(list.default_id, list.proxies[0].id);
-        assert_eq!(registry_from(&g, &s).unwrap().resolve("").unwrap().auth, Some(("alice".into(), "pw".into())));
-        // 2回目は何もしない(削除しても復活しない)
-        delete(&g, &s, &list.proxies[0].id).unwrap();
-        migrate_legacy(&g, &s).unwrap();
-        assert!(load(&g, &s).unwrap().proxies.is_empty());
-
-        // 無効だった: 1件目として残すが、既定にはしない
-        let d = tempfile::tempdir().unwrap();
-        let (g, s) = stores(d.path());
-        g.set_settings(&[(LEGACY_ENABLED_KEY, "0"), (LEGACY_URL_KEY, "http://old:8080")]).unwrap();
-        migrate_legacy(&g, &s).unwrap();
-        let list = load(&g, &s).unwrap();
-        assert_eq!((list.proxies.len(), list.default_id.as_str()), (1, ""));
-
-        // 古い設定が無い(またはURLが不正): 何も作らない
-        let d = tempfile::tempdir().unwrap();
-        let (g, s) = stores(d.path());
-        migrate_legacy(&g, &s).unwrap();
-        assert!(load(&g, &s).unwrap().proxies.is_empty());
-        assert!(g.get_setting(LIST_KEY).unwrap().is_none());
     }
 }

@@ -10,17 +10,14 @@ use crate::{
         llm_router::Route,
         prompts::{self, PromptId},
         skills::{self, Skill},
-        skills_migration,
     },
     utils::error::AppError,
     services::workspace::Ctx,
 };
 
-/// そのエージェントのナレッジのルート。旧形式のスキル・ハーネスが残っていれば、先に標準形式へ移す。
+/// そのエージェントのナレッジのルート。
 fn skills_root(ctx: &Ctx) -> Result<std::path::PathBuf, AppError> {
-    let root = batch::knowledge_root(ctx)?;
-    skills_migration::migrate(&root, &skills_migration::NameMap::new());
-    Ok(root)
+    batch::knowledge_root(ctx)
 }
 
 /// スキルの一覧と、選定で毎回送る前置きの概算トークン数。
@@ -30,11 +27,9 @@ pub struct SkillsOverview {
     pub index_tokens: usize,
 }
 
-/// 日本語名などのスキルは、画面を開いたときに英訳した名前へ移す(できなければ元のまま)。
 #[tauri::command]
 pub async fn list_skills(ctx: Ctx) -> Result<SkillsOverview, AppError> {
     let root = batch::knowledge_root(&ctx)?;
-    skills_migration::migrate_with_names(&ctx, &root).await;
     let skills = skills::list(&root);
     let index_tokens = skills::index_tokens(&prompts::load(&ctx.db, &*ctx.global, PromptId::Skills)?, &skills);
     Ok(SkillsOverview { skills, index_tokens })
