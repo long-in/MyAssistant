@@ -133,7 +133,7 @@ erDiagram
 | `proofread_route` | `Route`(JSON)。空は校正オフ。Bedrock 方式では `provider` が `sandbox` のときだけ有効 | オフ | AI Settings の「文字起こしの校正」 |
 | `skills_route` | `Route`(JSON) | 軽量モデル | AI Settings の「スキルの選定」([skills.md](skills.md)) |
 | `prompt_*` | 機能ごとのプロンプトの上書き(全文。空は上書きなし) | なし(全体設定 → 既定) | AI Settings([llm-settings.md](llm-settings.md#プロンプト)) |
-| `web_access` | `0` / `1` | 有効 | 権限タブの Web Search |
+| `web_access` | `0` / `1` | 有効 | 権限タブの Web Search(API 方式のみ。Bedrock 方式・ワークは settings.json で決める) |
 | `command_policy` | コマンド権限(JSON。[command-policy.md](command-policy.md)) | 初期値 | 権限タブの Command Policy |
 | `tuning` | 上限の調整項目(JSON) | 下表 | LLM タブの AI Limits |
 | `sandbox_llm` | 接続先(Bedrock 固定)・1回の指示の上限時間(分)・コンテナの自動停止(分)(JSON) | Bedrock・30分・0(止めない) | Sandbox タブ |

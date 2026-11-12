@@ -1465,8 +1465,8 @@ export default function Setup() {
 
           {active.id !== LEADER_ID && (
             <TabsContent value="access" className="flex flex-col gap-6">
-              <WebAccess />
-              {/* Bedrock 方式(ワークは常に)は、すべてコンテナ内の Claude Code で動き、コマンド権限は使わない */}
+              {!bedrockMode && <WebAccess />}
+              {/* Bedrock 方式(ワークは常に)は、すべてコンテナ内の Claude Code で動き、Web検索を含むツールの許可・拒否は settings.json で決める */}
               {!bedrockMode && <CommandPolicyEditor />}
             </TabsContent>
           )}

@@ -393,11 +393,6 @@ async fn send_chat_sandbox(
         .chain(corrections)
         .chain(std::iter::once(guide))
         .collect();
-    // Web検索を無効にしているエージェントでは、対応するツールも拒否する(コマンドの可否は settings.json で決める)
-    let mut deny = Vec::new();
-    if !web_access(&ctx.db)? {
-        deny.extend(["WebFetch".to_owned(), "WebSearch".to_owned()]);
-    }
     ctx.db.insert_log(session_id, "user", text, None, None)?;
     let resume = sandbox_agent::claude_session(&ctx.db, session_id);
 
@@ -413,7 +408,7 @@ async fn send_chat_sandbox(
         system: &system.join("\n\n"),
         resume: resume.as_deref(),
         model: model.as_deref(),
-        deny,
+        deny: Vec::new(), // ツールの許可・拒否(Web検索を含む)は settings.json だけで決める
         no_tools: is_leader,
         timeout: None,
     };
