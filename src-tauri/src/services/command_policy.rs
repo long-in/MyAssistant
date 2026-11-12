@@ -1,22 +1,17 @@
 //! `run_command`で実行するシェルコマンドの可否判定。
 //! 許可・ask・拒否・機密・システム領域などの規則はすべてエージェントのDB(`app_settings`のキー`command_policy`、JSON)で管理し、コマンドごとに読み直す。
 //! `rm`系・OSに影響するコマンド・機密ファイルの拒否も初期値としてDBに書き出すだけで、ユーザーが編集できる。
-//! 以前のナレッジの`.my-assistant/command-policy.json`があれば、開くときに一度だけ取り込んで削除する(`import_file`)。
 //! 既定では、読み取り系(承認不要のもの)を除き、作業ディレクトリとパス引数はナレッジ配下に限る(`Scope`)。
 use std::{
-    fs,
     path::{Component, Path, PathBuf},
 };
 
 use serde::{Deserialize, Serialize};
 
 use super::global_settings::SettingsStore;
-use crate::utils::path::resolve_existing;
 
 /// コマンド権限を保存する設定のキー(エージェントのDB)。
 pub const KEY: &str = "command_policy";
-/// 以前の保存先(ナレッジ直下からの相対)。あれば`import_file`が取り込む。
-const LEGACY_FILE: &str = ".my-assistant/command-policy.json";
 /// 再帰的に解析する入れ子(`sh -c`、`$(...)`など)の深さの上限。超えたら個別承認にする。
 const MAX_DEPTH: usize = 4;
 
@@ -355,27 +350,6 @@ pub fn load(store: &(impl SettingsStore + ?Sized)) -> Policy {
 fn write(store: &(impl SettingsStore + ?Sized), policy: &Policy) -> Result<(), String> {
     let json = serde_json::to_string(policy).map_err(|e| e.to_string())?;
     store.set_setting(KEY, &json).map_err(|e| e.to_string())
-}
-
-/// 以前のナレッジのファイル(`.my-assistant/command-policy.json`)を、DBへ一度だけ取り込んで削除する。
-/// すでにDBに保存があるときは、DBを優先してファイルには触れない。読めない・書き込めないときもファイルを残す。
-pub fn import_file(store: &(impl SettingsStore + ?Sized), knowledge_root: &Path) {
-    let Ok(file) = resolve_existing(knowledge_root, LEGACY_FILE) else { return };
-    if !file.is_file() || matches!(store.get_setting(KEY), Ok(Some(_))) {
-        return;
-    }
-    let policy = fs::read_to_string(&file)
-        .map_err(|e| e.to_string())
-        .and_then(|text| serde_json::from_str::<Policy>(&text).map_err(|e| e.to_string()))
-        .and_then(|p| p.cleaned());
-    match policy.and_then(|p| write(store, &p)) {
-        Ok(()) => {
-            if let Err(e) = fs::remove_file(&file) {
-                log::warn!("command policy file imported but not removed: {e}");
-            }
-        }
-        Err(e) => log::warn!("command policy file not imported, kept as is: {e}"),
-    }
 }
 
 /// 1リストの項目数と1項目の長さの上限。
@@ -936,6 +910,8 @@ pub fn classify_in(cmd: &str, policy: &Policy, scope: Option<&Scope>) -> Verdict
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     fn store() -> crate::db::Db {
@@ -1350,36 +1326,5 @@ mod tests {
         assert!(p.allow.is_empty());
         assert!(matches!(classify("rm x", &p), Verdict::Deny(_)));
         assert_eq!(classify("ls", &p), Verdict::Plan);
-    }
-
-    #[test]
-    fn legacy_file_is_imported_once_and_removed() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        let file = root.join(LEGACY_FILE);
-        fs::create_dir_all(file.parent().unwrap()).unwrap();
-        fs::write(&file, r#"{ "version": 4, "allow": ["make"], "deny": ["curl"], "ask": [] }"#).unwrap();
-        let db = store();
-        import_file(&db, root);
-        assert!(!file.exists());
-        let p = load(&db);
-        assert_eq!((p.allow, p.deny), (vec!["make".to_owned()], vec!["curl".to_owned()]));
-        // DBに保存があるときは、ファイルは取り込まず触れない
-        fs::write(&file, r#"{ "allow": ["other"] }"#).unwrap();
-        import_file(&db, root);
-        assert!(file.exists());
-        assert_eq!(load(&db).allow, ["make"]);
-    }
-
-    #[test]
-    fn broken_legacy_file_is_kept_and_not_imported() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join(LEGACY_FILE);
-        fs::create_dir_all(file.parent().unwrap()).unwrap();
-        fs::write(&file, "{ not json").unwrap();
-        let db = store();
-        import_file(&db, dir.path());
-        assert!(file.exists());
-        assert_eq!(db.get_setting(KEY).unwrap(), None);
     }
 }
