@@ -494,7 +494,7 @@ export const EN: Record<string, string> = {
   "{w}を編集": "Edit {w}",
   "組み込みの読み({n}語)": "Built-in readings ({n})",
   "同じ語を上で登録すると、そちらが優先されます。": "Registering the same word above takes priority.",
-  "呼びかけへの応答や会話切り替えの確認で繰り返し使う音声を、先に作成して保存します。": "Pre-creates and saves audio that is used repeatedly, such as responses to wake words and conversation-switch confirmations.",
+  "呼びかけへの応答で繰り返し使う音声を、先に作成して保存します。": "Pre-creates and saves audio that is used repeatedly for responses to wake words.",
   "作成にはGoogle Cloudのキーが必要です。": "A Google Cloud key is required to create them.",
   "作成にはVOICEVOXの取得が必要です。": "VOICEVOX must be downloaded to create them.",
   "VOICEVOXが未取得のため、音声は作成できません。": "Audio cannot be created because VOICEVOX has not been downloaded.",

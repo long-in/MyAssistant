@@ -620,7 +620,7 @@ function VoicePhrases({ ready, engine, style }: { ready: boolean; engine: TtsEng
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium">{t("定型音声")}</div>
           <div className="text-xs text-muted-foreground">
-            {t("呼びかけへの応答や会話切り替えの確認で繰り返し使う音声を、先に作成して保存します。")}
+            {t("呼びかけへの応答で繰り返し使う音声を、先に作成して保存します。")}
             {ready ? "" : engine === "voicevox" ? t("作成にはVOICEVOXの取得が必要です。") : t("作成にはGoogle Cloudのキーが必要です。")}
           </div>
         </div>

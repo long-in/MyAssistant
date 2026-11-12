@@ -672,7 +672,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   };
 
   /**
-   * 会話を切り替えてよいかを確認する。保存済みの確認音声を再生し(未作成・ミュート中は画面のみ)、
+   * 会話を切り替えてよいかを画面で確認し、
    * 「はい」「いいえ」の音声またはボタンの答えを待つ。聞き取れなければ聞き直し、答えがなければ「いいえ」。
    */
   const confirmSwitch = async (alive: () => boolean): Promise<boolean> => {
@@ -684,14 +684,6 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
     const open = () => switchResolve.current !== null && alive();
     void (async () => {
       try {
-        if (speakReply) {
-          const audio = await voicePhraseAudio("switch_confirm").catch(() => null);
-          if (audio) {
-            await playBase64Mp3(audio);
-            await waitForSpeechEnd();
-            await sleep(STANDBY_RESUME_MS); // 残響を拾わない
-          }
-        }
         const deadline = Date.now() + ANSWER_WAIT_MS;
         while (open() && Date.now() < deadline) {
           setSwitchListening("listening");

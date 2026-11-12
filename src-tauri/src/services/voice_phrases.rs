@@ -14,11 +14,9 @@ pub struct Phrase {
     pub text: &'static str,
 }
 
-pub const PHRASES: [Phrase; 2] = [
+pub const PHRASES: [Phrase; 1] = [
     // 起動ワードだけが言われたときの応答
     Phrase { id: "wake_ack", text: "用件は、なんでしょうか" },
-    // 会話を切り替えてよいかの確認
-    Phrase { id: "switch_confirm", text: "新しい会話を始めてもよいですか" },
 ];
 
 /// 画面に出す作成状況。
@@ -85,7 +83,8 @@ mod tests {
     fn file_name_is_stable_and_per_phrase() {
         let a = path_of(Path::new("/data"), &PHRASES[0], G);
         assert_eq!(a, path_of(Path::new("/data"), &PHRASES[0], G));
-        assert_ne!(a, path_of(Path::new("/data"), &PHRASES[1], G));
+        let other = Phrase { id: "other", text: "別の文言" };
+        assert_ne!(a, path_of(Path::new("/data"), &other, G));
         assert!(a.starts_with("/data/voice") && a.extension().is_some_and(|e| e == "mp3"));
     }
 
@@ -104,16 +103,17 @@ mod tests {
         assert!(status(dir.path(), G).iter().all(|s| !s.ready));
         assert_eq!(missing(dir.path(), G).len(), PHRASES.len());
         assert!(audio(dir.path(), G, "wake_ack").is_none());
+        // 空の音声は保存しない
+        assert!(matches!(save(dir.path(), G, &PHRASES[0], Vec::new()), Err(AppError::BadResponse)));
+        assert!(!status(dir.path(), G)[0].ready);
         save(dir.path(), G, &PHRASES[0], b"ABC".to_vec()).unwrap();
-        let s = status(dir.path(), G);
-        assert!(s[0].ready && !s[1].ready);
+        assert!(status(dir.path(), G)[0].ready);
         assert_eq!(missing(dir.path(), G).len(), PHRASES.len() - 1);
         assert_eq!(audio(dir.path(), G, "wake_ack").as_deref(), Some("QUJD"));
         assert!(audio(dir.path(), G, "unknown").is_none());
+        // 削除した定型音声のidは扱わない
+        assert!(audio(dir.path(), G, "switch_confirm").is_none());
         // 別の声では未作成として扱う
         assert!(audio(dir.path(), Voice::Voicevox(3), "wake_ack").is_none());
-        // 空の音声は保存しない
-        assert!(matches!(save(dir.path(), G, &PHRASES[1], Vec::new()), Err(AppError::BadResponse)));
-        assert!(!status(dir.path(), G)[1].ready);
     }
 }
