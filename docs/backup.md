@@ -7,7 +7,7 @@
 | パス | 内容 |
 | --- | --- |
 | `manifest.json` | アプリ名・形式の版(`FORMAT_VERSION`)・作成日時・DB の最新の版・ワークスペース一覧・ファイルごとの SHA-256 |
-| `shared/registry.json`, `shared/global_settings.json` | エージェント一覧、全体設定(プロキシの一覧と既定を含む) |
+| `shared/registry.json`, `shared/global_settings.db` | エージェント一覧、全体設定(プロキシの一覧と既定を含む)。全体設定は `VACUUM INTO` のスナップショット。以前のバックアップの `shared/global_settings.json` も復元でき、起動時に取り込まれる |
 | `shared/proxy-secrets.json` | 通信のプロキシのパスワード(平文のまま。`proxy/secrets.json`)。リストアでは、含まれているときだけ差し替える(古いバックアップなら、いまのパスワードを残す) |
 | `shared/kept-knowledge/` | エージェント削除時に残したナレッジ |
 | `ws/<id>/timeline.db` | DB のスナップショット(`VACUUM INTO`) |

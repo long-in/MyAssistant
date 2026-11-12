@@ -89,7 +89,7 @@ impl WorkspaceCtx {
     /// `dir`を開く(無ければ作る)。
     /// 全体設定は`dir`を保存先の基準にする(パーソナルと、単体で開くテスト用)。
     pub fn open(id: &str, dir: &Path) -> Result<Self, AppError> {
-        Self::open_shared(id, dir, Arc::new(Shared::default()), Arc::new(GlobalStore::open(dir)))
+        Self::open_shared(id, dir, Arc::new(Shared::default()), Arc::new(GlobalStore::open(dir)?))
     }
 
     /// 共有状態と全体設定を指定して開く。同じワークスペースを開き直すときに、前の状態を引き継ぐ。
@@ -1171,7 +1171,9 @@ mod tests {
         ws.get(PERSONAL_ID).unwrap().db.set_setting(batch::KNOWLEDGE_DIR_KEY, &d.path().to_string_lossy()).unwrap();
         assert!(matches!(ws.create("A", PALETTE[0]), Err(AppError::PathInUse)));
         assert!(ws.list().is_empty(), "一覧もフォルダも作らない");
-        assert!(!d.path().join(DIR_NAME).exists());
+        // 全体設定のDBのほかには、何も作らない
+        let names: Vec<_> = std::fs::read_dir(d.path().join(DIR_NAME)).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, [crate::services::global_settings::DB_FILE]);
     }
 
     #[test]

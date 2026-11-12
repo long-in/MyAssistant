@@ -768,7 +768,7 @@ mod tests {
     fn settings_follow_shared_until_the_agent_has_its_own() {
         let dir = tempfile::tempdir().unwrap();
         let db = crate::db::Db::open(&dir.path().join("t.db")).unwrap();
-        let global = crate::services::global_settings::GlobalStore::open(dir.path());
+        let global = crate::services::global_settings::GlobalStore::open(dir.path()).unwrap();
         assert_eq!(effective_settings(&db, &global).unwrap(), "");
         // 全体設定を変えると、自分の settings.json を持たないエージェントへ反映される
         save_shared_settings(&global, r#"{"model":"shared-1"}"#).unwrap();

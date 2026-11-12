@@ -18,6 +18,7 @@
 | `proxy/secrets.json` | 通信のプロキシのパスワード(権限 0600。ワークスペースを問わず1つで、プロキシのIDごと。[proxy.md](proxy.md)) |
 | `tts_dictionary.json` | 読み上げ辞書(ユーザー登録分) |
 | `work/registry.json` | ワークのエージェント一覧(id・名称・イメージカラー・作成日時) |
+| `work/global_settings.db` | 全体設定(専用の SQLite。全エージェント共通。[global-settings.md](global-settings.md)) |
 | `work/<UUID>/` | エージェントのデータ。`timeline.db`・`secrets.json`・`knowledge/`・`tts_dictionary.json` をパーソナルと同じ名前で持つ |
 | `work/<UUID>/sandbox.env` | サンドボックスの環境変数(dotenv 形式。**平文**、権限 0600)。パーソナルはアプリデータ直下の `sandbox.env`([sandbox.md](sandbox.md)) |
 | `sandbox/` | 全エージェント共通の `Dockerfile` と `.dockerignore`(Docker のビルドの文脈)。アプリデータ直下 |
@@ -139,7 +140,7 @@ erDiagram
 | `debug_log_dir` | デバッグログの出力先(空なら既定) | 既定 | Debug Mode |
 | `leader_prompt` / `leader_max_active` | リーダーの指示(JSON)と同時に動かす依頼の上限(リーダーのみ) | 既定 | リーダーの設定 |
 
-**全体設定に移した項目**(ベースプロンプト `base_instructions`、OS通知、表示言語、音声入力の待ち時間 `voice_timing`、起動ワード `wake_enabled` / `wake_words`、パーソナルデータ `user_profile`、通信のプロキシの一覧と既定 `proxy_list` / `proxy_default`、チャット以外のプロンプト `global_prompt_*`、Claude Code の settings.json `sandbox_claude_settings_shared`)は、`app_settings` ではなく `work/global_settings.json` に保存する。エージェントのDBに残った同名の古い値は、全体設定の取り込みが済んだあとにDBを開いたとき消す([global-settings.md](global-settings.md))。
+**全体設定に移した項目**(ベースプロンプト `base_instructions`、OS通知、表示言語、音声入力の待ち時間 `voice_timing`、起動ワード `wake_enabled` / `wake_words`、パーソナルデータ `user_profile`、通信のプロキシの一覧と既定 `proxy_list` / `proxy_default`、チャット以外のプロンプト `global_prompt_*`、Claude Code の settings.json `sandbox_claude_settings_shared`)は、`app_settings` ではなく専用の DB `work/global_settings.db` に保存する([global-settings.md](global-settings.md))。
 
 **キーの一覧(`services/settings_registry.rs`)**: すべての設定キーについて、保存先(エージェントのDB / 全体設定)と、書き出し・コピーの対象かどうか(と検証方法)をここで決める。書き出しの項目、全体設定のバックアップの項目、初回の取り込み・古い値の削除の対象は、この一覧から作る。保存先の取り違えを防ぐため、DBは全体設定のキーを、全体設定はエージェントのキーを書き込みで拒否する。新しい設定を足すときは、この一覧にも登録する。
 
