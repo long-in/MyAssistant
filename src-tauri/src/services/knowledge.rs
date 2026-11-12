@@ -728,12 +728,24 @@ pub const CAPTURE_CATEGORY: &str = "captures";
 /// ノートではないので、一覧・索引・整理・初期化・書き出し・バックアップの対象にせず、画面やLLMのツールからも書き換えさせない。
 pub const DATA_DIR: &str = "data";
 
+/// 資料(レポート)の置き場(`data/`直下)。`data/`の中で唯一、LLMの`create_file`で作成・上書きでき、バックアップにも含める。
+/// ノートではないので、一覧・索引・整理の対象外で、画面では閲覧だけなのは`data/`と同じ。
+pub const REPORTS_DIR: &str = "reports";
+
 /// カテゴリ未設定のノートの置き場(ナレッジ直下)。
 pub const INBOX_DIR: &str = "inbox";
 
 /// `data/`配下(`data`自身を含む)か。
 pub fn is_data(path: &str) -> bool {
     path.trim_start_matches("./").split(['/', '\\']).next().is_some_and(|p| p.eq_ignore_ascii_case(DATA_DIR))
+}
+
+/// `data/reports/`の中のファイル(`data/reports`自身は含まない)か。
+pub fn is_report(path: &str) -> bool {
+    let mut parts = path.trim_start_matches("./").split(['/', '\\']);
+    parts.next().is_some_and(|p| p.eq_ignore_ascii_case(DATA_DIR))
+        && parts.next().is_some_and(|p| p.eq_ignore_ascii_case(REPORTS_DIR))
+        && parts.next().is_some_and(|p| !p.is_empty())
 }
 
 /// ナレッジ直下の要素が`data/`か(走査で飛ばす判定)。
@@ -1607,5 +1619,15 @@ mod tests {
         assert!(root.join("data/README.md").is_file() && root.join("data/app/main.rs").is_file());
         assert!(root.join("data/app/empty").is_dir());
         assert!(!root.join("dev/note.md").exists());
+    }
+
+    #[test]
+    fn report_is_a_file_under_data_reports() {
+        for ok in ["data/reports/a.md", "Data/Reports/2026/a.md", "./data/reports/a.md"] {
+            assert!(is_report(ok) && is_data(ok), "{ok}");
+        }
+        for bad in ["data/reports", "data/reports/", "data/a.md", "reports/a.md", "dev/data/reports/a.md", "data/reports-x/a.md"] {
+            assert!(!is_report(bad), "{bad}");
+        }
     }
 }

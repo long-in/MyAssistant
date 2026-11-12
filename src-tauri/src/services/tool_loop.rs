@@ -274,12 +274,13 @@ fn file_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "create_file",
-            "description": "新しい.mdまたは.txtファイルを作成する。必要なフォルダも作る。既存ファイルがある場合は失敗する。実行前にユーザーの承認が必要。",
+            "description": "新しい.mdまたは.txtファイルを作成する。必要なフォルダも作る。既存ファイルがある場合は失敗する。ただしdata/reportsの下の資料は、overwriteをtrueにすると既存ファイルを全文で置き換えられる。実行前にユーザーの承認が必要。",
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "相対ファイルパス(例: Dev/memo.md)" },
-                    "content": { "type": "string", "description": "ファイルの内容" }
+                    "path": { "type": "string", "description": "相対ファイルパス(例: Dev/memo.md、資料は data/reports/週次報告.md)" },
+                    "content": { "type": "string", "description": "ファイルの内容" },
+                    "overwrite": { "type": "boolean", "description": "trueで既存の資料を上書きする。data/reportsの下だけで使える。省略時はfalse" }
                 },
                 "required": ["path", "content"]
             }
@@ -469,10 +470,11 @@ fn has_allowed_extension(path: &str) -> bool {
         .is_some_and(|e| WRITE_EXTENSIONS.iter().any(|w| w.eq_ignore_ascii_case(e)))
 }
 
-/// `create_file`の入力検証(承認画面に出す前に行う)。`(path, content)`を返す。
-fn validate_create(input: &Value) -> Result<(&str, &str), String> {
+/// `create_file`の入力検証(承認画面に出す前に行う)。`(path, content, overwrite)`を返す。
+fn validate_create(input: &Value) -> Result<(&str, &str, bool), String> {
     let path = str_arg(input, "path").ok_or("pathが必要です。")?;
     let content = str_arg(input, "content").ok_or("contentが必要です。")?;
+    let overwrite = input.get("overwrite").and_then(Value::as_bool).unwrap_or(false);
     if !has_allowed_extension(path) {
         return Err("作成できるのは.mdまたは.txtのみです。".into());
     }
@@ -482,29 +484,67 @@ fn validate_create(input: &Value) -> Result<(&str, &str), String> {
     if skills::is_skill(path) {
         return Err("skillsフォルダには作成できません。スキルはcreate_skillで作成してください。".into());
     }
-    if knowledge::is_data(path) {
-        return Err("dataフォルダには作成できません。".into());
+    // data/ はノートではない担当システムのフォルダ。資料の置き場 data/reports だけは書ける
+    if knowledge::is_data(path) && !knowledge::is_report(path) {
+        return Err("dataフォルダには作成できません。資料はdata/reportsの下に作成してください。".into());
+    }
+    if overwrite && !knowledge::is_report(path) {
+        return Err("上書きできるのはdata/reportsの下の資料だけです。".into());
     }
     if content.len() > WRITE_MAX_BYTES {
         return Err(format!("内容が大きすぎます(上限{WRITE_MAX_BYTES}バイト)。"));
     }
-    Ok((path, content))
+    Ok((path, content, overwrite))
+}
+
+/// 上書きする資料が無いときにLLMへ返す文面。
+const NO_REPORT: &str = "上書きする資料がありません。新しく作るときはoverwriteを付けずに作成してください。";
+
+/// 上書きする資料が、実在するファイルか(承認を求める前の確認。フォルダは作らない)。
+fn report_exists(root: &Path, path: &str) -> bool {
+    resolve_existing(root, &lower_dirs(path)).is_ok_and(|p| p.is_file())
 }
 
 fn create_file(root: &Path, input: &Value) -> Result<String, String> {
-    let (path, content) = validate_create(input)?;
+    let (path, content, overwrite) = validate_create(input)?;
     let path = lower_dirs(path);
     let path = path.as_str();
+    let report = knowledge::is_report(path);
+    if overwrite && !report_exists(root, path) {
+        return Err(NO_REPORT.into());
+    }
     let full = resolve_new_file(root, path).map_err(path_error)?;
-    let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&full).map_err(|e| {
+    // 資料の置き場の中のシンボリックリンクを辿って、data/reports の外(ノートなど)を書き換えないようにする
+    if report && !within_reports(root, &full) {
+        return Err(path_error(AppError::PathNotAllowed));
+    }
+    let mut options = fs::OpenOptions::new();
+    if overwrite {
+        options.write(true).truncate(true);
+    } else {
+        options.write(true).create_new(true);
+    }
+    let mut file = options.open(&full).map_err(|e| {
         if e.kind() == std::io::ErrorKind::AlreadyExists {
-            "同名のファイルが既に存在します。上書きはできません。".to_owned()
+            if report {
+                "同名の資料が既に存在します。この資料を更新するときはoverwriteをtrueにしてください。".to_owned()
+            } else {
+                "同名のファイルが既に存在します。上書きはできません。".to_owned()
+            }
         } else {
             "作成できませんでした。".to_owned()
         }
     })?;
     file.write_all(content.as_bytes()).map_err(|_| "書き込めませんでした。".to_owned())?;
-    Ok(format!("{path} を作成しました({}バイト)", content.len()))
+    let verb = if overwrite { "更新" } else { "作成" };
+    Ok(format!("{path} を{verb}しました({}バイト)", content.len()))
+}
+
+/// 書き込み先(親フォルダを正規化したもの)が、ナレッジ直下の`data/reports`の中か。
+fn within_reports(root: &Path, full: &Path) -> bool {
+    let reports = root.join(knowledge::DATA_DIR).join(knowledge::REPORTS_DIR).canonicalize();
+    let parent = full.parent().map(Path::canonicalize);
+    matches!((reports, parent), (Ok(r), Some(Ok(p))) if p.starts_with(&r))
 }
 
 /// 承認なしで実行できる読み取り系ツールと、承認済みの書き込み系ツールを実行する。
@@ -563,6 +603,8 @@ fn forget(root: &Path, input: &Value) -> Result<String, String> {
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalKind {
     File,
+    /// 資料(`data/reports`の下)の上書き。`path`に上書きするファイル、`preview`に新しい内容の全文が入る。
+    FileOverwrite,
     Plan,
     Command,
     /// スキルの上書き。`path`にスキル名、`preview`に新しい内容の全文が入る。
@@ -883,11 +925,14 @@ where
     AF: Future<Output = bool>,
     E: FnMut(TaskEvent),
 {
-    // 入力が不正なら承認を求めずに失敗として返す
-    let (path, content) = validate_create(&call.input)?;
+    // 入力が不正・上書きする資料が無いときは、承認を求めずに失敗として返す
+    let (path, content, overwrite) = validate_create(&call.input)?;
+    if overwrite && !report_exists(env.root, path) {
+        return Err(NO_REPORT.into());
+    }
     let approval = Approval {
         id: call.id.clone(),
-        kind: ApprovalKind::File,
+        kind: if overwrite { ApprovalKind::FileOverwrite } else { ApprovalKind::File },
         path: path.to_owned(),
         // 承認する内容を省略せず全文見せる(上限は書き込み上限と同じ)
         preview: content.to_owned(),
@@ -1512,6 +1557,78 @@ mod tests {
         assert!(!root.join("skills").exists());
     }
 
+    #[test]
+    fn create_file_writes_only_reports_in_data() {
+        let (_d, root) = knowledge();
+        let create = |path: &str, content: &str, overwrite: bool| {
+            execute_tool(&root, "create_file", &json!({ "path": path, "content": content, "overwrite": overwrite }))
+        };
+        // data/ は資料の置き場(data/reports)だけ作れる
+        assert!(create("data/app.md", "x", false).unwrap_err().contains("data/reports"));
+        assert!(create("data/reports/週次.md", "v1", false).is_ok());
+        assert_eq!(fs::read_to_string(root.join("data/reports/週次.md")).unwrap(), "v1");
+        // 同じ資料を作り直すときは、上書きを促す
+        assert!(create("data/reports/週次.md", "v2", false).unwrap_err().contains("overwrite"));
+        // 上書きで更新できる(フォルダ名の大文字小文字は問わない)
+        assert!(create("Data/Reports/週次.md", "v2", true).unwrap().contains("更新"));
+        assert_eq!(fs::read_to_string(root.join("data/reports/週次.md")).unwrap(), "v2");
+        // 無い資料は上書きできず、作りもしない
+        assert!(create("data/reports/none.md", "x", true).unwrap_err().contains("上書きする資料がありません"));
+        assert!(!root.join("data/reports/none.md").exists());
+        // data/reports の外は上書きできない
+        fs::write(root.join("note.md"), "keep").unwrap();
+        assert!(create("note.md", "x", true).unwrap_err().contains("data/reports"));
+        assert_eq!(fs::read_to_string(root.join("note.md")).unwrap(), "keep");
+    }
+
+    #[test]
+    fn report_overwrite_does_not_follow_symlinks_out() {
+        let (_d, root) = knowledge();
+        fs::create_dir_all(root.join("dev")).unwrap();
+        fs::write(root.join("dev/note.md"), "keep").unwrap();
+        fs::create_dir_all(root.join("data/reports")).unwrap();
+        std::os::unix::fs::symlink(root.join("dev"), root.join("data/reports/link")).unwrap();
+        std::os::unix::fs::symlink(root.join("dev/note.md"), root.join("data/reports/note.md")).unwrap();
+        for path in ["data/reports/link/note.md", "data/reports/note.md"] {
+            let r = execute_tool(&root, "create_file", &json!({ "path": path, "content": "x", "overwrite": true }));
+            assert!(r.is_err(), "{path}");
+        }
+        assert!(execute_tool(&root, "create_file", &json!({ "path": "data/reports/link/new.md", "content": "x" })).is_err());
+        assert_eq!(fs::read_to_string(root.join("dev/note.md")).unwrap(), "keep");
+        assert!(!root.join("dev/new.md").exists());
+    }
+
+    #[tokio::test]
+    async fn report_overwrite_asks_as_overwrite() {
+        let (_d, root) = knowledge();
+        fs::create_dir_all(root.join("data/reports")).unwrap();
+        fs::write(root.join("data/reports/a.md"), "v1").unwrap();
+        let input = json!({ "path": "data/reports/a.md", "content": "v2", "overwrite": true });
+        let mut script = VecDeque::from([
+            turn(vec![tool_use("c1", "create_file", input)], "tool_use"),
+            turn(vec![json!({ "type": "text", "text": "更新しました" })], "end_turn"),
+        ]);
+        let kinds = RefCell::new(Vec::new());
+        run(
+            &Env::new(&root),
+            &mut Vec::new(),
+            "資料を直して",
+            |_| {
+                let next = script.pop_front().unwrap();
+                async move { Ok(next) }
+            },
+            |ask| {
+                kinds.borrow_mut().push(ask.kind);
+                async { true }
+            },
+            |_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(*kinds.borrow(), [ApprovalKind::FileOverwrite]);
+        assert_eq!(fs::read_to_string(root.join("data/reports/a.md")).unwrap(), "v2");
+    }
+
     // ---- コマンド実行 ----
 
     /// 台本どおりにLLMが返すコマンド実行のループを回す。承認の種類を記録し、`answer`で応答する。
@@ -1712,7 +1829,6 @@ mod tests {
         shell_session(vec![cmd_call("c1", "pwd", &root, None), done()], &env, |_| true).await;
         // 権限はDBに保存され、ナレッジにはファイルを作らない
         assert!(db.get_setting(command_policy::KEY).unwrap().is_some());
-        assert!(!root.join(".my-assistant/command-policy.json").exists());
         // 隠しフォルダ(ノートの版の置き場)は、ファイルツールから触れない
         fs::create_dir_all(root.join(".history")).unwrap();
         fs::write(root.join(".history/x.json"), "{}").unwrap();

@@ -87,7 +87,7 @@ sequenceDiagram
 
 | 節 | 内容と生成タイミング |
 | --- | --- |
-| ベース指示 | 音声対話向けの既定文。全体設定の Base Prompt(`base_instructions`)と、エージェントごとの AI Settings の「チャット」(`prompt_chat`)で上書きでき、空にすると既定へ戻る([llm-settings.md](llm-settings.md#プロンプト))。一問一答で終わらせず会話を重ねること、結論から一〜三文で答えること、読み上げに不要な記号(Markdown・URL・絵文字)を使わないことなどを指示する |
+| ベース指示 | 音声対話向けの既定文。全体設定の Base Prompt(`base_instructions`)と、エージェントごとの AI Settings の「チャット」(`prompt_chat`)で上書きでき、空にすると既定へ戻る([llm-settings.md](llm-settings.md#プロンプト))。一問一答で終わらせず会話を重ねること、結論から一〜三文で答えること、読み上げに不要な記号(Markdown・URL・絵文字)を使わないこと、資料はナレッジの `data/reports/` に作り、同じ会話での修正は追加せず更新することなどを指示する |
 | `<user_profile>` | 設定の内容から**毎回**生成する(変更を次の発話から反映するためキャッシュしない)。[user-profile.md](user-profile.md) |
 | `<stt_corrections>` | `preferences/stt_corrections.md` の直近 30 件(「誤」→「正」)。会話の最初の発話で 1 回だけ読んで使い回す。訂正を保存すると次の発話から反映される |
 | `<pinned_memory>` | 記憶。発話のたびに `memory/` から読む(会話中のツール・画面での編集を次の発話から反映する)。[memory.md](memory.md) |
