@@ -566,8 +566,8 @@ export type VoicePhrase = { id: string; text: string; ready: boolean };
 export const voicePhrasesStatus = () => invoke<VoicePhrase[]>("voice_phrases_status");
 /** 未作成の定型音声を現在の読み上げエンジンで合成して保存する(作成済みは送らない)。 */
 export const generateVoicePhrases = () => invoke<VoicePhrase[]>("generate_voice_phrases");
-/** 作成済みの定型音声(base64のMP3またはWAV)。未作成ならnullで、TTSへは送らない。`wake_ack`=起動後の応答、`switch_confirm`=会話切り替えの確認。 */
-export const voicePhraseAudio = (id: "wake_ack" | "switch_confirm") =>
+/** 作成済みの定型音声(base64のMP3またはWAV)。未作成ならnullで、TTSへは送らない。`wake_ack`=起動後の応答。 */
+export const voicePhraseAudio = (id: "wake_ack") =>
   invoke<string | null>("voice_phrase_audio", { id });
 
 /** 文字起こしの校正に使うモデル。未登録(校正オフ)ならnull。 */
