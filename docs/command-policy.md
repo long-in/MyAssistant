@@ -94,9 +94,9 @@ flowchart TD
 - Bedrock 方式では端末内のモデルも選べないため、コマンドはホストで動かない。画面でも、Bedrock 方式(ワークは常に)では Command Policy を出さない。
 - コマンドを区切り単位ごとに見るので、`ls /etc && mkdir a` は後者だけが検査される。
 
-## ポリシーファイル
+## ポリシーの保存先
 
-`<ナレッジ>/.my-assistant/command-policy.json`。`run_command` のたびに読み直し、初回に既定値を書き出す。
+エージェントごとのDB(`timeline.db` の `app_settings`)のキー `command_policy`(JSON)。`run_command` のたびに読み直し、未保存なら既定値を書き出す。以前のナレッジの `.my-assistant/command-policy.json` があれば、エージェントを開くときに一度だけ取り込んで削除する(DB に保存があるときは DB を優先し、ファイルには触れない)。
 
 ```json
 {

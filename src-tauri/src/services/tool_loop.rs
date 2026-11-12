@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use super::{
     cancel::CancelToken,
     command_policy::{self, Verdict},
+    global_settings::SettingsStore,
     docs,
     knowledge,
     llm_client::{ToolCall, ToolTurn},
@@ -671,12 +672,14 @@ pub struct Env<'a> {
     sandbox: Option<&'a WorkspaceCtx>,
     /// 許可リストにないコマンドの承認が「今回だけ」だったかの確認。無ければ、承認は常に許可リストへ加える。
     once: Option<OnceCheck<'a>>,
+    /// コマンド権限を読み書きする設定(エージェントのDB)。`run_command`に必要。
+    settings: Option<&'a (dyn SettingsStore + Sync)>,
 }
 
 impl<'a> Env<'a> {
     /// ファイル操作だけの環境。コマンド実行は`with_shell`で有効にする。
     pub fn new(root: &'a Path) -> Self {
-        Self { root, cancel: CancelToken::default(), shell: false, host: None, skills: SkillAccess::default(), sandbox: None, once: None }
+        Self { root, cancel: CancelToken::default(), shell: false, host: None, skills: SkillAccess::default(), sandbox: None, once: None, settings: None }
     }
 
     pub fn with_cancel(mut self, cancel: CancelToken) -> Self {
@@ -701,6 +704,11 @@ impl<'a> Env<'a> {
 
     pub fn with_sandbox(mut self, ctx: Option<&'a WorkspaceCtx>) -> Self {
         self.sandbox = ctx;
+        self
+    }
+
+    pub fn with_settings(mut self, settings: &'a (dyn SettingsStore + Sync)) -> Self {
+        self.settings = Some(settings);
         self
     }
 
@@ -1047,8 +1055,9 @@ where
     let timeout = Duration::from_secs(secs.clamp(1, COMMAND_TIMEOUT_MAX_SECS));
     let step = input.get("step").and_then(Value::as_u64);
 
-    // 許可・拒否のリストはナレッジから毎回読み直す
-    let policy = command_policy::load(env.root);
+    // 許可・拒否のリストはエージェントの設定(DB)から毎回読み直す
+    let store = env.settings.ok_or("コマンド権限を読み込めません。")?;
+    let policy = command_policy::load(store);
     let app_data = sandbox::app_dir().ok();
     let scope = command_policy::Scope::new(env.root, &cwd).with_private(app_data.as_deref());
     let mut allowed = Vec::new();
@@ -1095,7 +1104,7 @@ where
     }
 
     if !allowed.is_empty() {
-        command_policy::add_allow(env.root, &allowed).map_err(|e| format!("許可リストを更新できません: {e}"))?;
+        command_policy::add_allow(store, &allowed).map_err(|e| format!("許可リストを更新できません: {e}"))?;
     }
 
     let mut on_chunk = |stream: Stream, text: &str| {
@@ -1561,7 +1570,8 @@ mod tests {
         let (_d, root) = knowledge();
         let work = root.join("work");
         fs::create_dir_all(&work).unwrap();
-        let env = Env::new(&root).with_shell(true);
+        let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
+        let env = Env::new(&root).with_shell(true).with_settings(&db);
         let script = vec![
             plan_call("p1"),
             cmd_call("c1", "touch made.txt", &work, Some(1)),
@@ -1580,7 +1590,8 @@ mod tests {
     #[tokio::test]
     async fn state_changing_command_needs_an_approved_plan() {
         let (_d, root) = knowledge();
-        let env = Env::new(&root).with_shell(true);
+        let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
+        let env = Env::new(&root).with_shell(true).with_settings(&db);
         // 計画なし
         let (history, kinds, _) =
             shell_session(vec![cmd_call("c1", "touch a.txt", &root, Some(1)), done()], &env, |_| true).await;
@@ -1597,7 +1608,8 @@ mod tests {
     #[tokio::test]
     async fn out_of_plan_and_destructive_commands_are_asked_individually() {
         let (_d, root) = knowledge();
-        let env = Env::new(&root).with_shell(true);
+        let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
+        let env = Env::new(&root).with_shell(true).with_settings(&db);
         let script = vec![
             plan_call("p1"),
             cmd_call("c1", "touch a.txt", &root, None),       // stepなし = 計画外
@@ -1623,7 +1635,8 @@ mod tests {
     #[tokio::test]
     async fn unlisted_commands_outside_the_knowledge_are_added_to_the_allow_list_when_approved() {
         let (d, root) = knowledge();
-        let env = Env::new(&root).with_shell(true);
+        let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
+        let env = Env::new(&root).with_shell(true).with_settings(&db);
         let script = vec![
             cmd_call("c1", "touch made.txt", d.path(), None), // 作業ディレクトリが外
             cmd_call("c2", "cat secret.txt", d.path(), None), // 読み取りは外でも確認なしで実行できる
@@ -1634,13 +1647,14 @@ mod tests {
         assert_eq!(kinds, [ApprovalKind::AllowCommand]);
         assert!(d.path().join("made.txt").exists() && d.path().join("made2.txt").exists());
         assert!(result_of(&history, 4).0.contains("secret"));
-        assert!(command_policy::load(&root).allow.contains(&"touch".to_owned()));
+        assert!(command_policy::load(&db).allow.contains(&"touch".to_owned()));
     }
 
     #[tokio::test]
     async fn refused_allow_request_runs_nothing_and_changes_nothing() {
         let (d, root) = knowledge();
-        let env = Env::new(&root).with_shell(true);
+        let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
+        let env = Env::new(&root).with_shell(true).with_settings(&db);
         let script = vec![
             cmd_call("c1", "touch made.txt", d.path(), None),
             cmd_call("c2", &format!("echo hi > {}/made2.txt", d.path().display()), &root, None), // リダイレクトは確認の対象外
@@ -1651,7 +1665,7 @@ mod tests {
         assert!(!d.path().join("made.txt").exists() && !d.path().join("made2.txt").exists());
         assert!(result_of(&history, 2).0.contains("許可"));
         assert!(result_of(&history, 4).0.contains("ナレッジ"));
-        assert!(!command_policy::load(&root).allow.contains(&"touch".to_owned()));
+        assert!(!command_policy::load(&db).allow.contains(&"touch".to_owned()));
     }
 
     #[tokio::test]
@@ -1659,7 +1673,8 @@ mod tests {
         let (d, root) = knowledge();
         let victim = d.path().join("keep.txt");
         fs::write(&victim, "x").unwrap();
-        let env = Env::new(&root).with_shell(true);
+        let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
+        let env = Env::new(&root).with_shell(true).with_settings(&db);
         let script = vec![
             plan_call("p1"),
             cmd_call("c1", "rm keep.txt", d.path(), Some(1)),
@@ -1675,14 +1690,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn policy_file_in_knowledge_is_read_on_every_command() {
+    async fn policy_in_the_agent_db_is_read_on_every_command() {
         let (d, root) = knowledge();
-        let env = Env::new(&root).with_shell(true);
+        let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
+        let env = Env::new(&root).with_shell(true).with_settings(&db);
         // 初回の実行でポリシーが書き出される。以後の編集は次のコマンドから効く
         let (_, _, _) = shell_session(vec![cmd_call("c1", "echo 1", d.path(), None), done()], &env, |_| true).await;
-        let file = root.join(".my-assistant/command-policy.json");
-        assert!(file.is_file());
-        fs::write(&file, r#"{ "allow": ["touch"], "deny": ["echo"] }"#).unwrap();
+        assert!(db.get_setting(command_policy::KEY).unwrap().is_some());
+        db.set_setting(command_policy::KEY, r#"{ "allow": ["touch"], "deny": ["echo"] }"#).unwrap();
         let script = vec![cmd_call("c1", "touch ok.txt", d.path(), None), cmd_call("c2", "echo 2", d.path(), None), done()];
         let (history, kinds, _) = shell_session(script, &env, |_| true).await;
         assert!(kinds.is_empty() && d.path().join("ok.txt").exists());
@@ -1690,14 +1705,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn policy_file_is_not_reachable_with_file_tools() {
+    async fn policy_is_kept_in_the_db_and_the_hidden_folder_is_not_reachable_with_file_tools() {
         let (_d, root) = knowledge();
-        let env = Env::new(&root).with_shell(true);
+        let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
+        let env = Env::new(&root).with_shell(true).with_settings(&db);
         shell_session(vec![cmd_call("c1", "pwd", &root, None), done()], &env, |_| true).await;
-        assert!(root.join(".my-assistant/command-policy.json").is_file());
-        assert!(execute_tool(&root, "read_file", &json!({ "path": ".my-assistant/command-policy.json" })).is_err());
+        // 権限はDBに保存され、ナレッジにはファイルを作らない
+        assert!(db.get_setting(command_policy::KEY).unwrap().is_some());
+        assert!(!root.join(".my-assistant/command-policy.json").exists());
+        // 隠しフォルダ(ノートの版の置き場)は、ファイルツールから触れない
+        fs::create_dir_all(root.join(".my-assistant")).unwrap();
+        fs::write(root.join(".my-assistant/x.json"), "{}").unwrap();
+        assert!(execute_tool(&root, "read_file", &json!({ "path": ".my-assistant/x.json" })).is_err());
         assert!(!execute_tool(&root, "list_files", &json!({})).unwrap().contains("my-assistant"));
-        let create = json!({ "path": ".my-assistant/command-policy.json", "content": "{}" });
+        let create = json!({ "path": ".my-assistant/y.json", "content": "{}" });
         assert!(execute_tool(&root, "create_file", &create).is_err());
     }
 
@@ -1715,7 +1736,8 @@ mod tests {
     async fn cancel_during_a_command_stops_the_loop_and_rolls_back() {
         let (d, root) = knowledge();
         let cancel = CancelToken::default();
-        let env = Env::new(&root).with_shell(true).with_cancel(cancel.clone());
+        let db = crate::db::Db::open_in_memory(crate::db::Role::Agent);
+        let env = Env::new(&root).with_shell(true).with_settings(&db).with_cancel(cancel.clone());
         let mut script = VecDeque::from([cmd_call("c1", "sleep 30", d.path(), None), done()]);
         let mut history = vec![json!({ "role": "user", "content": "前の依頼" }), json!({ "role": "assistant", "content": [] })];
         tokio::spawn({
@@ -1726,8 +1748,7 @@ mod tests {
             }
         });
         // `sleep`は計画なしでは実行できないので、許可リストに入れて承認なしで走らせる
-        fs::create_dir_all(root.join(".my-assistant")).unwrap();
-        fs::write(root.join(".my-assistant/command-policy.json"), r#"{ "allow": ["sleep"] }"#).unwrap();
+        db.set_setting(command_policy::KEY, r#"{ "allow": ["sleep"] }"#).unwrap();
         let started = std::time::Instant::now();
         let out = run(
             &env,

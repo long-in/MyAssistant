@@ -1,6 +1,6 @@
 //! 通信のプロキシ設定。複数のプロキシを登録でき、通信ごとに使うものを選べる。アプリの外向きの通信(LLM・音声・モデル取得・AWS)をプロキシ経由にする。
 //!
-//! - 一覧(ID・名前・URL・ユーザー名)と既定のIDは全体設定(`global_settings.json`)、パスワードは専用の保管庫(`<アプリデータ>/proxy/secrets.json`)にIDごとに置く。
+//! - 一覧(ID・名前・URL・ユーザー名)と既定のIDは全体設定(`global_settings.db`)、パスワードは専用の保管庫(`<アプリデータ>/proxy/secrets.json`)にIDごとに置く。
 //! - エージェントごとの選択(`proxy_choice`)はエージェントのDBに置く。空は「既定を使う」、`none`は「プロキシを使わない」、それ以外は登録済みのID。
 //!   選んだIDが一覧に無いとき(削除・取り込み先に無い)は、既定として扱う。
 //! - エージェントに紐づく通信(AI・音声・AWS)は`client_builder_for` / `aws_http_client_for`でそのエージェントの選択を使う。
@@ -321,7 +321,7 @@ mod tests {
     use super::*;
 
     fn stores(dir: &Path) -> (GlobalStore, Secrets) {
-        (GlobalStore::open(dir), Secrets::open(dir).unwrap())
+        (GlobalStore::open(dir).unwrap(), Secrets::open(dir).unwrap())
     }
 
     fn add(g: &GlobalStore, s: &Secrets, name: &str, url: &str, user: &str, pw: Option<&str>) -> String {

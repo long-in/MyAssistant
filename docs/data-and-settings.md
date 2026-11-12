@@ -18,6 +18,7 @@
 | `proxy/secrets.json` | 通信のプロキシのパスワード(権限 0600。ワークスペースを問わず1つで、プロキシのIDごと。[proxy.md](proxy.md)) |
 | `tts_dictionary.json` | 読み上げ辞書(ユーザー登録分) |
 | `work/registry.json` | ワークのエージェント一覧(id・名称・イメージカラー・作成日時) |
+| `work/global_settings.db` | 全体設定(専用の SQLite。全エージェント共通。[global-settings.md](global-settings.md)) |
 | `work/<UUID>/` | エージェントのデータ。`timeline.db`・`secrets.json`・`knowledge/`・`tts_dictionary.json` をパーソナルと同じ名前で持つ |
 | `work/<UUID>/sandbox.env` | サンドボックスの環境変数(dotenv 形式。**平文**、権限 0600)。パーソナルはアプリデータ直下の `sandbox.env`([sandbox.md](sandbox.md)) |
 | `sandbox/` | 全エージェント共通の `Dockerfile` と `.dockerignore`(Docker のビルドの文脈)。アプリデータ直下 |
@@ -139,7 +140,7 @@ erDiagram
 | `debug_log_dir` | デバッグログの出力先(空なら既定) | 既定 | Debug Mode |
 | `leader_prompt` / `leader_max_active` | リーダーの指示(JSON)と同時に動かす依頼の上限(リーダーのみ) | 既定 | リーダーの設定 |
 
-**全体設定に移した項目**(ベースプロンプト `base_instructions`、OS通知、表示言語、音声入力の待ち時間 `voice_timing`、起動ワード `wake_enabled` / `wake_words`、パーソナルデータ `user_profile`、通信のプロキシの一覧と既定 `proxy_list` / `proxy_default`、チャット以外のプロンプト `global_prompt_*`、Claude Code の settings.json `sandbox_claude_settings_shared`)は、`app_settings` ではなく `work/global_settings.json` に保存する。エージェントのDBに残った同名の古い値は、全体設定の取り込みが済んだあとにDBを開いたとき消す([global-settings.md](global-settings.md))。
+**全体設定に移した項目**(ベースプロンプト `base_instructions`、OS通知、表示言語、音声入力の待ち時間 `voice_timing`、起動ワード `wake_enabled` / `wake_words`、パーソナルデータ `user_profile`、通信のプロキシの一覧と既定 `proxy_list` / `proxy_default`、チャット以外のプロンプト `global_prompt_*`、Claude Code の settings.json `sandbox_claude_settings_shared`)は、`app_settings` ではなく専用の DB `work/global_settings.db` に保存する([global-settings.md](global-settings.md))。
 
 **キーの一覧(`services/settings_registry.rs`)**: すべての設定キーについて、保存先(エージェントのDB / 全体設定)と、書き出し・コピーの対象かどうか(と検証方法)をここで決める。書き出しの項目、全体設定のバックアップの項目、初回の取り込み・古い値の削除の対象は、この一覧から作る。保存先の取り違えを防ぐため、DBは全体設定のキーを、全体設定はエージェントのキーを書き込みで拒否する。新しい設定を足すときは、この一覧にも登録する。
 
@@ -172,7 +173,7 @@ erDiagram
 
 ### 対象
 
-- `app_settings` のうち、キーの一覧(`settings_registry`)で書き出しの対象にした**設定項目**(`routing`・`web_access`・`stt_engine`・`stt_language`・`tts_engine`・`voicevox_style`・`tuning`・`batch_route`・`proofread_route`・`debug_mode`、使うプロキシの選択 `proxy_choice`。全体設定の項目は含まない)と、**コマンド権限**(`command-policy.json`)。
+- `app_settings` のうち、キーの一覧(`settings_registry`)で書き出しの対象にした**設定項目**(`routing`・`web_access`・`stt_engine`・`stt_language`・`tts_engine`・`voicevox_style`・`tuning`・`batch_route`・`proofread_route`・`debug_mode`、使うプロキシの選択 `proxy_choice`。全体設定の項目は含まない)と、**コマンド権限**(`app_settings` のキー `command_policy`。書き出しでは設定項目とは別枠 `command_policy` で扱う)。
 - **含まない**: API キー、エージェントデータ(`agent_data`)、端末ごとに異なるナレッジ・デバッグログの保存先(`knowledge_dir` / `debug_log_dir`)、取得する配布物の版(`whisper_revision` / `voicevox_versions`)、リーダーの設定、会話ごとの要約、会話の履歴。
 - 全体設定の項目(ベースプロンプト・パーソナルデータ・起動ワード・音声入力の待ち時間・ナレッジ整理の間隔・表示言語・OS通知)は含まない。全体設定は App Backup(アプリ全体)で書き出す([backup.md](backup.md))。
 - 書き出し・取り込みの対象は、選択中のワークスペースの設定。ワークスペース間で設定を写すには、各エージェントの設定の「その他」タブにある設定のコピーを使う([workspace.md](workspace.md))。

@@ -107,7 +107,7 @@ pub async fn run_with_tools(
     let cancel = CancelToken::default();
     state.set_cancel(cancel.clone());
     let once = |id: &str| state.take_once(id);
-    let env = Env::new(root).with_cancel(cancel.clone()).with_shell(shell_access).with_host(host).with_skills(skills).with_sandbox(sandbox.then_some(ctx)).with_once_check(Some(&once));
+    let env = Env::new(root).with_cancel(cancel.clone()).with_shell(shell_access).with_host(host).with_skills(skills).with_sandbox(sandbox.then_some(ctx)).with_settings(&ctx.db).with_once_check(Some(&once));
     let is_foreground = &is_foreground;
     let result = tool_loop::run(
         &env,

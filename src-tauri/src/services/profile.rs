@@ -1,5 +1,5 @@
 //! ユーザー本人の基本情報(パーソナルデータ)。設定ページから手動で入力した内容だけを保持し、会話からは抽出しない。
-//! 全体設定(`global_settings.json`)にJSONで保存し、有効なときだけシステムプロンプトへ`<user_profile>`として渡す。
+//! 全体設定(`global_settings.db`)にJSONで保存し、有効なときだけシステムプロンプトへ`<user_profile>`として渡す。
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
@@ -167,7 +167,7 @@ mod tests {
 
     fn mem() -> (tempfile::TempDir, GlobalStore) {
         let dir = tempfile::tempdir().unwrap();
-        let store = GlobalStore::open(dir.path());
+        let store = GlobalStore::open(dir.path()).unwrap();
         (dir, store)
     }
 

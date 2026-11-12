@@ -87,7 +87,7 @@ source_log_ids: ["<会話ログID>", "…"]
 | `captures/` | 会話のキャプチャ(`日付_セッションID先頭8文字.md`)。整理後に削除される。整理の追記先候補・グラフ索引には含めない |
 | `memory/pinned.md` | 記憶([memory.md](memory.md))。グラフ索引・直近の文脈・整理の追記先には含めず、専用の節として渡す |
 | `preferences/stt_corrections.md` | 聞き取りの訂正履歴([voice-input.md](voice-input.md))。グラフ索引には含めず、専用の節として渡す |
-| `.my-assistant/command-policy.json` | コマンドの権限([command-policy.md](command-policy.md))。隠しフォルダのため LLM のファイルツールから見えない |
+| `.my-assistant/history/` | ノートの書き換え前の版。隠しフォルダのため LLM のファイルツールから見えない |
 | `.my-assistant/history/` | 整理で書き換える前のノートの版([版の退避](#版の退避))。初期化で消える |
 | `skills/<名前>/SKILL.md` | スキル([skills.md](skills.md))。通常のノートとして一覧に出るが、整理バッチ・グラフ・直近の文脈・初期化の対象にはしない。LLM の `create_file` では作れない |
 | `debug-logs/` | デバッグモードのログ([debug-log.md](debug-log.md)) |

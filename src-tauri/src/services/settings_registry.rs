@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{
-    batch, chat_session, debug_log, global_settings, leader, profile, proofread, proxy, prompts, agent_data, sandbox_agent, skills, stt, tuning, voicevox, wake, workspace,
+    batch, chat_session, command_policy, debug_log, global_settings, leader, profile, proofread, proxy, prompts, agent_data, sandbox_agent, skills, stt, tuning, voicevox, wake, workspace,
 };
 
 /// 設定の保存先。
@@ -17,7 +17,7 @@ use super::{
 pub enum Scope {
     /// ワークスペース(パーソナル・エージェント・リーダー)ごとのDB(`app_settings`)。
     Agent,
-    /// 全エージェント共通の全体設定(`work/global_settings.json`)。
+    /// 全エージェント共通の全体設定(`work/global_settings.db`)。
     Global,
 }
 
@@ -84,6 +84,8 @@ pub const ALL: &[Setting] = &[
     agent(batch::KNOWLEDGE_DIR_KEY, None),
     // アプリの会話とコンテナ内の Claude Code のセッションの対応。端末の履歴(DB)と対なので対象外
     agent(sandbox_agent::SESSIONS_KEY, None),
+    // コマンド権限(JSON)。書き出し・コピーは、設定項目とは別の経路(`command_policy`)で扱う
+    agent(command_policy::KEY, None),
     agent(debug_log::DIR_KEY, None),
     agent(stt::REVISION_KEY, None),
     agent(voicevox::VERSIONS_KEY, None),

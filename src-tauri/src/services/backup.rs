@@ -24,7 +24,7 @@ use crate::{
     db::schema,
     services::{
         batch::KNOWLEDGE_DIR_KEY,
-        knowledge,
+        global_settings, knowledge,
         pronunciation::DICTIONARY_FILE,
         sandbox_env,
         workspace::{DB_FILE, DIR_NAME as WORK_DIR_NAME, KEPT_DIR_NAME, PERSONAL_ID, REGISTRY_FILE},
@@ -42,7 +42,9 @@ const SECRETS_FILE: &str = "secrets.json";
 const SANDBOX_ENV_FILE: &str = sandbox_env::FILE_NAME;
 const SANDBOX_DIR: &str = "sandbox";
 const AGENT_SANDBOX_DIR: &str = "agent-sandbox";
-const GLOBAL_FILE: &str = "global_settings.json";
+/// 全体設定のDB。アーカイブ内では`shared/`の下に置く。以前のバックアップのJSON(`LEGACY_GLOBAL_FILE`)も復元でき、起動時に取り込まれる。
+const GLOBAL_FILE: &str = global_settings::DB_FILE;
+const LEGACY_GLOBAL_FILE: &str = global_settings::LEGACY_JSON_FILE;
 /// 通信のプロキシのパスワードの保管庫(`<アプリデータ>/proxy/secrets.json`)の置き場所と、アーカイブ内の名前。
 const PROXY_DIR: &str = "proxy";
 const PROXY_SECRETS_FILE: &str = "proxy-secrets.json";
@@ -144,7 +146,7 @@ fn entry_allowed(name: &str, ids: &[String]) -> bool {
         }
     }
     match parts.as_slice() {
-        ["shared", f] => *f == REGISTRY_FILE || *f == GLOBAL_FILE || *f == PROXY_SECRETS_FILE,
+        ["shared", f] => [REGISTRY_FILE, GLOBAL_FILE, LEGACY_GLOBAL_FILE, PROXY_SECRETS_FILE].contains(f),
         ["shared", k, _, ..] => *k == KEPT_DIR_NAME,
         ["ws", id, f] => ids.iter().any(|i| i == id) && [DB_FILE, SECRETS_FILE, DICTIONARY_FILE, SANDBOX_ENV_FILE].contains(f),
         ["ws", id, k, _, ..] => ids.iter().any(|i| i == id) && (*k == KNOWLEDGE_DIR || *k == SANDBOX_DIR || *k == AGENT_SANDBOX_DIR),
@@ -267,10 +269,14 @@ fn create_inner(root: &Path, dest: &Path, part: &Path, work: &Path, now: String,
         exclude: vec![part.to_owned(), dest.to_owned()],
     };
     let shared = root.join(WORK_DIR_NAME);
-    for name in [REGISTRY_FILE, GLOBAL_FILE] {
-        if shared.join(name).is_file() {
-            p.add_file(&format!("shared/{name}"), &shared.join(name))?;
-        }
+    if shared.join(REGISTRY_FILE).is_file() {
+        p.add_file(&format!("shared/{REGISTRY_FILE}"), &shared.join(REGISTRY_FILE))?;
+    }
+    // 全体設定のDBは、稼働中でも一貫したスナップショットを取る
+    if shared.join(GLOBAL_FILE).is_file() {
+        let snap = work.join("global.db");
+        snapshot_db(&shared.join(GLOBAL_FILE), &snap)?;
+        p.add_file(&format!("shared/{GLOBAL_FILE}"), &snap)?;
     }
     p.add_tree(&format!("shared/{KEPT_DIR_NAME}"), &shared.join(KEPT_DIR_NAME))?;
     // 通信のプロキシのパスワード(APIキーと同じく平文のまま)
@@ -437,6 +443,10 @@ fn prepare_inner(src: &Path, stage: &Path, password: Option<&str>) -> Result<Pre
     for w in &manifest.workspaces {
         check_db(&stage.join("ws").join(&w.id).join(DB_FILE))?;
     }
+    let global = stage.join("shared").join(GLOBAL_FILE);
+    if global.is_file() {
+        check_db(&global)?;
+    }
     std::fs::write(stage.join(MANIFEST), raw).map_err(io)?;
     Ok(Preview { created_at: manifest.created_at, workspaces: manifest.workspaces.len(), files: manifest.files.len() })
 }
@@ -544,7 +554,7 @@ fn swap(
     *installing = true;
     let shared = root.join(WORK_DIR_NAME);
     std::fs::create_dir_all(&shared).map_err(io)?;
-    for name in [REGISTRY_FILE, GLOBAL_FILE, KEPT_DIR_NAME] {
+    for name in [REGISTRY_FILE, GLOBAL_FILE, LEGACY_GLOBAL_FILE, KEPT_DIR_NAME] {
         let from = stage.join("shared").join(name);
         if exists(&from) {
             move_to(&from, &shared.join(name))?;
@@ -604,7 +614,7 @@ fn rollback(root: &Path, moved: &[(PathBuf, PathBuf)], installing: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
+    use crate::{db::Db, services::global_settings::SettingsStore};
 
     /// 実データに近い構成を作る: パーソナル(外部ナレッジ)とエージェント1つ。
     fn sample(root: &Path, external: &Path, marker: &str) {
@@ -632,6 +642,11 @@ mod tests {
         sdb.set_setting("marker", marker).unwrap();
         drop(sdb);
         std::fs::write(root.join(WORK_DIR_NAME).join(REGISTRY_FILE), format!("[\"{marker}\"]")).unwrap();
+        global_settings::GlobalStore::open(root).unwrap().set_setting(global_settings::LANGUAGE_KEY, if marker == "new" { "en" } else { "ja" }).unwrap();
+    }
+
+    fn language_of(root: &Path) -> Option<String> {
+        global_settings::GlobalStore::open(root).unwrap().get_setting(global_settings::LANGUAGE_KEY).unwrap()
     }
 
     fn marker_of(root: &Path, id: &str) -> Option<String> {
@@ -663,6 +678,8 @@ mod tests {
 
         assert_eq!(marker_of(&dst, PERSONAL_ID).as_deref(), Some("new"));
         assert_eq!(marker_of(&dst, "agent-a").as_deref(), Some("new"));
+        // 全体設定のDBも戻る
+        assert_eq!(language_of(&dst).as_deref(), Some("en"));
         // 外部のナレッジは標準の位置へ戻り、保存先の設定は解除される
         assert_eq!(std::fs::read_to_string(dst.join("knowledge/Dev/メモ 1.md")).unwrap(), "new");
         let db = Db::open(&dst.join(DB_FILE)).unwrap();
