@@ -852,7 +852,7 @@ mod tests {
         let n = knowledge::read_note(root, &keep).unwrap();
         assert!(n.current.contains("notarize"));
         assert!(knowledge::read(root, &drop).is_err(), "取り込んだノートは消す");
-        assert!(root.join(".my-assistant/history/Development/release").is_dir(), "消す前に版を退避する");
+        assert!(root.join(".history/Development/release").is_dir(), "消す前に版を退避する");
 
         // 縮みすぎる統合は何も書かない
         let long = "- 長い内容\n".repeat(100);

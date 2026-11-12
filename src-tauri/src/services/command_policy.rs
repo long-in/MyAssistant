@@ -826,7 +826,7 @@ fn classify_segment(seg: &Segment, policy: &Policy, scope: Option<&Scope>, depth
         return deny("システム領域への書き込みは実行できません。");
     }
     if policy.deny.iter().any(|d| matches_pattern(&words, p, d, true)) {
-        return deny("コマンド権限(.my-assistant/command-policy.json)で拒否されています。");
+        return deny("コマンド権限で拒否されています。");
     }
 
     // 中身を別のコマンドとして判定する形

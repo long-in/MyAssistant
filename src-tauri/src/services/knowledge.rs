@@ -190,7 +190,7 @@ pub fn upsert(root: &Path, e: &Entry, now: &str) -> Result<String, AppError> {
 /// 経緯の節の見出し。これより前が「現在の内容」(整理で書き直す)、以降が「経緯」(追記のみ)。
 pub const HISTORY_HEADING: &str = "## 経緯";
 /// 書き換え前の版を退避するフォルダ。隠しフォルダなので一覧・グラフ・LLMのツールからは見えない。
-const VERSIONS_DIR: [&str; 2] = [".my-assistant", "history"];
+const VERSIONS_DIR: [&str; 1] = [".history"];
 /// ノートごとに残す版の数。
 const VERSIONS_KEEP: usize = 10;
 /// これ以上の長さの現在の内容が半分未満に縮む書き換えは採らない(要約しすぎて情報を落とすのを防ぐ)。
@@ -379,7 +379,7 @@ pub fn create_note(root: &Path, at: &NewNote, u: &NoteUpdate, now: &str) -> Resu
 
 // ---------- 版の退避と復元 ----------
 
-/// ノートの版を置くフォルダ(`.my-assistant/history/<カテゴリ>/<ファイル名>`)。`create`なら作る。
+/// ノートの版を置くフォルダ(`.history/<カテゴリ>/<ファイル名>`)。`create`なら作る。
 fn versions_dir(root: &Path, rel: &str, create: bool) -> Result<Option<PathBuf>, AppError> {
     let stem = rel.strip_suffix(".md").ok_or(AppError::PathNotAllowed)?;
     let mut parts: Vec<String> = VERSIONS_DIR.iter().map(|s| (*s).to_owned()).collect();
@@ -511,7 +511,7 @@ fn head_meta(head: &str) -> Option<(String, String)> {
 }
 
 /// ノート一覧(最大3階層)。シンボリックリンクは辿らない。整理・索引・提案が使う。
-/// `.`始まり(`.my-assistant`のコマンド権限など)と`data/`(ソースコードなど)はノートではないので除く。
+/// `.`始まり(`.history`の退避した版など)と`data/`(ソースコードなど)はノートではないので除く。
 pub fn list(root: &Path) -> Result<Vec<KnowledgeFile>, AppError> {
     list_md(root, false)
 }
@@ -697,7 +697,7 @@ pub fn reset(root: &Path) -> Result<TransferReport, AppError> {
         fs::remove_file(resolve_existing(root, &f.path)?).map_err(io)?;
         report.files += 1;
     }
-    // 退避した版も消す(コマンドの権限など、ほかの`.my-assistant`の中身は残す)
+    // 退避した版も消す(ほかの`.`始まりのフォルダは残す)
     if let Ok(versions) = resolve_existing(root, &VERSIONS_DIR.join("/"))
         && versions.is_dir()
     {
@@ -1214,17 +1214,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("knowledge");
         create_file(&root, "dev/a.md", "2026-10-29T00:00:00Z").unwrap();
-        fs::create_dir_all(root.join(".my-assistant")).unwrap();
-        fs::write(root.join(".my-assistant/note.md"), "x").unwrap();
+        fs::create_dir_all(root.join(".other")).unwrap();
+        fs::write(root.join(".other/note.md"), "x").unwrap();
         fs::create_dir_all(root.join("skills/daily")).unwrap();
         fs::write(root.join("skills/daily/SKILL.md"), "---\ndescription: \"d\"\n---\n手順").unwrap();
         let mut paths: Vec<_> = list(&root).unwrap().into_iter().map(|f| f.path).collect();
         paths.sort();
         assert_eq!(paths, ["dev/a.md", "skills/daily/SKILL.md"], "`.`始まりはノートではなく、スキルはノートとして見える");
-        assert!(list_for_screen(&root).unwrap().iter().any(|f| f.path == ".my-assistant/note.md"), "画面には出す");
-        assert!(write(&root, ".my-assistant/note.md", "y").is_err(), "画面からは書き換えない");
+        assert!(list_for_screen(&root).unwrap().iter().any(|f| f.path == ".other/note.md"), "画面には出す");
+        assert!(write(&root, ".other/note.md", "y").is_err(), "画面からは書き換えない");
         reset(&root).unwrap();
-        assert!(root.join(".my-assistant/note.md").is_file());
+        assert!(root.join(".other/note.md").is_file());
         assert!(root.join("skills/daily/SKILL.md").is_file(), "初期化はスキルを消さない");
         assert!(!root.join("dev").exists());
     }
@@ -1361,12 +1361,13 @@ mod tests {
         restore_version(root, &w.path, &vs[9], "2026-11-03T00:00:00Z").unwrap();
         assert_eq!(read_note(root, &w.path).unwrap().current, "- v2");
         assert!(read_version(root, &w.path, &versions(root, &w.path).unwrap()[0]).unwrap().contains("- v12"), "戻す前の内容も退避する");
-        // 版は一覧・グラフに出ず、初期化で消える(コマンドの権限は残す)
+        // 版は一覧・グラフに出ず、初期化で消える(ほかの`.`始まりのフォルダは残す)
         assert!(list(root).unwrap().iter().all(|f| !f.path.starts_with('.')));
-        fs::write(root.join(".my-assistant/command-policy.json"), "{}").unwrap();
+        fs::create_dir_all(root.join(".other")).unwrap();
+        fs::write(root.join(".other/keep.json"), "{}").unwrap();
         reset(root).unwrap();
-        assert!(!root.join(".my-assistant/history").exists());
-        assert!(root.join(".my-assistant/command-policy.json").exists());
+        assert!(!root.join(".history").exists());
+        assert!(root.join(".other/keep.json").exists());
     }
 
     #[test]
