@@ -3,7 +3,8 @@
 //! - コンテナ・ボリューム・ネットワークはエージェントごとに別で、見えるのはそのエージェントのナレッジ(`/knowledge`。
 //!   担当システムのフォルダ`/knowledge/data`を含む)と専用ボリューム(`/home/agent`)だけ。アプリのデータ・`~/.aws`・他エージェントのフォルダはマウントしない。
 //! - イメージはエージェントのワークスペースにある`sandbox/Dockerfile`からビルドする(内容のハッシュをタグにして、変更で自動再ビルド)。
-//! - 環境変数(`sandbox.env`とAWSの一時キー)は実行のたびに`docker exec -e NAME`で渡す。値はdocker CLIの環境にだけ置き、引数には出さない。
+//! - 環境変数(`sandbox.env`と中継の設定)は実行のたびに`docker exec -e NAME`で渡す。値はdocker CLIの環境にだけ置き、引数には出さない。
+//! - AWSの認証情報は直接渡さない。Bedrockはホストの中継が署名し、コンテナ用のAWSは一時キーを中継から取りに来る(`sandbox_bridge`)。
 //! - Dockerが使えないときはホスト実行に切り替えず、エラーにする。
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -23,10 +24,9 @@ use tokio::{
 };
 
 use super::{
-    aws,
     cancel::CancelToken,
     knowledge::DATA_DIR,
-    sandbox_agent, sandbox_env,
+    sandbox_agent, sandbox_bridge, sandbox_env,
     shell::{self, Output, Stream},
     workspace::{LEADER_ID, PERSONAL_ID, WorkspaceCtx},
 };
@@ -398,6 +398,15 @@ impl Masker {
         let keep = secrets.first().map_or(0, |s| s.len().saturating_sub(1));
         let line_safe = secrets.iter().all(|s| !s.contains('\n'));
         Self { secrets, keep, line_safe, carry: String::new() }
+    }
+
+    /// 伏せる値を加える(実行の途中で中継が配った一時キーなど)。
+    pub fn add(&mut self, values: &[String]) {
+        let mut all = std::mem::take(&mut self.secrets);
+        all.extend(values.iter().cloned());
+        let carry = std::mem::take(&mut self.carry);
+        *self = Self::new(&all);
+        self.carry = carry;
     }
 
     /// 完全に置き換える(まとめた出力用)。
@@ -973,15 +982,23 @@ pub struct Request<'a> {
     pub timeout: Duration,
 }
 
-/// 渡す環境変数(AWSの一時キー・`sandbox.env`)。同じ名前は後のものが優先(`sandbox.env`が最優先)。
-pub(crate) async fn env_for(ctx: &WorkspaceCtx) -> Result<BTreeMap<String, String>, String> {
+/// 1回の実行で渡す環境変数と、中継のトークン(実行が終わるまで持っておく。落とすと無効になる)。
+pub(crate) struct ExecEnv {
+    pub vars: BTreeMap<String, String>,
+    pub grants: Vec<sandbox_bridge::Grant>,
+}
+
+/// 渡す環境変数(コンテナ用のAWSの中継・`sandbox.env`)。同じ名前は後のものが優先(`sandbox.env`が最優先)。
+/// コンテナ用のAWS設定が無ければ、AWSの認証情報は渡さない(Bedrock用の設定は使わない)。
+pub(crate) async fn env_for(ctx: &WorkspaceCtx) -> Result<ExecEnv, String> {
     let mut vars = BTreeMap::new();
-    if ctx.secrets.has_aws().unwrap_or(false) {
-        let pairs = aws::env_pairs(ctx).await.map_err(|e| format!("AWSの認証情報を取得できませんでした: {e}"))?;
-        vars.extend(pairs);
+    let mut grants = Vec::new();
+    if let Some((grant, aws_vars)) = sandbox_bridge::aws_env(ctx).await? {
+        vars.extend(aws_vars);
+        grants.push(grant);
     }
     vars.extend(sandbox_env::load(&ctx.dir).map_err(|e| e.to_string())?);
-    Ok(vars)
+    Ok(ExecEnv { vars, grants })
 }
 
 /// 伏せる値。リージョンや、アプリが決めるモデル名・内部の値(`MYASSISTANT_`)のように秘密でない値は除く。
@@ -999,8 +1016,8 @@ pub async fn run(req: Request<'_>, cancel: &CancelToken, on_chunk: impl FnMut(St
     if !is_supported(&req.ctx.id) {
         return Err("リーダーではサンドボックスを使えません。".into());
     }
-    let vars = env_for(req.ctx).await?;
-    exec(Exec { ctx: req.ctx, mounts: req.mounts, cwd: req.cwd, command: req.command, vars, input: None, timeout: req.timeout }, cancel, on_chunk).await
+    let ExecEnv { vars, grants } = env_for(req.ctx).await?;
+    exec(Exec { ctx: req.ctx, mounts: req.mounts, cwd: req.cwd, command: req.command, vars, grants, input: None, timeout: req.timeout }, cancel, on_chunk).await
 }
 
 /// コンテナでの1回の実行。`vars`は渡す環境変数のすべて(名前だけを引数に書き、値はdocker CLIの環境で渡す)。
@@ -1012,6 +1029,8 @@ pub struct Exec<'a> {
     /// `sh -c`で実行する文字列。可変の値は埋め込まず、`vars`の環境変数で渡して参照する。
     pub command: &'a str,
     pub vars: BTreeMap<String, String>,
+    /// 中継のトークン。実行が終わるまで持ち、終わったら落として無効にする。
+    pub grants: Vec<sandbox_bridge::Grant>,
     /// 標準入力へ書き込む内容の送り口(無ければ標準入力は閉じる)。送り口がすべて閉じられると、標準入力も閉じる。
     pub input: Option<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>>,
     pub timeout: Duration,
@@ -1040,6 +1059,14 @@ pub async fn exec(req: Exec<'_>, cancel: &CancelToken, mut on_chunk: impl FnMut(
     let spec = resolve_image(&app_dir()?, id, &req.ctx.dir)?;
     let container = running_container(&bin, id, &spec, req.mounts).await?;
     let _use = UseGuard::new(id);
+    // コンテナ用のAWSを使うときは、一時キーを中継から取るための設定をコンテナ内に置く
+    if req.grants.iter().any(sandbox_bridge::Grant::needs_aws_files) {
+        let o = docker(&bin, &["exec", &container, "sh", "-c", sandbox_bridge::AWS_SETUP_SCRIPT, "sh", sandbox_bridge::aws_config()], CLI_TIMEOUT).await?;
+        if !o.ok {
+            return Err(format!("コンテナ用の AWS 設定を準備できませんでした: {}", clip_err(&o.stderr)));
+        }
+    }
+    let _grants = req.grants;
 
     let pidfile = format!("{PIDFILE_DIR}/ma-{}.pid", uuid::Uuid::new_v4().simple());
     let names: Vec<String> = req.vars.keys().cloned().collect();
@@ -1051,7 +1078,18 @@ pub async fn exec(req: Exec<'_>, cancel: &CancelToken, mut on_chunk: impl FnMut(
 
     let values = secret_values(&req.vars);
     let (mut out_mask, mut err_mask) = (Masker::new(&values), Masker::new(&values));
+    // 中継がこの実行へ配った一時キーも伏せる(配られたら、次の出力から)
+    let mut handed = 0;
+    let mut add_handed = |out_mask: &mut Masker, err_mask: &mut Masker| {
+        let values: Vec<String> = _grants.iter().flat_map(sandbox_bridge::Grant::handed_values).collect();
+        if values.len() != handed {
+            handed = values.len();
+            out_mask.add(&values);
+            err_mask.add(&values);
+        }
+    };
     let result = shell::run_prepared_streaming(cmd, req.input, req.timeout, cancel, |stream, text| {
+        add_handed(&mut out_mask, &mut err_mask);
         let masked = match stream {
             Stream::Stdout => out_mask.push(text),
             Stream::Stderr => err_mask.push(text),
@@ -1063,6 +1101,7 @@ pub async fn exec(req: Exec<'_>, cancel: &CancelToken, mut on_chunk: impl FnMut(
     .await;
     // docker CLIを止めてもコンテナ内のプロセスは残るので、グループごと止める(背景に残した子孫も含む)
     kill_group(&bin, &container, &pidfile).await;
+    add_handed(&mut out_mask, &mut err_mask);
     let mut out = result?;
     for (stream, m) in [(Stream::Stdout, &mut out_mask), (Stream::Stderr, &mut err_mask)] {
         let rest = m.flush();
@@ -1579,4 +1618,48 @@ mod tests {
         remove_agent_blocking_for_test(other);
     }
 
+    /// 実Dockerでの、コンテナ用のAWS(中継から一時キーを取る)の通し確認。ビルド済みのイメージが必要(ネットワークは使わない)。
+    /// `cargo test -- --ignored sandbox_aws_credentials_end_to_end`で実行する。
+    #[tokio::test]
+    #[ignore]
+    async fn sandbox_aws_credentials_end_to_end() {
+        use crate::services::secrets::AwsSlot;
+        let id = "ffffffff-0000-4000-8000-00000000e2e3";
+        let tmp = tempfile::tempdir().unwrap();
+        let _ = APP_DIR.set(tmp.path().join("app"));
+        let dir = tmp.path().join(id);
+        let ctx = Arc::new(WorkspaceCtx::open(id, &dir).unwrap());
+        sandbox_bridge::register_for_test(ctx.clone());
+        let ctx: &'static WorkspaceCtx = Box::leak(Box::new(ctx));
+        let root = dir.join("knowledge");
+        std::fs::create_dir_all(&root).unwrap();
+        let mounts: &'static Mounts = Box::leak(Box::new(Mounts { knowledge: root, data: false }));
+        start_container(ctx, mounts).await.unwrap();
+        let cancel = CancelToken::default();
+        let sh = |command: &'static str| run(Request { ctx, mounts, command, cwd: KNOWLEDGE_MOUNT, timeout: Duration::from_secs(60) }, &cancel, |_, _| {});
+        // Bedrock 用の設定は、コンテナへは渡らない
+        ctx.secrets.set_aws_files(AwsSlot::Bedrock, "", "[b]\naws_access_key_id = AKIABEDROCKDUMMY0001\naws_secret_access_key = bedrock-dummy-secret-0001").unwrap();
+        ctx.secrets.set_aws_profile(AwsSlot::Bedrock, "b").unwrap();
+
+        // 1. コンテナ用が未登録なら、AWS の認証情報は無い
+        let out = sh("aws configure export-credentials --format env-no-export 2>&1; echo [$AWS_ACCESS_KEY_ID][$AWS_CONFIG_FILE]; env | grep -c AKIA").await.unwrap();
+        assert!(out.stdout.contains("[][]") && !out.stdout.contains("AKIA") && out.stdout.trim_end().ends_with('0'), "{}", out.stdout);
+
+        // 2. 登録すると、aws CLI が中継から一時キーを取る。値は環境変数に無く、出力では伏せられる
+        ctx.secrets
+            .set_aws_files(AwsSlot::Sandbox, "[profile c]\nregion = ap-northeast-1", "[c]\naws_access_key_id = AKIASANDBOXDUMMY0001\naws_secret_access_key = sandbox-dummy-secret-0001")
+            .unwrap();
+        ctx.secrets.set_aws_profile(AwsSlot::Sandbox, "c").unwrap();
+        let out = sh("aws configure export-credentials --format env-no-export; echo region=$AWS_REGION; env | grep -c -e sandbox-dummy -e AKIA; true").await.unwrap();
+        assert_eq!(out.code, Some(0), "{}{}", out.stdout, out.stderr);
+        assert!(out.stdout.contains("AWS_ACCESS_KEY_ID=***") && out.stdout.contains("AWS_SECRET_ACCESS_KEY=***"), "{}", out.stdout);
+        assert!(!out.stdout.contains("sandbox-dummy-secret") && !out.stdout.contains("bedrock-dummy"), "{}", out.stdout);
+        assert!(out.stdout.contains("region=ap-northeast-1") && out.stdout.trim_end().ends_with('0'), "{}", out.stdout);
+
+        // 3. 実行が終わると、そのトークンは使えない
+        sh("echo \"$MA_AWS_TOKEN\" > /tmp/t; echo \"$MYASSISTANT_AWS_CREDENTIALS_URL\" > /tmp/u").await.unwrap();
+        let out = sh(r#"curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(cat /tmp/t)" "$(cat /tmp/u)"; rm -f /tmp/t /tmp/u"#).await.unwrap();
+        assert_eq!(out.stdout.trim(), "403", "{}", out.stdout);
+        remove_agent_blocking_for_test(id);
+    }
 }

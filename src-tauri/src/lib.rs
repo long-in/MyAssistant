@@ -34,6 +34,7 @@ pub fn run() {
       commands::aws::preview_aws_config,
       commands::aws::save_aws_config,
       commands::aws::select_aws_profile,
+      commands::aws::delete_aws_config,
       commands::aws::test_aws_connection,
       commands::aws::submit_aws_mfa,
       commands::aws::cancel_aws_mfa,
@@ -259,6 +260,7 @@ pub fn run() {
       // 端末内のLLMは、取得物の場所だけを覚えておき、使うときに起動する
       services::local_llm::init(&dir);
       services::sandbox::init(app.handle());
+      services::sandbox_bridge::init(app.handle());
       // パーソナルは従来どおりアプリデータ直下(`timeline.db` / `secrets.json` / `knowledge`)
       let personal = services::workspace::WorkspaceCtx::open(services::workspace::PERSONAL_ID, &dir)?;
       // 通信のプロキシは、保存済みの設定を使い始める

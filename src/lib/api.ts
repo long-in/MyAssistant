@@ -12,6 +12,7 @@ export type AppError = { code: string; message: string; source?: string | null }
 export const SOURCE_LABELS: Record<string, string> = {
   anthropic: "Anthropic (Claude)",
   bedrock: "Amazon Bedrock (Claude)",
+  sandbox_aws: "Sandbox AWS",
   local: "Local (Qwen)",
   google_tts: "Google Cloud Text-to-Speech",
   google_stt: "Google Cloud Speech-to-Text",
@@ -154,6 +155,12 @@ export type AwsStatus = {
   session_expires_at: number | null;
 };
 
+/**
+ * AWS設定の用途。`bedrock`はコンテナ内の Claude Code が使う Bedrock(ホストで署名する)、
+ * `sandbox`はコンテナ内のコマンド(aws CLI・SDK)が使う認証情報。用途ごとに別々に登録する。
+ */
+export type AwsSlot = "bedrock" | "sandbox";
+
 /** MFAコードの入力を求めるイベント(AWSの認証はコードが届くまで待つ)。 */
 export const AWS_MFA_EVENT = "aws-mfa-required";
 export type AwsMfaPrompt = {
@@ -162,6 +169,8 @@ export type AwsMfaPrompt = {
   error: string | null;
   /** コードを求めているワークスペース(`personal`またはエージェントID)。コードはこのIDで返す。 */
   workspace_id: string;
+  /** どの用途の設定か。コードはこの用途へ返す。 */
+  slot: AwsSlot;
   /** エージェントの名称とイメージカラー。パーソナルは`null`。 */
   workspace_name: string | null;
   workspace_color: string | null;
@@ -169,8 +178,9 @@ export type AwsMfaPrompt = {
 
 /** SSOの承認(確認コードの表示とブラウザでの承認)を求めるイベント。AWSの認証は承認が済むまで待つ。 */
 export const AWS_SSO_EVENT = "aws-sso-required";
-/** SSOの承認待ちが終わった(成功・失敗・取り消し)ことを知らせるイベント。ペイロードはワークスペースID。 */
+/** SSOの承認待ちが終わった(成功・失敗・取り消し)ことを知らせるイベント。 */
 export const AWS_SSO_FINISHED_EVENT = "aws-sso-finished";
+export type AwsSsoFinished = { workspace_id: string; slot: AwsSlot };
 export type AwsSsoPrompt = {
   profile: string;
   /** ブラウザの承認ページに出るコード。 */
@@ -180,30 +190,33 @@ export type AwsSsoPrompt = {
   /** 承認の期限(UNIX秒)。 */
   expires_at: number;
   workspace_id: string;
+  slot: AwsSlot;
   workspace_name: string | null;
   workspace_color: string | null;
 };
 
-export const getAwsStatus = () => invoke<AwsStatus>("get_aws_status");
+export const getAwsStatus = (slot: AwsSlot = "bedrock") => invoke<AwsStatus>("get_aws_status", { slot });
 /** 保存済みの`~/.aws/config`・`credentials`の全文。本人が確認・編集するためだけに使う(ログや表示以外へ渡さない)。 */
-export const getAwsFiles = () => invoke<{ config: string; credentials: string }>("get_aws_files");
+export const getAwsFiles = (slot: AwsSlot = "bedrock") => invoke<{ config: string; credentials: string }>("get_aws_files", { slot });
 /** このワークスペースの`secrets.json`をFinderで開く。 */
 export const revealSecretsFile = () => invoke<void>("reveal_secrets_file");
 /** 貼り付け中の内容から読み取れるプロファイル一覧(保存しない)。 */
 export const previewAwsConfig = (config: string, credentials: string) =>
   invoke<AwsProfile[]>("preview_aws_config", { config, credentials });
 /** 貼り付けた内容と使うプロファイルをRust側で検証して保存する。保存後、内容はフロントエンドへ戻らない。 */
-export const saveAwsConfig = (config: string, credentials: string, profile: string) =>
-  invoke<AwsStatus>("save_aws_config", { config, credentials, profile });
-export const selectAwsProfile = (name: string) => invoke<AwsStatus>("select_aws_profile", { name });
+export const saveAwsConfig = (config: string, credentials: string, profile: string, slot: AwsSlot = "bedrock") =>
+  invoke<AwsStatus>("save_aws_config", { slot, config, credentials, profile });
+export const selectAwsProfile = (name: string, slot: AwsSlot = "bedrock") => invoke<AwsStatus>("select_aws_profile", { slot, name });
+/** 保存したAWS設定を消す(Bedrock用は`deleteApiKey("bedrock")`でも消せる)。 */
+export const deleteAwsConfig = (slot: AwsSlot) => invoke<AwsStatus>("delete_aws_config", { slot });
 /** AWSの認証(プロファイル・ロールの引き受け)が通るかを確認する。MFAが必要なら`AWS_MFA_EVENT`、SSOの承認が必要なら`AWS_SSO_EVENT`が飛び、入力・承認まで待つ。 */
-export const testAwsConnection = () => invoke<AwsStatus>("test_aws_connection");
-/** コードは、求めたワークスペースへ返す(選択中とは限らない)。 */
-export const submitAwsMfa = (workspaceId: string, code: string) => invoke<void>("submit_aws_mfa", { workspaceId, code });
-export const cancelAwsMfa = (workspaceId: string) => invoke<void>("cancel_aws_mfa", { workspaceId });
+export const testAwsConnection = (slot: AwsSlot = "bedrock") => invoke<AwsStatus>("test_aws_connection", { slot });
+/** コードは、求めたワークスペースと用途へ返す(選択中とは限らない)。 */
+export const submitAwsMfa = (workspaceId: string, slot: AwsSlot, code: string) => invoke<void>("submit_aws_mfa", { workspaceId, slot, code });
+export const cancelAwsMfa = (workspaceId: string, slot: AwsSlot) => invoke<void>("cancel_aws_mfa", { workspaceId, slot });
 /** 承認待ちのSSOの承認ページを、既定のブラウザで開く(URLはRust側が控えている)。 */
-export const openAwsSso = (workspaceId: string) => invoke<void>("open_aws_sso", { workspaceId });
-export const cancelAwsSso = (workspaceId: string) => invoke<void>("cancel_aws_sso", { workspaceId });
+export const openAwsSso = (workspaceId: string, slot: AwsSlot) => invoke<void>("open_aws_sso", { workspaceId, slot });
+export const cancelAwsSso = (workspaceId: string, slot: AwsSlot) => invoke<void>("cancel_aws_sso", { workspaceId, slot });
 
 /**
  * モデルの選択肢の接続先。`Provider`に加えて、`sandbox`(コンテナ内の Claude Code。モデルは settings.json で決まる)がある。

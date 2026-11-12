@@ -5,6 +5,9 @@
 //! IAM Identity Center(SSO)のプロファイルは、アプリ自身がデバイス認可フローを行い(ブラウザで承認)、`sso:GetRoleCredentials`で一時クレデンシャルを得る。
 //! ホストの`aws sso login`や`~/.aws/sso/cache`には依存しない。SSOのトークンもメモリ上にだけ置く。
 //! 一時クレデンシャルはメモリ上にだけ置き、ディスクにもフロントエンドにも出さない。
+//!
+//! 設定は用途(`AwsSlot`)ごとに別々に持つ。Bedrock用(コンテナ内の Claude Code の呼び出しをホストで署名する)と、
+//! サンドボックス用(コンテナ内のコマンドが使う一時キーをホストから配る)。一時クレデンシャル・SSOのトークン・入力待ちも用途ごとに分ける。
 use std::{
     collections::{BTreeMap, HashMap},
     sync::{Mutex, MutexGuard, OnceLock},
@@ -18,6 +21,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::oneshot;
 
+pub use super::secrets::AwsSlot;
 use super::workspace::WorkspaceCtx;
 use crate::utils::error::AppError;
 
@@ -25,7 +29,7 @@ use crate::utils::error::AppError;
 pub const MFA_EVENT: &str = "aws-mfa-required";
 /// フロントエンドへSSOの承認(確認コードの表示とブラウザでの承認)を求めるイベント名。
 pub const SSO_EVENT: &str = "aws-sso-required";
-/// SSOの承認待ちが終わった(成功・失敗・取り消し)ことを知らせるイベント名。ペイロードはワークスペースID。
+/// SSOの承認待ちが終わった(成功・失敗・取り消し)ことを知らせるイベント名。ペイロードは`SsoFinished`。
 pub const SSO_FINISHED_EVENT: &str = "aws-sso-finished";
 /// SSOのクライアント登録に使う名前。
 const SSO_CLIENT_NAME: &str = "myassistant";
@@ -37,6 +41,9 @@ const SSO_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const DEFAULT_REGION: &str = "us-east-1";
 /// 期限の何秒前から再取得するか。
 const EXPIRY_MARGIN: Duration = Duration::from_secs(60);
+/// コンテナへ配る一時キーを、期限の何秒前から取り直すか(AWS CLI・SDKが更新を始める15分前に合わせる)。
+/// ただし、有効期間の半分を超えては早めない(短いセッションで毎回取り直さないため)。
+const HANDOUT_MARGIN: Duration = Duration::from_secs(15 * 60);
 /// MFAコードの入力を待つ上限。
 const MFA_TIMEOUT: Duration = Duration::from_secs(180);
 /// コードの誤入力を許す回数。
@@ -338,47 +345,54 @@ pub fn preview(config: &str, credentials: &str) -> Vec<ProfileInfo> {
     profiles_of(&merged(config, credentials))
 }
 
-pub fn status(ctx: &WorkspaceCtx) -> Result<Status, AppError> {
-    let (config, credentials) = ctx.secrets.get_aws_files()?;
+pub fn status(ctx: &WorkspaceCtx, slot: AwsSlot) -> Result<Status, AppError> {
+    let (config, credentials) = ctx.secrets.get_aws_files(slot)?;
     let ini = merged(&config, &credentials);
-    let saved = ctx.secrets.get_aws_profile()?;
+    let saved = ctx.secrets.get_aws_profile(slot)?;
     let profiles = profiles_of(&ini);
-    let session_expires_at = session(ctx).as_ref().and_then(|s| {
+    let session_expires_at = session(ctx, slot).as_ref().and_then(|s| {
         s.expires.duration_since(SystemTime::UNIX_EPOCH).ok().map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
     });
     let selected = selected(&ini, saved.as_deref());
-    Ok(Status { registered: ctx.secrets.has_aws()?, profiles, selected, session_expires_at })
+    Ok(Status { registered: ctx.secrets.has_aws(slot)?, profiles, selected, session_expires_at })
 }
 
 /// 貼り付けた内容と、使うプロファイルを検証して保存する(ネットワークは使わない)。
 /// 選んだプロファイルが使えなければ保存しない。
-pub fn save(ctx: &WorkspaceCtx, config: &str, credentials: &str, profile: &str) -> Result<(), AppError> {
+pub fn save(ctx: &WorkspaceCtx, slot: AwsSlot, config: &str, credentials: &str, profile: &str) -> Result<(), AppError> {
     resolve(&merged(config, credentials), profile)?;
-    ctx.secrets.set_aws_files(config.trim(), credentials.trim())?;
-    ctx.secrets.set_aws_profile(profile)?;
-    reset(ctx);
+    ctx.secrets.set_aws_files(slot, config.trim(), credentials.trim())?;
+    ctx.secrets.set_aws_profile(slot, profile)?;
+    reset(ctx, slot);
     Ok(())
 }
 
-pub fn select_profile(ctx: &WorkspaceCtx, name: &str) -> Result<(), AppError> {
-    let (config, credentials) = ctx.secrets.get_aws_files()?;
+pub fn select_profile(ctx: &WorkspaceCtx, slot: AwsSlot, name: &str) -> Result<(), AppError> {
+    let (config, credentials) = ctx.secrets.get_aws_files(slot)?;
     resolve(&merged(&config, &credentials), name)?;
-    ctx.secrets.set_aws_profile(name)?;
-    clear_session(ctx);
+    ctx.secrets.set_aws_profile(slot, name)?;
+    clear_session(ctx, slot);
     Ok(())
 }
 
 /// メモリ上の一時クレデンシャル・SSOのトークンと、MFA・SSOの入力待ちを破棄する(保存内容を差し替えたときに呼ぶ)。
-pub fn reset(ctx: &WorkspaceCtx) {
-    clear_session(ctx);
-    sso_tokens(ctx).clear();
-    cancel_mfa(ctx);
-    cancel_sso(ctx);
+pub fn reset(ctx: &WorkspaceCtx, slot: AwsSlot) {
+    clear_session(ctx, slot);
+    sso_tokens(ctx, slot).clear();
+    cancel_mfa(ctx, slot);
+    cancel_sso(ctx, slot);
 }
 
-pub fn delete(ctx: &WorkspaceCtx) -> Result<(), AppError> {
-    ctx.secrets.delete_aws()?;
-    reset(ctx);
+/// すべての用途の一時状態を破棄する(設定のコピーなどで、保存内容をまとめて差し替えたときに呼ぶ)。
+pub fn reset_all(ctx: &WorkspaceCtx) {
+    for slot in AwsSlot::ALL {
+        reset(ctx, slot);
+    }
+}
+
+pub fn delete(ctx: &WorkspaceCtx, slot: AwsSlot) -> Result<(), AppError> {
+    ctx.secrets.delete_aws(slot)?;
+    reset(ctx, slot);
     Ok(())
 }
 
@@ -387,7 +401,22 @@ pub fn delete(ctx: &WorkspaceCtx) -> Result<(), AppError> {
 struct Session {
     profile: String,
     keys: Keys,
+    /// 取得した時刻(有効期間の長さを知るため)。
+    issued: SystemTime,
     expires: SystemTime,
+}
+
+impl Session {
+    fn new(profile: &str, keys: Keys, expires: SystemTime) -> Self {
+        Self { profile: profile.to_owned(), keys, issued: SystemTime::now(), expires }
+    }
+
+    /// 期限まで`margin`以上あるか。`margin`は有効期間の半分までに抑える。
+    fn fresh(&self, margin: Duration) -> bool {
+        let lifetime = self.expires.duration_since(self.issued).unwrap_or_default();
+        let margin = margin.min(lifetime / 2).max(EXPIRY_MARGIN);
+        self.expires > SystemTime::now() + margin
+    }
 }
 
 /// SSOのアクセストークン。メモリ上にだけ置く。
@@ -415,9 +444,25 @@ struct PendingSso {
     url: String,
 }
 
-/// ワークスペースごとの一時状態(一時クレデンシャル・SSOのトークン・MFAとSSOの入力待ち)。
+/// ワークスペースごとの一時状態。用途(`AwsSlot`)ごとに別々に持つ。
 #[derive(Default)]
 pub struct AwsState {
+    bedrock: SlotState,
+    sandbox: SlotState,
+}
+
+impl AwsState {
+    fn of(&self, slot: AwsSlot) -> &SlotState {
+        match slot {
+            AwsSlot::Bedrock => &self.bedrock,
+            AwsSlot::Sandbox => &self.sandbox,
+        }
+    }
+}
+
+/// 1つの用途の一時状態(一時クレデンシャル・SSOのトークン・MFAとSSOの入力待ち)。
+#[derive(Default)]
+struct SlotState {
     session: Mutex<Option<Session>>,
     /// 同時に複数の呼び出しが来ても、MFAの入力・SSOの承認と取得は1回にまとめる。
     refresh: tokio::sync::Mutex<()>,
@@ -427,19 +472,20 @@ pub struct AwsState {
     pending_sso: Mutex<Option<PendingSso>>,
 }
 
-fn session(ctx: &WorkspaceCtx) -> MutexGuard<'_, Option<Session>> {
-    ctx.shared.aws.session.lock().unwrap_or_else(|p| p.into_inner())
+fn session(ctx: &WorkspaceCtx, slot: AwsSlot) -> MutexGuard<'_, Option<Session>> {
+    ctx.shared.aws.of(slot).session.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-fn clear_session(ctx: &WorkspaceCtx) {
-    *session(ctx) = None;
+fn clear_session(ctx: &WorkspaceCtx, slot: AwsSlot) {
+    *session(ctx, slot) = None;
 }
 
-fn cached(ctx: &WorkspaceCtx, profile: &str) -> Option<Keys> {
-    session(ctx)
+/// 期限まで`margin`以上ある、そのプロファイルの一時キーと期限。
+fn cached(ctx: &WorkspaceCtx, slot: AwsSlot, profile: &str, margin: Duration) -> Option<(Keys, SystemTime)> {
+    session(ctx, slot)
         .as_ref()
-        .filter(|s| s.profile == profile && s.expires > SystemTime::now() + EXPIRY_MARGIN)
-        .map(|s| s.keys.clone())
+        .filter(|s| s.profile == profile && s.fresh(margin))
+        .map(|s| (s.keys.clone(), s.expires))
 }
 
 // ---- MFAコードの入力待ち ----
@@ -459,13 +505,15 @@ struct MfaPrompt {
     error: Option<String>,
     /// どのワークスペース(`personal`またはエージェントID)が求めているか。コードはこのIDで返す。
     workspace_id: String,
+    /// どの用途の設定か。コードはこの用途へ返す。
+    slot: AwsSlot,
     /// エージェントの名称とイメージカラー(パーソナルは`None`)。入力欄で、どのエージェントのコードかを示す。
     workspace_name: Option<String>,
     workspace_color: Option<String>,
 }
 
-fn pending(ctx: &WorkspaceCtx) -> MutexGuard<'_, Option<oneshot::Sender<String>>> {
-    ctx.shared.aws.pending_mfa.lock().unwrap_or_else(|p| p.into_inner())
+fn pending(ctx: &WorkspaceCtx, slot: AwsSlot) -> MutexGuard<'_, Option<oneshot::Sender<String>>> {
+    ctx.shared.aws.of(slot).pending_mfa.lock().unwrap_or_else(|p| p.into_inner())
 }
 
 fn app() -> Result<&'static AppHandle, AppError> {
@@ -480,13 +528,14 @@ fn workspace_label(app: &AppHandle, ctx: &WorkspaceCtx) -> (Option<String>, Opti
 async fn ask_mfa(ctx: &WorkspaceCtx, mut prompt: MfaPrompt) -> Result<String, AppError> {
     let app = app()?;
     (prompt.workspace_name, prompt.workspace_color) = workspace_label(app, ctx);
+    let slot = prompt.slot;
     let (tx, rx) = oneshot::channel();
-    *pending(ctx) = Some(tx);
+    *pending(ctx, slot) = Some(tx);
     app.emit(MFA_EVENT, prompt).map_err(|e| AppError::AwsConfig(e.to_string()))?;
     match tokio::time::timeout(MFA_TIMEOUT, rx).await {
         Ok(Ok(code)) => Ok(code),
         _ => {
-            pending(ctx).take();
+            pending(ctx, slot).take();
             Err(AppError::MfaRequired)
         }
     }
@@ -497,20 +546,20 @@ fn valid_mfa_code(code: &str) -> bool {
 }
 
 /// 入力されたMFAコードを、待っている呼び出しへ渡す。待っていなければ何もしない。
-pub fn submit_mfa(ctx: &WorkspaceCtx, code: &str) -> Result<(), AppError> {
+pub fn submit_mfa(ctx: &WorkspaceCtx, slot: AwsSlot, code: &str) -> Result<(), AppError> {
     let code = code.trim();
     if !valid_mfa_code(code) {
         return Err(AppError::AwsConfig("MFA code must be 6 digits".to_owned()));
     }
-    if let Some(tx) = pending(ctx).take() {
+    if let Some(tx) = pending(ctx, slot).take() {
         let _ = tx.send(code.to_owned());
     }
     Ok(())
 }
 
 /// MFAコードの入力を取りやめる(待っている呼び出しは`MfaRequired`で失敗する)。
-pub fn cancel_mfa(ctx: &WorkspaceCtx) {
-    pending(ctx).take();
+pub fn cancel_mfa(ctx: &WorkspaceCtx, slot: AwsSlot) {
+    pending(ctx, slot).take();
 }
 
 // ---- AWS呼び出し ----
@@ -590,10 +639,10 @@ async fn assume_role(ctx: &WorkspaceCtx, a: &AssumeRole, base: &Keys, region: &s
 
 /// MFAが必要なら画面でコードを入力してもらい、AssumeRoleする。コードが拒否されたら理由付きで再入力を求める。
 /// 引き受け元がSSOなら、先にSSOで引き受け元のクレデンシャルを得る(必要ならブラウザでの承認を求める)。
-async fn assume_with_prompt(ctx: &WorkspaceCtx, profile: &str, a: &AssumeRole, region: &str) -> Result<Keys, AppError> {
+async fn assume_with_prompt(ctx: &WorkspaceCtx, slot: AwsSlot, profile: &str, a: &AssumeRole, region: &str) -> Result<(Keys, SystemTime), AppError> {
     let base = match &a.source {
         Base::Keys(keys) => keys.clone(),
-        Base::Sso(sso) => sso_role_keys(ctx, profile, sso).await?.0,
+        Base::Sso(sso) => sso_role_keys(ctx, slot, profile, sso).await?.0,
     };
     let mut last_error: Option<String> = None;
     for _ in 0..MFA_ATTEMPTS {
@@ -604,6 +653,7 @@ async fn assume_with_prompt(ctx: &WorkspaceCtx, profile: &str, a: &AssumeRole, r
                     mfa_serial: serial.clone(),
                     error: last_error.take(),
                     workspace_id: ctx.id.clone(),
+                    slot,
                     workspace_name: None,
                     workspace_color: None,
                 })
@@ -613,8 +663,8 @@ async fn assume_with_prompt(ctx: &WorkspaceCtx, profile: &str, a: &AssumeRole, r
         };
         match assume_role(ctx, a, &base, region, code.as_deref()).await {
             Ok((keys, expires)) => {
-                *session(ctx) = Some(Session { profile: profile.to_owned(), keys: keys.clone(), expires });
-                return Ok(keys);
+                *session(ctx, slot) = Some(Session::new(profile, keys.clone(), expires));
+                return Ok((keys, expires));
             }
             Err(f) => match (f.into_error(), code) {
                 (AppError::ProviderRejected(m), Some(_)) => last_error = Some(m),
@@ -637,27 +687,35 @@ struct SsoPrompt {
     /// 承認の期限(UNIX秒)。
     expires_at: i64,
     workspace_id: String,
+    slot: AwsSlot,
     workspace_name: Option<String>,
     workspace_color: Option<String>,
 }
 
-fn sso_tokens(ctx: &WorkspaceCtx) -> MutexGuard<'_, HashMap<String, SsoToken>> {
-    ctx.shared.aws.sso_tokens.lock().unwrap_or_else(|p| p.into_inner())
+/// SSOの承認待ちが終わったことの通知。
+#[derive(Serialize, Clone)]
+struct SsoFinished {
+    workspace_id: String,
+    slot: AwsSlot,
 }
 
-fn pending_sso(ctx: &WorkspaceCtx) -> MutexGuard<'_, Option<PendingSso>> {
-    ctx.shared.aws.pending_sso.lock().unwrap_or_else(|p| p.into_inner())
+fn sso_tokens(ctx: &WorkspaceCtx, slot: AwsSlot) -> MutexGuard<'_, HashMap<String, SsoToken>> {
+    ctx.shared.aws.of(slot).sso_tokens.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+fn pending_sso(ctx: &WorkspaceCtx, slot: AwsSlot) -> MutexGuard<'_, Option<PendingSso>> {
+    ctx.shared.aws.of(slot).pending_sso.lock().unwrap_or_else(|p| p.into_inner())
 }
 
 /// SSOの承認待ちを取りやめる(待っている呼び出しは`SsoRequired`で失敗する)。
-pub fn cancel_sso(ctx: &WorkspaceCtx) {
-    pending_sso(ctx).take();
+pub fn cancel_sso(ctx: &WorkspaceCtx, slot: AwsSlot) {
+    pending_sso(ctx, slot).take();
 }
 
 /// 承認待ちのSSOの承認ページを、既定のブラウザで開く。待っていなければ何もしない。
 /// URLは発行元(SSO OIDC)が返したものだけを使い、フロントエンドからは受け取らない。
-pub fn open_sso(ctx: &WorkspaceCtx) -> Result<(), AppError> {
-    let Some(url) = pending_sso(ctx).as_ref().map(|p| p.url.clone()) else { return Ok(()) };
+pub fn open_sso(ctx: &WorkspaceCtx, slot: AwsSlot) -> Result<(), AppError> {
+    let Some(url) = pending_sso(ctx, slot).as_ref().map(|p| p.url.clone()) else { return Ok(()) };
     if !url.starts_with("https://") {
         return Err(AppError::AwsConfig("unexpected SSO verification URL".to_owned()));
     }
@@ -685,10 +743,10 @@ fn unix_secs(t: SystemTime) -> i64 {
 }
 
 /// 期限内のアクセストークン。無ければリフレッシュトークンで黙って更新し、それもできなければブラウザでの承認を求める。
-async fn sso_access_token(ctx: &WorkspaceCtx, profile: &str, sso: &Sso) -> Result<String, AppError> {
+async fn sso_access_token(ctx: &WorkspaceCtx, slot: AwsSlot, profile: &str, sso: &Sso) -> Result<String, AppError> {
     let key = sso.token_key();
     let refresh = {
-        let tokens = sso_tokens(ctx);
+        let tokens = sso_tokens(ctx, slot);
         match tokens.get(&key) {
             Some(t) if t.expires > SystemTime::now() + EXPIRY_MARGIN => return Ok(t.access_token.clone()),
             Some(t) => t.refresh.clone(),
@@ -701,12 +759,12 @@ async fn sso_access_token(ctx: &WorkspaceCtx, profile: &str, sso: &Sso) -> Resul
             Ok(token) => token,
             // 通信の失敗は、承認のやり直しでは直らないのでそのまま返す
             Err(e @ (AppError::Timeout | AppError::Network)) => return Err(e),
-            Err(_) => sso_authorize(ctx, &client, profile, sso).await?,
+            Err(_) => sso_authorize(ctx, slot, &client, profile, sso).await?,
         },
-        _ => sso_authorize(ctx, &client, profile, sso).await?,
+        _ => sso_authorize(ctx, slot, &client, profile, sso).await?,
     };
     let access_token = token.access_token.clone();
-    sso_tokens(ctx).insert(key, token);
+    sso_tokens(ctx, slot).insert(key, token);
     Ok(access_token)
 }
 
@@ -728,7 +786,7 @@ async fn sso_refresh(client: &aws_sdk_ssooidc::Client, r: &SsoRefresh) -> Result
 }
 
 /// デバイス認可フロー。画面に確認コードを出し、利用者がブラウザで承認するまで待つ。
-async fn sso_authorize(ctx: &WorkspaceCtx, client: &aws_sdk_ssooidc::Client, profile: &str, sso: &Sso) -> Result<SsoToken, AppError> {
+async fn sso_authorize(ctx: &WorkspaceCtx, slot: AwsSlot, client: &aws_sdk_ssooidc::Client, profile: &str, sso: &Sso) -> Result<SsoToken, AppError> {
     let app = app()?;
     let mut register = client.register_client().client_name(SSO_CLIENT_NAME).client_type("public");
     if !sso.scopes.is_empty() {
@@ -755,7 +813,7 @@ async fn sso_authorize(ctx: &WorkspaceCtx, client: &aws_sdk_ssooidc::Client, pro
     };
 
     let (tx, mut cancelled) = oneshot::channel::<()>();
-    *pending_sso(ctx) = Some(PendingSso { _cancel: tx, url });
+    *pending_sso(ctx, slot) = Some(PendingSso { _cancel: tx, url });
     let (workspace_name, workspace_color) = workspace_label(app, ctx);
     let prompt = SsoPrompt {
         profile: profile.to_owned(),
@@ -763,6 +821,7 @@ async fn sso_authorize(ctx: &WorkspaceCtx, client: &aws_sdk_ssooidc::Client, pro
         verification_uri,
         expires_at: unix_secs(SystemTime::now() + lifetime),
         workspace_id: ctx.id.clone(),
+        slot,
         workspace_name,
         workspace_color,
     };
@@ -801,8 +860,8 @@ async fn sso_authorize(ctx: &WorkspaceCtx, client: &aws_sdk_ssooidc::Client, pro
             }
         },
     };
-    pending_sso(ctx).take();
-    let _ = app.emit(SSO_FINISHED_EVENT, ctx.id.clone());
+    pending_sso(ctx, slot).take();
+    let _ = app.emit(SSO_FINISHED_EVENT, SsoFinished { workspace_id: ctx.id.clone(), slot });
     let out = result?;
     let access_token = out.access_token().ok_or(AppError::BadResponse)?.to_owned();
     let refresh = out.refresh_token().map(|token| SsoRefresh { token: token.to_owned(), client_id, client_secret, client_expires });
@@ -810,17 +869,17 @@ async fn sso_authorize(ctx: &WorkspaceCtx, client: &aws_sdk_ssooidc::Client, pro
 }
 
 /// SSOのロールの一時クレデンシャルと期限。トークンが無効と言われたら、1回だけ承認からやり直す。
-async fn sso_role_keys(ctx: &WorkspaceCtx, profile: &str, sso: &Sso) -> Result<(Keys, SystemTime), AppError> {
+async fn sso_role_keys(ctx: &WorkspaceCtx, slot: AwsSlot, profile: &str, sso: &Sso) -> Result<(Keys, SystemTime), AppError> {
     let mut conf = aws_sdk_sso::Config::builder().behavior_version_latest().region(Region::new(sso.sso_region.clone()));
     conf.set_http_client(super::proxy::aws_http_client_for(ctx));
     let client = aws_sdk_sso::Client::from_conf(conf.build());
     for attempt in 0..2 {
-        let token = sso_access_token(ctx, profile, sso).await?;
+        let token = sso_access_token(ctx, slot, profile, sso).await?;
         let req = client.get_role_credentials().account_id(&sso.account_id).role_name(&sso.role_name).access_token(token).send();
         let out = match tokio::time::timeout(STS_TIMEOUT, req).await.map_err(|_| AppError::Timeout)? {
             Ok(out) => out,
             Err(e) if attempt == 0 && e.as_service_error().is_some_and(|s| s.is_unauthorized_exception()) => {
-                sso_tokens(ctx).remove(&sso.token_key());
+                sso_tokens(ctx, slot).remove(&sso.token_key());
                 continue;
             }
             Err(e) => return Err(Failure::of(&e).into_error()),
@@ -838,58 +897,109 @@ async fn sso_role_keys(ctx: &WorkspaceCtx, profile: &str, sso: &Sso) -> Result<(
     unreachable!("the second attempt always returns")
 }
 
-/// 選択中のプロファイルで使うクレデンシャルとリージョン。
-async fn credentials(ctx: &WorkspaceCtx) -> Result<(Keys, String), AppError> {
-    let (config, credentials) = ctx.secrets.get_aws_files()?;
-    let ini = merged(&config, &credentials);
-    let saved = ctx.secrets.get_aws_profile()?;
-    let name = selected(&ini, saved.as_deref()).ok_or_else(|| AppError::KeyMissing("bedrock".to_owned()))?;
-    let Resolved { region, source } = resolve(&ini, &name)?;
-    let keys = match source {
-        Source::Static(keys) => keys,
-        temporary => match cached(ctx, &name) {
-            Some(keys) => keys,
-            None => {
-                let _guard = ctx.shared.aws.refresh.lock().await;
-                match (cached(ctx, &name), &temporary) {
-                    (Some(keys), _) => keys,
-                    (None, Source::Static(keys)) => keys.clone(),
-                    (None, Source::AssumeRole(a)) => assume_with_prompt(ctx, &name, a, &region).await?,
-                    (None, Source::Sso(sso)) => {
-                        let (keys, expires) = sso_role_keys(ctx, &name, sso).await?;
-                        *session(ctx) = Some(Session { profile: name.clone(), keys: keys.clone(), expires });
-                        keys
-                    }
-                }
-            }
-        },
-    };
-    Ok((keys, region))
+/// 発行した認証情報。キーはこのモジュールの外へ出さない。
+struct Issued {
+    keys: Keys,
+    region: String,
+    /// 一時キーの期限。アクセスキーをそのまま使うときは`None`。
+    expires: Option<SystemTime>,
 }
 
-/// サンドボックスのコマンドへ渡す、選択中のプロファイルの認証情報(環境変数の名前と値)。
-/// ロールを引き受けるプロファイルとSSOのプロファイルは、通常のBedrock呼び出しと同じ流れ(MFA入力・SSOの承認・メモリ上のキャッシュ)で一時キーを得る。
-pub async fn env_pairs(ctx: &WorkspaceCtx) -> Result<Vec<(String, String)>, AppError> {
-    let (keys, region) = credentials(ctx).await?;
-    let mut pairs = vec![
-        ("AWS_ACCESS_KEY_ID".to_owned(), keys.access_key_id),
-        ("AWS_SECRET_ACCESS_KEY".to_owned(), keys.secret_access_key),
-    ];
-    if let Some(token) = keys.session_token {
-        pairs.push(("AWS_SESSION_TOKEN".to_owned(), token));
+/// 選択中のプロファイル名と、その解決結果。
+fn selected_profile(ctx: &WorkspaceCtx, slot: AwsSlot) -> Result<(String, Resolved), AppError> {
+    let (config, credentials) = ctx.secrets.get_aws_files(slot)?;
+    let ini = merged(&config, &credentials);
+    let saved = ctx.secrets.get_aws_profile(slot)?;
+    let name = selected(&ini, saved.as_deref()).ok_or_else(|| AppError::KeyMissing(slot_source(slot).to_owned()))?;
+    let resolved = resolve(&ini, &name)?;
+    Ok((name, resolved))
+}
+
+/// エラーの出どころとして示す名前。
+fn slot_source(slot: AwsSlot) -> &'static str {
+    match slot {
+        AwsSlot::Bedrock => "bedrock",
+        AwsSlot::Sandbox => "sandbox_aws",
     }
-    pairs.push(("AWS_REGION".to_owned(), region.clone()));
-    pairs.push(("AWS_DEFAULT_REGION".to_owned(), region));
-    Ok(pairs)
+}
+
+/// 選択中のプロファイルで使うクレデンシャルとリージョン。一時キーは、期限まで`margin`を切っていたら取り直す。
+async fn credentials(ctx: &WorkspaceCtx, slot: AwsSlot, margin: Duration) -> Result<Issued, AppError> {
+    let (name, Resolved { region, source }) = selected_profile(ctx, slot)?;
+    let (keys, expires) = match source {
+        Source::Static(keys) => (keys, None),
+        temporary => {
+            let (keys, expires) = match cached(ctx, slot, &name, margin) {
+                Some(found) => found,
+                None => {
+                    let _guard = ctx.shared.aws.of(slot).refresh.lock().await;
+                    match (cached(ctx, slot, &name, margin), &temporary) {
+                        (Some(found), _) => found,
+                        (None, Source::Static(_)) => unreachable!("static keys are handled above"),
+                        (None, Source::AssumeRole(a)) => assume_with_prompt(ctx, slot, &name, a, &region).await?,
+                        (None, Source::Sso(sso)) => {
+                            let (keys, expires) = sso_role_keys(ctx, slot, &name, sso).await?;
+                            *session(ctx, slot) = Some(Session::new(&name, keys.clone(), expires));
+                            (keys, expires)
+                        }
+                    }
+                }
+            };
+            (keys, Some(expires))
+        }
+    };
+    Ok(Issued { keys, region, expires })
+}
+
+/// 選択中のプロファイルのリージョン(ネットワークは使わない)。未登録・使えないときは`None`。
+pub fn selected_region(ctx: &WorkspaceCtx, slot: AwsSlot) -> Option<String> {
+    selected_profile(ctx, slot).ok().map(|(_, r)| r.region)
+}
+
+/// Bedrockの呼び出しに署名するための認証情報とリージョン。ホストの中継(`sandbox_bridge`)専用で、コンテナへは渡さない。
+/// ロールを引き受けるプロファイルとSSOのプロファイルは、MFA入力・SSOの承認・メモリ上のキャッシュの流れで一時キーを得る。
+pub(crate) async fn bedrock_signing(ctx: &WorkspaceCtx) -> Result<(Credentials, String), AppError> {
+    let issued = credentials(ctx, AwsSlot::Bedrock, EXPIRY_MARGIN).await?;
+    Ok((issued.keys.credentials(), issued.region))
+}
+
+/// Bedrockの一時キーを捨てる(期限切れと言われたときに、次の呼び出しで取り直すため)。
+pub(crate) fn invalidate(ctx: &WorkspaceCtx, slot: AwsSlot) {
+    clear_session(ctx, slot);
+}
+
+/// コンテナのコマンドへ配る一時キー。AWS CLI・SDKの`credential_process`が読む形式(JSON)と、出力で伏せる値を返す。
+/// 期限が近い一時キーは、CLI・SDKが更新を始める前に取り直しておく。
+pub(crate) async fn handout_json(ctx: &WorkspaceCtx) -> Result<(String, Vec<String>), AppError> {
+    let issued = credentials(ctx, AwsSlot::Sandbox, HANDOUT_MARGIN).await?;
+    let k = &issued.keys;
+    let values = [Some(&k.access_key_id), Some(&k.secret_access_key), k.session_token.as_ref()].into_iter().flatten().cloned().collect();
+    Ok((process_json(&issued), values))
+}
+
+fn process_json(issued: &Issued) -> String {
+    let mut v = serde_json::json!({
+        "Version": 1,
+        "AccessKeyId": issued.keys.access_key_id,
+        "SecretAccessKey": issued.keys.secret_access_key,
+    });
+    if let Some(token) = &issued.keys.session_token {
+        v["SessionToken"] = token.clone().into();
+    }
+    if let Some(expires) = issued.expires {
+        let at: chrono::DateTime<chrono::Utc> = expires.into();
+        v["Expiration"] = at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true).into();
+    }
+    v.to_string()
 }
 
 /// 認証(選択中のプロファイル・MFA・SSO・ロールの引き受け)が通るかを、STSのGetCallerIdentityで確かめる。MFAやSSOの承認が必要なら画面で求める。
 /// モデルは呼ばない(Bedrockは、コンテナ内の Claude Code が settings.json のモデルで呼ぶ)。
-pub async fn test_connection(ctx: &WorkspaceCtx) -> Result<(), AppError> {
+pub async fn test_connection(ctx: &WorkspaceCtx, slot: AwsSlot) -> Result<(), AppError> {
     for attempt in 0..2 {
-        let (keys, region) = credentials(ctx).await?;
-        match caller_identity(ctx, &keys, &region).await {
-            Err(f) if f.expired() && attempt == 0 => clear_session(ctx),
+        let issued = credentials(ctx, slot, EXPIRY_MARGIN).await?;
+        match caller_identity(ctx, &issued.keys, &issued.region).await {
+            Err(f) if f.expired() && attempt == 0 => clear_session(ctx, slot),
             result => return result.map_err(Failure::into_error),
         }
     }
@@ -1122,6 +1232,36 @@ aws_session_token=tok
         assert!(!valid_mfa_code("12345"));
         assert!(!valid_mfa_code("12345a"));
         assert!(!valid_mfa_code("１２３４５６"));
+    }
+
+    #[test]
+    fn handout_is_in_credential_process_format() {
+        let keys = Keys { access_key_id: "AKIA1".into(), secret_access_key: "s".into(), session_token: Some("t".into()) };
+        let expires = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        let v: serde_json::Value =
+            serde_json::from_str(&process_json(&Issued { keys: keys.clone(), region: "r".into(), expires: Some(expires) })).unwrap();
+        assert_eq!(v["Version"], 1);
+        assert_eq!((v["AccessKeyId"].as_str(), v["SecretAccessKey"].as_str(), v["SessionToken"].as_str()), (Some("AKIA1"), Some("s"), Some("t")));
+        assert_eq!(v["Expiration"], "2027-01-15T08:00:00Z");
+        // アクセスキーをそのまま使うときは、期限もトークンも付けない
+        let plain = Keys { session_token: None, ..keys };
+        let v: serde_json::Value = serde_json::from_str(&process_json(&Issued { keys: plain, region: "r".into(), expires: None })).unwrap();
+        assert!(v.get("Expiration").is_none() && v.get("SessionToken").is_none());
+    }
+
+    #[test]
+    fn handout_margin_is_capped_by_the_session_lifetime() {
+        let keys = Keys { access_key_id: "a".into(), secret_access_key: "b".into(), session_token: None };
+        let now = SystemTime::now();
+        // 1時間のセッション: 残り20分なら使い続け、残り10分なら取り直す
+        let s = |left: u64| Session { profile: "p".into(), keys: keys.clone(), issued: now - Duration::from_secs(3600 - left), expires: now + Duration::from_secs(left) };
+        assert!(s(20 * 60).fresh(HANDOUT_MARGIN));
+        assert!(!s(10 * 60).fresh(HANDOUT_MARGIN));
+        // 15分のセッションは、有効期間の半分(7.5分)までは使う(取得のたびに取り直さない)
+        let short = Session { profile: "p".into(), keys: keys.clone(), issued: now, expires: now + Duration::from_secs(15 * 60) };
+        assert!(short.fresh(HANDOUT_MARGIN));
+        // Bedrock の署名は、期限の1分前まで使う
+        assert!(s(120).fresh(EXPIRY_MARGIN) && !s(30).fresh(EXPIRY_MARGIN));
     }
 
     #[test]

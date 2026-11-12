@@ -5,7 +5,15 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { ExternalLink, Loader2, ShieldCheck } from "lucide-react";
 import { useT } from "@/lib/i18n";
-import { AWS_SSO_EVENT, AWS_SSO_FINISHED_EVENT, type AwsSsoPrompt, cancelAwsSso, openAwsSso, reportError } from "@/lib/api";
+import {
+  AWS_SSO_EVENT,
+  AWS_SSO_FINISHED_EVENT,
+  type AwsSsoFinished,
+  type AwsSsoPrompt,
+  cancelAwsSso,
+  openAwsSso,
+  reportError,
+} from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -13,21 +21,26 @@ import { Button } from "@/components/ui/button";
  * ブラウザは勝手に開かず、ボタンで開く(裏のエージェントが求めたときに、突然ブラウザが前面に出ないようにする)。
  * 承認が済む(または期限切れ・取り消し)まで呼び出し側は待っていて、終わるとRustからの通知で閉じる。
  */
+/** 承認待ちの区別(ワークスペースと用途の組)。 */
+const keyOf = (p: { workspace_id: string; slot: string }) => `${p.workspace_id}/${p.slot}`;
+
 export default function SsoModal() {
   const t = useT();
   // 複数のワークスペースが同時に求めることがあるので、順に出す(同じワークスペースの再要求は置き換える)
   const [queue, setQueue] = useState<AwsSsoPrompt[]>([]);
   const prompt = queue[0] ?? null;
-  // ブラウザを開いたワークスペース。開いた後は、承認待ちの表示にする
+  // ブラウザを開いた承認待ち(`keyOf`)。開いた後は、承認待ちの表示にする
   const [opened, setOpened] = useState<string | null>(null);
 
   useEffect(() => {
     const required = listen<AwsSsoPrompt>(AWS_SSO_EVENT, (e) => {
-      setOpened((id) => (id === e.payload.workspace_id ? null : id));
-      setQueue((q) => [...q.filter((p) => p.workspace_id !== e.payload.workspace_id), e.payload]);
+      const key = keyOf(e.payload);
+      setOpened((k) => (k === key ? null : k));
+      setQueue((q) => [...q.filter((p) => keyOf(p) !== key), e.payload]);
     });
-    const finished = listen<string>(AWS_SSO_FINISHED_EVENT, (e) => {
-      setQueue((q) => q.filter((p) => p.workspace_id !== e.payload));
+    const finished = listen<AwsSsoFinished>(AWS_SSO_FINISHED_EVENT, (e) => {
+      const key = keyOf(e.payload);
+      setQueue((q) => q.filter((p) => keyOf(p) !== key));
     });
     return () => {
       required.then((f) => f());
@@ -37,18 +50,19 @@ export default function SsoModal() {
 
   if (!prompt) return null;
 
-  const waiting = opened === prompt.workspace_id;
+  const key = keyOf(prompt);
+  const waiting = opened === key;
   const openBrowser = async () => {
     try {
-      await openAwsSso(prompt.workspace_id);
-      setOpened(prompt.workspace_id);
+      await openAwsSso(prompt.workspace_id, prompt.slot);
+      setOpened(key);
     } catch (e) {
       toast.error(reportError(e));
     }
   };
   const cancel = () => {
-    cancelAwsSso(prompt.workspace_id).catch(() => {});
-    setQueue((q) => q.filter((p) => p.workspace_id !== prompt.workspace_id));
+    cancelAwsSso(prompt.workspace_id, prompt.slot).catch(() => {});
+    setQueue((q) => q.filter((p) => keyOf(p) !== key));
   };
 
   return (
@@ -68,6 +82,7 @@ export default function SsoModal() {
           {t("エージェント: {name}", { name: prompt.workspace_name ?? t("パーソナル") })}
         </p>
         <p className="mt-2 text-xs text-muted-foreground">
+          {prompt.slot === "sandbox" && <>{t("コンテナ内のコマンド用のAWS設定です。")} </>}
           {t("AWSプロファイル「{profile}」の利用に、ブラウザでの承認が必要です。ブラウザに表示されるコードが下と同じことを確かめてから承認してください。", {
             profile: prompt.profile,
           })}

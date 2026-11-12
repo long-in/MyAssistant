@@ -1,7 +1,8 @@
 //! サンドボックスのエージェント(コンテナ内の Claude Code)の接続の設定と、渡す環境変数。
 //!
 //! - 接続先は Amazon Bedrock に固定。モデル・1回の指示の上限時間を、エージェントごとに持つ(`LLM_KEY`)。
-//! - 認証は、アプリの AWS 設定からホストで発行した一時キーを、実行ごとの環境変数で渡す(`sandbox::env_for`。`sandbox.env`の同名が優先)。
+//! - Bedrock の認証情報はコンテナへ渡さない。Claude Code は署名せずにホストの中継へ送り、中継が Bedrock 用の AWS 設定で署名する(`sandbox_bridge`)。
+//!   コンテナ内のコマンドが使う AWS は、別に登録したコンテナ用の AWS 設定(`sandbox::env_for`。`sandbox.env`の同名が優先)。
 //! - アプリが決める環境変数は秘密でない値だけ。`sandbox.env`に同じ名前があれば、そちらが優先される。
 //! - 1回の指示は`run_turn`で、コンテナ内の`claude -p`(ヘッドレスモード)を起動し、`stream-json`の出力を逐次解析する。
 //!   システムプロンプト・セッションID・ツールのリストなどの可変の値は、シェルへ埋め込まず`MYASSISTANT_`の環境変数で渡す。
@@ -14,7 +15,7 @@ use super::{
     cancel::CancelToken,
     global_settings::SettingsStore,
     permissions,
-    sandbox,
+    sandbox, sandbox_bridge,
     shell::Stream,
     workspace::WorkspaceCtx,
 };
@@ -47,14 +48,23 @@ const SYSTEM_MAX_BYTES: usize = 100 * 1024;
 const CLAUDE_COMMAND: &str = r#"exec claude -p --input-format stream-json --output-format stream-json --verbose --permission-prompt-tool stdio --permission-mode acceptEdits ${MYASSISTANT_DISALLOWED_TOOLS:+--disallowedTools "$MYASSISTANT_DISALLOWED_TOOLS"} ${MYASSISTANT_RESUME:+--resume "$MYASSISTANT_RESUME"} ${MYASSISTANT_MODEL:+--model "$MYASSISTANT_MODEL"} ${MYASSISTANT_SETTINGS:+--settings "$MYASSISTANT_SETTINGS"} --append-system-prompt "$MYASSISTANT_SYSTEM_PROMPT""#;
 
 /// アプリが決める、秘密でない環境変数の名前。出力の伏せ字の対象から外す。
-pub const NON_SECRET_NAMES: [&str; 2] = ["CLAUDE_CODE_USE_BEDROCK", "ANTHROPIC_MODEL"];
+pub const NON_SECRET_NAMES: [&str; 3] = ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_SKIP_BEDROCK_AUTH", "ANTHROPIC_MODEL"];
+/// モデルを指定する環境変数(settings.json の`env`・`sandbox.env`)。中継で呼べるモデルに加える。
+const MODEL_ENV_NAMES: [&str; 6] = [
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_SMALL_FAST_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "CLAUDE_CODE_SUBAGENT_MODEL",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Provider {
     /// 旧設定の読み込み用。`normalized`で Bedrock に直すので、実行では使われない。
     Anthropic,
-    /// Amazon Bedrock(アプリの AWS 設定の一時キー)。
+    /// Amazon Bedrock(アプリの AWS 設定で、ホストの中継が署名する)。
     #[default]
     Bedrock,
 }
@@ -225,26 +235,29 @@ pub fn app_env() -> BTreeMap<String, String> {
     vars
 }
 
-/// アプリが決める値の上に、認証情報(`sandbox.env`とAWSの一時キー)を重ねる。同じ名前は認証情報の側が優先。
+/// アプリが決める値の上に、中継の設定と`sandbox.env`を重ねる。同じ名前は後から重ねた側が優先。
 pub fn merge_env(credentials: BTreeMap<String, String>) -> BTreeMap<String, String> {
     let mut vars = app_env();
     vars.extend(credentials);
     vars
 }
 
-fn has(vars: &BTreeMap<String, String>, name: &str) -> bool {
-    vars.get(name).is_some_and(|v| !v.trim().is_empty())
-}
-
-/// Bedrock に必要な認証情報がそろっているか。そろっていなければ、実行せずに利用者向けの文面で失敗する。
-pub fn check_credentials(vars: &BTreeMap<String, String>) -> Result<(), String> {
-    if !has(vars, "AWS_ACCESS_KEY_ID") || !has(vars, "AWS_SECRET_ACCESS_KEY") {
-        return Err("Bedrock の認証情報がありません。このエージェントに AWS の設定を登録してください。".into());
-    }
-    if !has(vars, "AWS_REGION") {
-        return Err("Bedrock のリージョンがありません。AWS の設定のプロファイルに region を指定するか、sandbox.env に AWS_REGION を書いてください。".into());
-    }
-    Ok(())
+/// 中継で呼んでよいモデルを決めるための、設定で指定されたモデル。
+/// settings.json の`model`・`availableModels`、チャットで選んだモデル、settings.json の`env`と`sandbox.env`のモデルの環境変数。
+fn configured_models(settings: &str, env: &BTreeMap<String, String>, available: Vec<String>, chosen: Option<&str>) -> Vec<String> {
+    let settings_env = match serde_json::from_str::<Value>(settings) {
+        Ok(Value::Object(root)) => match root.get("env") {
+            Some(Value::Object(e)) => e.clone(),
+            _ => serde_json::Map::new(),
+        },
+        _ => serde_json::Map::new(),
+    };
+    let from_env = MODEL_ENV_NAMES.iter().flat_map(|n| {
+        let a = settings_env.get(*n).and_then(Value::as_str).map(str::to_owned);
+        let b = env.get(*n).cloned();
+        a.into_iter().chain(b)
+    });
+    available.into_iter().chain(chosen.map(str::to_owned)).chain(from_env).collect()
 }
 
 // ------------------------------------------------------------------ 1回の指示の実行
@@ -506,8 +519,16 @@ pub async fn run_turn(
     }
     let cfg = load(&turn.ctx.db).map_err(|e| e.to_string())?;
     let mounts = sandbox::mounts_for(turn.knowledge_root)?;
-    let mut vars = merge_env(sandbox::env_for(turn.ctx).await?);
-    check_credentials(&vars)?;
+    // 個別設定・全体設定とも空なら、既定の拒否だけを渡す(拒否が無いまま動かさない)
+    let settings = effective_settings(&turn.ctx.db, &*turn.ctx.global).map_err(|e| e.to_string())?;
+    let settings = if settings.trim().is_empty() { fallback_settings() } else { settings };
+    let model = turn.model.map(str::trim).filter(|m| !m.is_empty());
+    let sandbox::ExecEnv { vars: env, mut grants } = sandbox::env_for(turn.ctx).await?;
+    let models = configured_models(&settings, &env, available_models(&turn.ctx.db, &*turn.ctx.global), model);
+    let (bedrock, bedrock_vars) = sandbox_bridge::bedrock_env(turn.ctx, sandbox_bridge::ModelPolicy::from_configured(models)).await?;
+    grants.push(bedrock);
+    let mut vars = merge_env(bedrock_vars);
+    vars.extend(env);
     // ツールなしの単発の呼び出しは、標準のツールをすべて拒否する(拒否は settings.json の許可より優先される)
     let deny = if turn.no_tools {
         let all: Vec<String> = DEFAULT_ALLOWED_TOOLS.iter().map(|s| (*s).to_owned()).collect();
@@ -516,11 +537,8 @@ pub async fn run_turn(
         turn.deny.clone()
     };
     vars.extend(internal_vars(&deny, turn.system, turn.resume)?);
-    // 個別設定・全体設定とも空なら、既定の拒否だけを渡す(拒否が無いまま動かさない)
-    let settings = effective_settings(&turn.ctx.db, &*turn.ctx.global).map_err(|e| e.to_string())?;
-    let settings = if settings.trim().is_empty() { fallback_settings() } else { settings };
     vars.extend(settings_env(&settings)?);
-    if let Some(model) = turn.model.map(str::trim).filter(|m| !m.is_empty()) {
+    if let Some(model) = model {
         if model.chars().count() > MODEL_MAX_CHARS || model.chars().any(char::is_control) {
             return Err("モデル名が正しくありません。".into());
         }
@@ -553,6 +571,7 @@ pub async fn run_turn(
         cwd: mounts.default_dir(),
         command: CLAUDE_COMMAND,
         vars,
+        grants,
         input: Some(input_rx),
         timeout: turn.timeout.unwrap_or_else(|| Duration::from_secs(u64::from(cfg.timeout_mins) * 60)),
     };
@@ -686,7 +705,7 @@ pub fn guide() -> String {
 - /knowledge/data: 担当システムのフォルダ(ソースコードなど)。作業ディレクトリの既定。ノートは置かない。ただし作成した資料は /knowledge/data/reports に置く。\n\
 - /knowledge: このエージェントのナレッジ(Markdown)。調べた結果や覚えておくべきことは、data 以外の既存の構成に合わせてここへ書く。\n\
 - /knowledge はホストのフォルダで、変更はそのままホストに反映される。消す・上書きする前によく確かめる。\n\
-- 認証情報(APIキー・AWS)は環境変数として渡されている。値を読み取ったり出力したりしない。AWSのリソースは aws コマンドで扱える。\n\
+- 認証情報(APIキーなど)は環境変数として渡されている。値を読み取ったり出力したりしない。AWSのリソースは aws コマンドで扱える(認証は自動で取得される)。\n\
 - 最終回答は、何をしてどうなったかを短く伝える。音声で読み上げられることがある。"
     )
 }
@@ -817,12 +836,21 @@ mod tests {
     }
 
     #[test]
-    fn bedrock_credentials_are_required() {
-        // Anthropic のキーがあっても、Bedrock の認証情報の代わりにはならない
-        assert!(check_credentials(&vars(&[("ANTHROPIC_API_KEY", "sk-x")])).is_err());
-        assert!(check_credentials(&vars(&[("AWS_ACCESS_KEY_ID", "a"), ("AWS_SECRET_ACCESS_KEY", "b")])).is_err());
-        assert!(check_credentials(&vars(&[("AWS_ACCESS_KEY_ID", "a"), ("AWS_SECRET_ACCESS_KEY", " "), ("AWS_REGION", "us-east-1")])).is_err());
-        assert!(check_credentials(&vars(&[("AWS_ACCESS_KEY_ID", "a"), ("AWS_SECRET_ACCESS_KEY", "b"), ("AWS_REGION", "us-east-1")])).is_ok());
+    fn configured_models_come_from_settings_choice_and_env() {
+        let settings = r#"{"model":"ignored-here","env":{"ANTHROPIC_DEFAULT_HAIKU_MODEL":"us.anthropic.h","OTHER":"x"}}"#;
+        let env = vars(&[("ANTHROPIC_SMALL_FAST_MODEL", "us.anthropic.s"), ("AWS_REGION", "r")]);
+        let got = configured_models(settings, &env, vec!["us.anthropic.a".into()], Some("us.anthropic.c"));
+        assert_eq!(got, vec!["us.anthropic.a", "us.anthropic.c", "us.anthropic.s", "us.anthropic.h"]);
+        assert!(configured_models("{", &BTreeMap::new(), Vec::new(), None).is_empty());
+    }
+
+    #[tokio::test]
+    async fn bedrock_settings_are_required() {
+        // Bedrock 用の AWS 設定が無ければ、sandbox.env に AWS のキーがあっても実行しない(コンテナへ Bedrock のキーを渡さない)
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = WorkspaceCtx::open("ffffffff-0000-4000-8000-00000000c1a1", dir.path()).unwrap();
+        let e = sandbox_bridge::bedrock_env(&ctx, sandbox_bridge::ModelPolicy::AnyClaude).await.err().unwrap();
+        assert!(e.contains("Bedrock"), "{e}");
     }
 
     #[test]
@@ -920,7 +948,8 @@ mod tests {
     }
 
     /// 実Dockerでの通し確認。Dockerの起動とネットワークが必要で、初回はイメージのビルドに数分かかる。
-    /// ダミーの AWS キーで実行し、Claude Code が認証エラーの結果を返すことで、環境変数・標準入力・オプション・マウント・解析が通ることを確かめる。
+    /// ダミーの AWS キー(Bedrock 用の設定)で実行し、Claude Code が認証エラーの結果を返すことで、
+    /// 中継の署名と転送・環境変数・標準入力・オプション・マウント・解析が通ることを確かめる。
     /// `cargo test -- --ignored claude_turn_end_to_end`で実行する。
     #[tokio::test]
     #[ignore]
@@ -929,13 +958,20 @@ mod tests {
         sandbox::set_app_dir_for_test(&tmp.path().join("app"));
         let dir = tmp.path().join("agent");
         let id = "ffffffff-0000-4000-8000-00000000c1a0";
-        let ctx = WorkspaceCtx::open(id, &dir).unwrap();
+        let ctx = std::sync::Arc::new(WorkspaceCtx::open(id, &dir).unwrap());
+        sandbox_bridge::register_for_test(ctx.clone());
+        let ctx = &*ctx;
         let knowledge = dir.join("knowledge");
         std::fs::create_dir_all(&knowledge).unwrap();
-        std::fs::write(super::super::sandbox_env::path(&ctx.dir), "AWS_ACCESS_KEY_ID=AKIADUMMYNOTREAL0000\nAWS_SECRET_ACCESS_KEY=dummy-not-a-real-secret-0000\nAWS_REGION=us-east-1\n").unwrap();
+        let slot = crate::services::secrets::AwsSlot::Bedrock;
+        ctx.secrets
+            .set_aws_files(slot, "[default]\nregion = us-east-1", "[default]\naws_access_key_id = AKIADUMMYNOTREAL0000\naws_secret_access_key = dummy-not-a-real-secret-0000")
+            .unwrap();
+        ctx.secrets.set_aws_profile(slot, "default").unwrap();
+        sandbox::start_container(ctx, &sandbox::mounts_for(&knowledge).unwrap()).await.unwrap();
         let cancel = CancelToken::default();
         let mut events = Vec::new();
-        let turn = Turn { ctx: &ctx, knowledge_root: &knowledge, prompt: "こんにちは", system: "日本語で答える。'\"$(x)", resume: None, model: None, deny: vec!["WebFetch".into()], no_tools: false, timeout: None };
+        let turn = Turn { ctx, knowledge_root: &knowledge, prompt: "こんにちは", system: "日本語で答える。'\"$(x)", resume: None, model: None, deny: vec!["WebFetch".into()], no_tools: false, timeout: None };
         let r = run_turn(turn, &cancel, |_| Box::pin(async { false }), |e| events.push(e)).await.unwrap();
         assert!(r.is_error, "{r:?}");
         assert!(r.session_id.is_some(), "{r:?}");
@@ -943,7 +979,7 @@ mod tests {
         assert!(!r.text.contains("dummy-not-a-real-secret"), "{}", r.text);
         // 続きの指示(--resume)も同じ流れで通る
         let resume = r.session_id.clone().unwrap();
-        let turn = Turn { ctx: &ctx, knowledge_root: &knowledge, prompt: "続き", system: "x", resume: Some(&resume), model: None, deny: Vec::new(), no_tools: false, timeout: None };
+        let turn = Turn { ctx, knowledge_root: &knowledge, prompt: "続き", system: "x", resume: Some(&resume), model: None, deny: Vec::new(), no_tools: false, timeout: None };
         let r2 = run_turn(turn, &cancel, |_| Box::pin(async { false }), |_| {}).await.unwrap();
         assert!(r2.is_error, "{r2:?}");
         sandbox::remove_agent_blocking_for_test(id);

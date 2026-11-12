@@ -36,6 +36,7 @@ const DOCS: &[(&str, &str)] = &[
     doc!("memory.md"),
     doc!("proxy.md"),
     doc!("sandbox.md"),
+    doc!("sandbox-aws.md"),
     doc!("security.md"),
     doc!("skills.md"),
     doc!("user-profile.md"),

@@ -19,6 +19,7 @@ pub mod settings_registry;
 pub mod settings_transfer;
 pub mod sandbox;
 pub mod sandbox_agent;
+pub mod sandbox_bridge;
 pub mod sandbox_env;
 pub mod shell;
 pub mod skills;

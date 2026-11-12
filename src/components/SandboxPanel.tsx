@@ -17,6 +17,7 @@ import SandboxAgentSettings from "@/components/SandboxAgentSettings";
 import SandboxEnvEditor from "@/components/SandboxEnvEditor";
 import ClaudeSettingsEditor from "@/components/ClaudeSettingsEditor";
 import SandboxTimeout from "@/components/SandboxTimeout";
+import AwsPanel from "@/components/AwsPanel";
 
 /** イメージを再ビルドしたあと、まだコンテナを作り直していないエージェントのID(画面を離れても覚えておく)。 */
 const staleContainers = new Set<string>();
@@ -82,7 +83,9 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
             <p>{t("このエージェントへの指示を、専用のDockerコンテナの中の Claude Code が受け持ちます。調査・編集・コマンドの実行はすべてコンテナの中で行います。")}</p>
             <ul>
               <li>{t("コンテナから見えるのは、ナレッジ(/knowledge。担当フォルダ /knowledge/data を含む)と専用ボリュームだけです。ほかのエージェントや ~/.aws には届きません。")}</li>
-              <li>{t("認証情報(AI Link に登録した AWS の一時キー・sandbox.env)は、指示ごとに環境変数で渡します。")}</li>
+              <li>{t("AI Link に登録した Bedrock の認証情報は、コンテナへ渡しません。Claude Code の Bedrock への呼び出しは、アプリが中継して署名します。")}</li>
+              <li>{t("コンテナ内のコマンドが使う AWS の認証情報は、下の「コンテナ内の AWS」に別に登録します。コマンドは一時キーをアプリから自動で取得します(登録が無ければ AWS の認証情報は渡しません)。")}</li>
+              <li>{t("sandbox.env の値は、指示ごとに環境変数で渡します。")}</li>
               <li>{t("Dockerが使えないときは、ホストでは実行せずエラーにします。")}</li>
               <li>{t("チャットは、イメージのビルドとコンテナの起動を済ませてから使えます。")}</li>
               <li>{t("コマンドはLinux(Debian)上で動きます。brew や open などmacOS向けのコマンドは使えません。")}</li>
@@ -119,6 +122,10 @@ export default function SandboxPanel({ workspaceId }: { workspaceId: string }) {
 
             <div id="sandbox-dockerfile" className="scroll-mt-4">
               <SandboxDockerfile key={workspaceId} agent={{ id: workspaceId }} embedded onChange={refresh} onDirtyChange={setDockerfileDirty} />
+            </div>
+
+            <div className="border-t pt-4">
+              <AwsPanel key={workspaceId} slot="sandbox" onChanged={() => {}} />
             </div>
 
             <div className="border-t pt-4">

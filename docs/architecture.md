@@ -21,7 +21,9 @@ flowchart LR
   API -- invoke / Channel / event --> CMD
   SVC -- HTTPS --> EXT["Anthropic / AWS STS・SSO<br/>Google Cloud"]
   SVC -- "HTTP (127.0.0.1)" --> LL["llama-server<br/>(端末内の LLM)"]
-  SVC -- docker exec --> CC["コンテナ内の Claude Code<br/>(Amazon Bedrock)"]
+  SVC -- docker exec --> CC["コンテナ内の Claude Code"]
+  CC -- "HTTP(host.docker.internal)" --> BR["中継 sandbox_bridge<br/>(127.0.0.1)"]
+  BR -- "HTTPS(SigV4 で署名)" --> BRK["Amazon Bedrock"]
   SVC --> MIC["マイク (cpal)"]
 ```
 
@@ -33,6 +35,7 @@ flowchart LR
 | バックエンド | Tauri 2、tokio、reqwest、rusqlite、cpal(録音)、whisper-rs(ローカル音声認識) |
 | 保存 | SQLite(`timeline.db`)、Markdown(ナレッジ)、JSON(`secrets.json`)はワークスペースごとに別々に持つ([workspace.md](workspace.md))。全体設定は SQLite(`work/global_settings.db`)。詳細は [data-and-settings.md](data-and-settings.md) |
 | 外部プロセス | llama-server(端末内の LLM。[local-llm.md](local-llm.md))、docker CLI(サンドボックス。[sandbox.md](sandbox.md)) |
+| 待ち受け | サンドボックスの中継(`127.0.0.1` の空きポート。Bedrock の署名とコンテナ用の AWS の一時キーの配布。[sandbox-aws.md](sandbox-aws.md)) |
 
 静的エクスポートのため、フロントエンドにサーバー機能(API Routes、Server Actions 等)は無い。バックエンド処理は Rust の Tauri コマンドに実装し、`src/lib/api.ts` 経由で呼ぶ。
 
@@ -65,7 +68,7 @@ flowchart LR
 | `knowledge-updated` | ナレッジの更新(会話のキャプチャ・整理) |
 | `workspace-changed` | 選択中のワークスペース・エージェント一覧の変更 |
 | `task-attention` | 開いていないエージェントの承認待ち・完了・失敗([workspace.md](workspace.md#開いていないエージェントの通知)) |
-| `aws-mfa-required` / `aws-sso-required` / `aws-sso-finished` | MFA コードの入力要求、SSO の承認要求と終了([security.md](security.md#aws-認証awsrs)) |
+| `aws-mfa-required` / `aws-sso-required` / `aws-sso-finished` | MFA コードの入力要求、SSO の承認要求と終了。どれも用途(`slot`: `bedrock` / `sandbox`)を持つ([security.md](security.md#aws-認証awsrs)、[sandbox-aws.md](sandbox-aws.md)) |
 | `sandbox-build-progress` | イメージのビルドの進み具合([sandbox.md](sandbox.md)) |
 | `navigate` | メニューバー・トレイからの画面移動 |
 
@@ -90,7 +93,7 @@ flowchart LR
 | `secrets` | API キー・AWS 設定の保管庫(`secrets.json`) |
 | `debug` | デバッグログの出力先(ワークスペースごと) |
 | `global` | 全体設定(全ワークスペースで同じものを共有。[global-settings.md](global-settings.md)) |
-| `shared.aws` | AWS の一時クレデンシャル、SSO のトークン、MFA 入力・SSO 承認の待ち |
+| `shared.aws` | AWS の一時クレデンシャル、SSO のトークン、MFA 入力・SSO 承認の待ち(用途 `bedrock` / `sandbox` ごと) |
 | `shared.batch` | 整理バッチ(と統合の提案の承認)の多重実行防止 |
 | `shared.task` | 作業の依頼の実行状態(承認の応答口・中断・進捗と結果の記録)。切り替えても止まらない |
 | `shared`(削除の印) | 削除されたエージェントを、裏の処理が確かめて止まるための印(`ensure_alive`) |
