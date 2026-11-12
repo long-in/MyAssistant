@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, Eye, EyeOff, FolderOpen, KeyRound, Loader2, Plug, Trash2 } from "lucide-react";
+import { ChevronDown, FolderOpen, KeyRound, Loader2, Plug, Trash2 } from "lucide-react";
 import { StatusPill, UsedBy, linkCardClass } from "@/components/GlobalPanels";
 import { toast } from "sonner";
 import { useT } from "@/lib/i18n";
@@ -37,7 +37,7 @@ aws_secret_access_key = ...`;
 
 /**
  * Amazon Bedrock(Claude)の接続設定。`~/.aws/config`と`~/.aws/credentials`の中身をそのまま貼り付けて登録する。
- * 登録後は「更新」を開くと保存済みの内容が入った状態で編集できる。credentialsは既定で伏せ字にする。
+ * 登録後は「更新」を開くと保存済みの内容が入った状態で編集できる。
  */
 export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => void; usedBy?: string[] }) {
   const t = useT();
@@ -45,7 +45,6 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
   const [open, setOpen] = useState(false);
   const [config, setConfig] = useState("");
   const [credentials, setCredentials] = useState("");
-  const [reveal, setReveal] = useState(false);
   const [preview, setPreview] = useState<AwsProfile[]>([]);
   const [chosen, setChosen] = useState("");
   const [busy, setBusy] = useState<"save" | "test" | "delete" | null>(null);
@@ -90,7 +89,6 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
       .catch((e) => toast.error(reportError(e)));
     return () => {
       alive = false;
-      setReveal(false);
     };
   }, [open]);
 
@@ -243,31 +241,19 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
             />
           </label>
           <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1">
-              ~/.aws/credentials
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                aria-pressed={reveal}
-                onClick={() => setReveal((r) => !r)}
-              >
-                {reveal ? <EyeOff /> : <Eye />}
-                {reveal ? t("隠す") : t("表示")}
-              </Button>
-            </span>
+            <span>~/.aws/credentials</span>
             <Textarea
               autoComplete="off"
               spellCheck={false}
               rows={4}
-              className={cn("font-mono text-xs", !reveal && "[-webkit-text-security:disc]")}
+              className="font-mono text-xs"
               placeholder={CREDENTIALS_PLACEHOLDER}
               value={credentials}
               onChange={(e) => setCredentials(e.target.value)}
             />
           </label>
           <p className="text-xs text-muted-foreground">
-            {t("それぞれの中身をそのまま貼り付けます。登録済みの場合は保存済みの内容が入っているので、編集して保存してください。credentialsは既定で伏せ字です。")}
+            {t("それぞれの中身をそのまま貼り付けます。登録済みの場合は保存済みの内容が入っているので、編集して保存してください。")}
           </p>
           {pasted && (
             <div className="flex flex-col gap-1 text-xs text-muted-foreground">
