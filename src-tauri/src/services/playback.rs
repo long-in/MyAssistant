@@ -16,8 +16,11 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use symphonia::core::{
-    audio::SampleBuffer, codecs::DecoderOptions, errors::Error as SymError, formats::FormatOptions, io::MediaSourceStream,
-    meta::MetadataOptions, probe::Hint,
+    codecs::audio::AudioDecoderOptions,
+    errors::Error as SymError,
+    formats::{FormatOptions, TrackType, probe::Hint},
+    io::MediaSourceStream,
+    meta::MetadataOptions,
 };
 
 use super::audio::{peaks, resample};
@@ -63,21 +66,29 @@ fn decode_mp3(bytes: &[u8]) -> Result<(Vec<f32>, u32), AppError> {
     let mut hint = Hint::new();
     hint.with_extension("mp3");
     let mut format = symphonia::default::get_probe()
-        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
-        .map_err(audio_err)?
-        .format;
-    let track = format.default_track().ok_or_else(|| AppError::Audio("no audio track".into()))?;
+        .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
+        .map_err(audio_err)?;
+    let track = format.default_track(TrackType::Audio).ok_or_else(|| AppError::Audio("no audio track".into()))?;
     let track_id = track.id;
-    let mut rate = track.codec_params.sample_rate.unwrap_or(0);
-    let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default()).map_err(audio_err)?;
+    let params = track
+        .codec_params
+        .as_ref()
+        .and_then(|p| p.audio())
+        .ok_or_else(|| AppError::Audio("no audio track".into()))?;
+    let mut rate = params.sample_rate.unwrap_or(0);
+    let mut decoder = symphonia::default::get_codecs()
+        .make_audio_decoder(params, &AudioDecoderOptions::default())
+        .map_err(audio_err)?;
     let mut mono = Vec::new();
+    let mut samples: Vec<f32> = Vec::new();
     loop {
         let packet = match format.next_packet() {
-            Ok(p) => p,
+            Ok(Some(p)) => p,
+            Ok(None) => break,
             Err(SymError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
             Err(e) => return Err(audio_err(e)),
         };
-        if packet.track_id() != track_id {
+        if packet.track_id != track_id {
             continue;
         }
         let decoded = match decoder.decode(&packet) {
@@ -86,11 +97,10 @@ fn decode_mp3(bytes: &[u8]) -> Result<(Vec<f32>, u32), AppError> {
             Err(SymError::DecodeError(_)) => continue,
             Err(e) => return Err(audio_err(e)),
         };
-        let spec = *decoded.spec();
-        rate = spec.rate;
-        let mut buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
-        buf.copy_interleaved_ref(decoded);
-        downmix(buf.samples(), spec.channels.count(), &mut mono);
+        let spec = decoded.spec();
+        rate = spec.rate();
+        decoded.copy_to_vec_interleaved(&mut samples);
+        downmix(&samples, spec.channels().count(), &mut mono);
     }
     if rate == 0 {
         return Err(AppError::Audio("unknown sample rate".into()));
