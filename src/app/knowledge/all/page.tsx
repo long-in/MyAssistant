@@ -195,7 +195,7 @@ export default function AllKnowledge() {
       <aside className="flex w-80 shrink-0 flex-col border-r bg-background/40 backdrop-blur">
         <PaneHeader
           icon={Library}
-          title="All Knowledge bases"
+          title="All Knowledge"
           chips={<StatusPill on={total > 0}>{t("ノート {n}件", { n: total })}</StatusPill>}
         />
         <div className="flex-1 overflow-y-auto py-2">

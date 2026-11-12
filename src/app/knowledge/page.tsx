@@ -432,6 +432,7 @@ export default function Knowledge() {
             onCreate={createNode}
             onRename={renameNode}
             onDelete={deleteNode}
+            onReload={() => void refresh()}
             onInvalidName={() => toast.error(t("名前には英数字・日本語・「_」「-」「.」のみ使えます(フォルダは「.」不可)。"))}
           />
           {files.length === 0 && dirs.length === 0 && (
@@ -455,14 +456,14 @@ export default function Knowledge() {
             <p className="break-all">
               {t("保存先:")} {dir}
             </p>
-            <div className="mt-2 flex gap-2">
+            <div className="mt-2 flex flex-wrap gap-2">
               <Button size="sm" variant="outline" onClick={() => openKnowledgeDir().catch((e) => toast.error(reportError(e)))}>
                 <FolderOpen /> {t("Finder で開く")}
               </Button>
               <Button size="sm" variant="outline" onClick={pickDir}>
                 <FolderOpen /> {t("変更")}
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => changeDir(null)}>
+              <Button size="sm" variant="outline" onClick={() => changeDir(null)}>
                 <RotateCcw /> {t("既定に戻す")}
               </Button>
             </div>
