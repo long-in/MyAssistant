@@ -55,7 +55,7 @@ flowchart LR
 | エンジン | 実行場所 | 必要なもの | 備考 |
 | --- | --- | --- | --- |
 | `local` | 端末内(whisper.cpp、Metal) | モデルファイル | 課金なし。ネットワーク不要 |
-| `google` | Google Cloud Speech-to-Text(REST・同期) | Google Cloud API キー(Voice Link) | 約 1 分(58 秒)を超える録音は送らない |
+| `google` | Google Cloud Speech-to-Text(REST・同期) | Google Cloud API キー(音声タブの Voice Output で登録) | 約 1 分(58 秒)を超える録音は送らない |
 
 ### ローカル Whisper(`stt.rs`)
 
@@ -81,7 +81,7 @@ flowchart LR
 
 > Bedrock 方式(ワークは常に)では、モデルの選択の代わりに「オフ / コンテナ内の Claude Code」を選ぶ([sandbox.md](sandbox.md))。端末内の Qwen は選べない(保存済みならオフとして扱う)。コンテナ内の Claude Code は発話のたびに起動するため数秒かかる。
 
-文字起こし結果を、会話の文脈から LLM で直す補助ステップ。**既定ではオフ**で、エージェントの設定(音声タブ)の Proofread でモデルを選ぶと有効になる(`proofread_route`)。モデルはエージェントごとに選ぶ(エージェントごとに使えるAPIキーが違うため)。
+文字起こし結果を、会話の文脈から LLM で直す補助ステップ。**既定ではオフ**で、エージェントの設定(LLM タブ)の AI Settings の「文字起こしの校正」でモデルを選ぶと有効になる(`proofread_route`。[llm-settings.md](llm-settings.md#機能ごとのモデル))。指示は上書きできる(`PromptId::Proofread`)。モデルはエージェントごとに選ぶ(エージェントごとに使えるAPIキーが違うため)。
 
 - 渡すもの: 直近 6 件の会話(`<context>`)、訂正履歴(`<stt_corrections>`)、校正対象(`<transcript>`)。
 - 指示: 同音異義語・固有名詞・専門用語の聞き間違い、誤変換、不自然な区切りだけを直す。言い換え・要約・補足・質問への回答はしない。直す箇所がなければそのまま返す。

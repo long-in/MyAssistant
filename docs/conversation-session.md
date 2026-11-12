@@ -1,12 +1,13 @@
 # 会話の継続と切り替え
 
-「会話(セッション)」は、LLM へ送る文脈と要約の単位。**切り替えを明示しない限り、会話は継続する**(放置しても切り替わらない)。実装は主に `src/components/Chat.tsx` と `src/lib/voiceCommands.ts`、`src/lib/voiceApproval.ts`。
+「会話(セッション)」は、LLM へ送る文脈と要約の単位。**切り替えを明示しない限り、会話は継続する**(放置しても切り替わらない)。実装は主に `src/components/Chat.tsx`、`src/lib/voiceCommands.ts`、`src/lib/voiceApproval.ts`、`services/chat_session.rs`。
 
 ## セッション
 
-- セッション ID は UUID で、フロントエンドが発行する。`conversation_logs.session_id`、要約、キャプチャのファイル名(先頭 8 文字)の単位になる。
-- 画面を移動して `Chat` が作り直されても同じ ID を引き継ぐ(モジュールレベルで保持)。リロード・アプリの再起動で新しいセッションになる。
-- 再起動後の新しいセッションでは、バックエンドが直近のナレッジ(`<previous_context>` / `<related_knowledge>`)から文脈を復元する([chat-flow.md](chat-flow.md))。
+- セッション ID は UUID。`conversation_logs.session_id`、要約、キャプチャのファイル名(先頭 8 文字)、コンテナ内の Claude Code のセッションとの対応(`sandbox_claude_sessions`)の単位になる。
+- 現在の会話の ID は、エージェントごとに DB(`app_settings` のキー `chat_session`)に保存する(`services/chat_session.rs`、`chat_session_load` / `chat_session_new`)。画面の移動・ワークスペースの切り替え・アプリの再起動をしても、同じ会話の続きから再開する。
+- 開いたとき、直近のやり取り(最大 200 行)と発話ごとの実行ログ(`turn_events`)を画面へ戻す。それより前の会話は DB に残り、AI へは要約を通じて渡る([chat-flow.md](chat-flow.md))。
+- 新しい会話を始めた直後は、バックエンドが直近のナレッジ(`<previous_context>` / `<related_knowledge>`)から文脈を補う。
 
 ## 切り替わる条件
 
@@ -19,7 +20,7 @@
 ## 履歴からの再開
 
 - 「新しい会話」の隣の履歴ボタンで、そのエージェントの直近 10 件の会話(現在の会話を含む。新しい順)を開く。題名は最初の発話、副題は最終更新と往復数。
-- 選ぶと、実行中の処理と読み上げを止め、その会話のセッション ID を現在の会話として保存し、直近のやり取りと実行ログを画面へ戻す。要約は ID に紐づくので、そのまま文脈として効く。再起動後もその会話から再開する。
+- 選ぶと、実行中の処理と読み上げを止め、その会話のセッション ID を現在の会話として保存し、直近のやり取りと実行ログを画面へ戻す。要約は ID に紐づくので、そのまま文脈として効く(コンテナ内の Claude Code では、対応するセッションを `--resume` で続ける)。
 - 実装は `chat_session_list` / `chat_session_resume`(`services/chat_session.rs`)。履歴に無い ID への切り替えは拒否する。音声での切り替えは対象外。
 
 コマンド実行の依頼・承認・実行、設定画面への移動では切り替わらない。依頼は進行中の会話の続きとして扱い、システムプロンプトにも「ユーザーが明示しない限り、会話の切り替えやクリアを提案しない」と書く(`services/tool_loop.rs::shell_guide`)。

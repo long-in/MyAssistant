@@ -30,6 +30,8 @@ const DOCS: &[(&str, &str)] = &[
     doc!("global-settings.md"),
     doc!("knowledge-graph.md"),
     doc!("knowledge.md"),
+    doc!("leader.md"),
+    doc!("llm-settings.md"),
     doc!("local-llm.md"),
     doc!("memory.md"),
     doc!("proxy.md"),

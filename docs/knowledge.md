@@ -171,14 +171,14 @@ flowchart TD
 
 #### ⑤ 学びの提案
 
-処理済みになったセグメントの項目から、承認待ちの提案を作る([学びの提案](#学びの提案))。
+処理済みになったセグメントの項目から、承認待ちの提案を作る([学びの提案](#学びの提案proposalsrs))。
 
 - `lesson` は記憶の候補にする。記憶を持たないリーダーでは出さない。
 - `skill` の下書きが付いた `procedure` は、スキルの下書きにする。
 
 結果は `BatchReport { processed_logs, files_written, notes_created, notes_updated, rewrites_skipped, proposals_added, failed_segments, captures_removed }` で画面に返す(`files_written` は新規と更新の合計)。
 
-- 使うモデルは、ナレッジ画面で選ぶ(`batch_route`)。抽出と統合で同じモデルを使う。未設定なら既定(Claude が使えれば Sonnet)。
+- 使うモデルは、エージェントの設定の「LLM」タブの AI Settings の「ナレッジの整理」で選ぶ(`batch_route`。[llm-settings.md](llm-settings.md#機能ごとのモデル))。抽出と統合で同じモデルを使う。未設定なら既定(Claude が使えれば Sonnet)。Bedrock 方式(ワークは常に)では、コンテナ内の Claude Code をツールなしの単発で呼ぶ([sandbox.md](sandbox.md#既存機能との関係))。
 - 呼び出しの回数は「セグメントの数 + 話題の数」。以前の版(セグメントごとに 1 回)より増える。
 - 抽出の指示の保存キーは `prompt_organize_v2`(全体設定は `global_prompt_organize_v2`)。出力の形式が変わったため、以前の `prompt_organize` に保存した上書きは読まない。必要なら新しい形式に合わせて書き直す。
 
@@ -235,9 +235,9 @@ flowchart TD
 
 ## 画面
 
-- ノートの一覧と本文表示、タグ表示(Frontmatter を分離して表示)。
+- ノートの一覧(ツリー。新規ファイル・新規フォルダ・再読み込み、右クリックで名前の変更・削除)と本文表示、タグ表示(Frontmatter を分離して表示)。
 - 「Memory」欄(記憶の件数、「記憶を見る」。[memory.md](memory.md))。
-- 「今すぐ整理」「棚卸し」、整理に使うモデルの選択、エクスポート・インポート・初期化、保存先の表示と変更。自動では整理しない(定期・終了時の実行は無い)。
+- 「今すぐ整理」「棚卸し」、エクスポート・インポート・初期化、保存先の表示と変更(「Finder で開く」「変更」「既定に戻す」)。自動では整理しない(定期・終了時の実行は無い)。
 - 「Proposals」欄(承認待ちの提案の件数、「提案を見る」)。提案の一覧では、種類ごとに承認・却下できる。統合・見直しの提案からはノートを開ける。
 - ノートの画面の「履歴」: 退避した版の一覧・中身・「この版に戻す」。
 - 会話のたびに `knowledge-updated` イベントを受けて一覧を更新する。

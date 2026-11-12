@@ -1,6 +1,6 @@
 # エージェント: ファイル操作・インターネット検索
 
-音声対話の中で、LLM がナレッジのファイルを調べたり作成したり、インターネットを検索したりする機能。専用のエージェント画面・モードは無く、通常の音声入力から呼ばれる。実装は `services/tool_loop.rs`(ツール定義・実行・ループ)、`commands/task.rs`(承認・中断の橋渡し)、`services/llm_client.rs`(`complete_with_tools`)。
+音声対話の中で、LLM がナレッジのファイルを調べたり作成したり、インターネットを検索したりする機能。専用のエージェント画面・モードは無く、通常の音声入力から呼ばれる。ホストのツールループで動くとき(API 方式のパーソナル・リーダー)の機能で、コンテナ内の Claude Code で動くときは Claude Code 自身のツールを使う([sandbox.md](sandbox.md))。リーダーのツールは台帳と配布の下書きに差し替わる([leader.md](leader.md))。実装は `services/tool_loop.rs`(ツール定義・実行・ループ)、`commands/task.rs`(承認・中断の橋渡し)、`services/llm_client.rs`(`complete_with_tools`)。
 
 コマンド実行(`propose_plan` / `run_command`)は同じツールループに載る別機能で、[agent-command-tasks.md](agent-command-tasks.md) に書く。
 
@@ -21,8 +21,8 @@
 sequenceDiagram
   participant U as ユーザー
   participant FE as フロントエンド
-  participant L as agent::run
-  participant LLM as Anthropic
+  participant L as tool_loop::run
+  participant LLM as Anthropic / ローカル
   U->>FE: 発話
   FE->>L: send_chat(Channel)
   loop 最終回答が出るまで(最大20回。コマンド実行有効時は40回)
@@ -43,12 +43,12 @@ sequenceDiagram
   end
 ```
 
-- ツールのやり取り(`tool_use` / `tool_result`)は 1 回の発話の中だけで完結する。保存・再送するのは最終的なテキスト(タイムライン DB)のみ。
+- ツールのやり取り(`tool_use` / `tool_result`)は 1 回の発話の中だけで完結する。会話として保存・再送するのは最終的なテキスト(タイムライン DB)のみ。実行したことの記録は `turn_events` に残し、次の発話からは `<execution_log>` として渡す([chat-flow.md](chat-flow.md#長い会話の要約compactrs))。
 - ツール結果は失敗しても `is_error` 付きで LLM へ返し、ループは止めない。
 - 途中で失敗・中断した場合は、対応する `tool_result` の無い `tool_use` を残さないよう、履歴を呼び出し前に戻す。
 - LLM の応答の `stop_reason` による扱い: `pause_turn`(サーバーツールの長い処理の中断)は履歴をそのまま返して続きを実行させる。`max_tokens` は「(出力が長すぎて途中で切れました)」を足す。本文が空なら「回答を生成できませんでした」を返す。
 - 上限回数に達したら「ツールの実行回数が上限(N回)に達したため中断しました」を返す。
-- LLM 呼び出しは 1 回あたり `max_tokens` 8,192、タイムアウト 120 秒(通常の対話は 4,096 / 60 秒)。使用量は呼び出しごとに記録する。
+- LLM 呼び出しは 1 回あたり `max_tokens` 8,192、タイムアウト 120 秒(ツールなしの呼び出しは 4,096 / 60 秒。端末内のモデルは [local-llm.md](local-llm.md))。
 
 ## ファイル操作ツール
 

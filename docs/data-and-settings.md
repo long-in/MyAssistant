@@ -4,11 +4,11 @@
 
 すべてアプリデータディレクトリ(識別子 `MyAssistant`)に保存され、リポジトリには含まれない。macOS では `~/Library/Application Support/MyAssistant/`。
 
-下の表の `timeline.db`・`secrets.json`・ナレッジは**ワークスペースごと**に持つ。パーソナルは下記のとおりアプリデータ直下、ワークのエージェントは `work/<UUID>/` 配下に同じ構成で置く([workspace.md](workspace.md))。`models/`・`voice/`・`voicevox/`・`llm/` は端末で共有する。
+下の表の `timeline.db`・`secrets.json`・ナレッジ・`tts_dictionary.json`・`sandbox.env`・`agent-sandbox/` は**ワークスペースごと**に持つ。パーソナルは下記のとおりアプリデータ直下、ワークのエージェントは `work/<UUID>/`、リーダーは `work/leader/` 配下に同じ構成で置く([workspace.md](workspace.md))。`models/`・`voice/`・`voicevox/`・`llm/`・`sandbox/` と全体設定は端末で共有する。
 
 | パス | 内容 |
 | --- | --- |
-| `timeline.db` | SQLite。会話ログ・要約・使用量・アプリ設定(リーダーは台帳も)。WAL の `timeline.db-wal` / `-shm` と、マイグレーション前の複製 `timeline.db.bak-v<版>` が並ぶことがある |
+| `timeline.db` | SQLite。会話ログ・要約・実行ログ・学びの提案・アプリ設定(コマンド権限を含む。リーダーは台帳も)。WAL の `timeline.db-wal` / `-shm` と、マイグレーション前の複製 `timeline.db.bak-v<版>` が並ぶことがある |
 | `secrets.json` | API キー。**平文 JSON**(権限 0600)。OS のキーチェーンは使っていない([security.md](security.md)) |
 | `models/` | Whisper モデル(`ggml-large-v3-turbo-q5_0.bin` / `ggml-small.bin`) |
 | `voice/` | 定型音声(`<id>-<ハッシュ>.mp3` / `.wav`。声ごとに別ファイル) |
@@ -17,16 +17,21 @@
 | ナレッジ | 既定ではアプリデータ配下(`knowledge/`)。設定で任意のフォルダへ変更できる([knowledge.md](knowledge.md)) |
 | `proxy/secrets.json` | 通信のプロキシのパスワード(権限 0600。ワークスペースを問わず1つで、プロキシのIDごと。[proxy.md](proxy.md)) |
 | `tts_dictionary.json` | 読み上げ辞書(ユーザー登録分) |
-| `work/registry.json` | ワークのエージェント一覧(id・名称・イメージカラー・作成日時) |
+| `work/registry.json` | ワークのエージェント一覧(id・名称・イメージカラー・作成日時)。壊れていたら `registry.json.corrupt` へ退避する |
 | `work/global_settings.db` | 全体設定(専用の SQLite。全エージェント共通。[global-settings.md](global-settings.md)) |
+| `work/shared_data.json` | 共通データ(全エージェント共通。[workspace.md](workspace.md#エージェントデータと共通データ)) |
 | `work/<UUID>/` | エージェントのデータ。`timeline.db`・`secrets.json`・`knowledge/`・`tts_dictionary.json` をパーソナルと同じ名前で持つ |
+| `work/leader/` | リーダーのデータ(同じ構成。[leader.md](leader.md)) |
 | `work/<UUID>/sandbox.env` | サンドボックスの環境変数(dotenv 形式。**平文**、権限 0600)。パーソナルはアプリデータ直下の `sandbox.env`([sandbox.md](sandbox.md)) |
 | `sandbox/` | 全エージェント共通の `Dockerfile` と `.dockerignore`(Docker のビルドの文脈)。アプリデータ直下 |
 | `work/<UUID>/agent-sandbox/` | そのエージェント専用の `Dockerfile`(登録したときだけ。共通より優先)。パーソナルはアプリデータ直下の `agent-sandbox/` |
+| `sandbox-running.json` | 終了時に起動していたコンテナのエージェント ID(次の起動で起動し直す。[sandbox.md](sandbox.md)) |
+| `kept-knowledge/` | エージェントの削除時に残したナレッジ([workspace.md](workspace.md#決定事項)) |
+| `restore-staging/`・`pending-restore.json`・`restore-backup-<日時>/` | リストアの展開先・予約・差し替え前の退避([backup.md](backup.md)) |
 
 ## SQLite スキーマ(`db/`)
 
-表ごとの読み書きは `db/{logs,summaries,usage,settings,ledger,proposals}.rs`、スキーマと版の管理は `db/schema.rs` に分けている。
+表ごとの読み書きは `db/{logs,turns,summaries,settings,ledger,proposals}.rs`、スキーマと版の管理は `db/schema.rs` に分けている。
 
 ```mermaid
 erDiagram
@@ -89,15 +94,15 @@ erDiagram
 | `conversation_logs` | 会話の一次ログ(時系列)。インデックスは `(session_id, created_at)` と `is_processed` | 保存、直近 N 件・全件の取得、未処理の取得、処理済みにする |
 | `turn_events` | 発話ごとの実行ログ(ツール呼び出し・コマンド出力のJSON)。ユーザー発話の行ID(`user_log_id`)に結び付け、会話の再開時に画面へ戻す | 取得、置換 |
 | `conversation_summaries` | 会話(セッション)ごとの要約。どこまで畳み込んだか(`upto_id`)と本文([chat-flow.md](chat-flow.md)) | 取得、upsert |
-| `usage_logs` | LLM 呼び出しごとのトークン使用量。インデックスは `created_at` | 記録、当月(ローカル時間)のプロバイダー・モデル別集計 |
+| `usage_logs` | 以前のトークン使用量の表。表は作るが、いまは読み書きしない(使用量の表示は廃止した。[sandbox.md](sandbox.md#後回しにした項目) の 15) | — |
 | `app_settings` | エージェントごとのキー・値の設定(値は文字列。構造のあるものは JSON) | 取得、upsert、削除 |
-| `learning_proposals` | 整理・棚卸しが出した学びの提案。`(kind, norm)` は一意で、決定済み(却下を含む)の提案も重ねて出さない([knowledge.md](knowledge.md#学びの提案)) | 追加(重複は無視)、未決の一覧、決定の記録 |
-| `leader_tasks` | リーダーの台帳。**リーダーのDBにだけある**([workspace.md](workspace.md)) | 追加、一覧、状態・確認済みの更新 |
+| `learning_proposals` | 整理・棚卸しが出した学びの提案。`(kind, norm)` は一意で、決定済み(却下を含む)の提案も重ねて出さない([knowledge.md](knowledge.md#学びの提案proposalsrs)) | 追加(重複は無視)、未決の一覧、決定の記録 |
+| `leader_tasks` | リーダーの台帳。**リーダーのDBにだけある**([leader.md](leader.md#状態台帳)) | 追加、一覧、状態・確認済みの更新 |
 
 - `conversation_logs.is_processed`: 整理バッチがナレッジへ反映したかどうか([knowledge.md](knowledge.md))。
 - **日時**はすべて UTC・ミリ秒・`Z` 付きの RFC3339(例 `2026-01-01T00:00:00.123Z`)。SQL の既定値(`schema::NOW_SQL`)と Rust で作る値(`db::now()`)を同じ形にしている。
 - 接続は `Mutex<Connection>`。ロックが毒されても(パニック後)中身を使い続ける。同じファイルを複数の接続で開くことがある(整理バッチで一時的に開くなど)ため、WAL(`timeline.db-wal` / `-shm`)と `busy_timeout`(5 秒)を設定する。
-- DB の役割(`db::Role`)は、開くときにワークスペースの ID で決める。リーダーだけが `leader_tasks` を作る。
+- DB の役割(`db::Role`)は、開くときにワークスペースの ID で決める。リーダーだけが `leader_tasks` を作る(版の管理の外で、開くたびに `CREATE TABLE IF NOT EXISTS`)。
 
 ### 版とマイグレーション(`db/schema.rs`)
 
@@ -109,6 +114,8 @@ erDiagram
 | 1 | その時点のスキーマ(既存のDBには何もしない) |
 | 2 | 日時を上記の形式へそろえる(既定値を含む。表を作り直し、行の `rowid` は引き継ぐので同時刻の並びも変わらない)。`usage_logs(created_at)` のインデックスを追加 |
 | 3 | 会話の要約を `app_settings`(キー `summary:<session_id>`)から `conversation_summaries` へ移す。読めない値は移さない(従来も読まれていなかった) |
+| 4 | 設定キー `space_data` を `agent_data` へ移す(「スペース」から「エージェント」への改称) |
+| 5 | 発話ごとの実行ログの表 `turn_events` を追加 |
 | 6 | 学びの提案の表 `learning_proposals` を追加 |
 
 - **既存のDBを書き換える前に複製を残す**: 同じフォルダへ `timeline.db.bak-v<元の版>` として `VACUUM INTO` で書き出す。同名のファイルがあれば日時を付けた別名にし、上書きしない。複製できなければDBを開かない(書き換えない)。空のDB(新規作成)では複製しない。
@@ -119,30 +126,38 @@ erDiagram
 
 | キー | 値 | 既定 | 設定画面 |
 | --- | --- | --- | --- |
+| `ai_link_mode` | 接続方式 `api` / `bedrock`(パーソナル・リーダーのみ。ワークは常に Bedrock) | AWS だけ登録済みなら Bedrock、それ以外は API | LLM タブの AI Link([llm-settings.md](llm-settings.md)) |
 | `routing` | `Route`(JSON) | Claude が使えれば Sonnet | 対話画面のモデル選択 |
-| `web_access` | `0` / `1` | 有効 | Web Search |
-| `sandbox_claude_settings` | 貼り付けた Claude Code の settings.json(JSON。空は未設定=全体設定を利用。全体設定と同じ内容も空として保存) | 未設定 | Sandbox タブ(ワークのエージェント) |
-| `sandbox_llm` | 接続先(Bedrock 固定)・上限時間(分)(JSON) | Bedrock・30分 | Sandbox(ワークのエージェント) |
-| `sandbox_claude_sessions` | 会話 ID と Claude Code のセッション ID の対応(JSON、直近 50 件) | なし | なし(端末の会話と対なので対象外) |
-| `stt_engine` | `local` / `google` | `local` | Voice Link |
-| `stt_language` | `auto` / `ja` / `en` / `zh` / `ko` | `auto` | Voice Link |
-| `tts_engine` | `google` / `voicevox` | `voicevox` | Voice Link |
-| `voicevox_style` | VOICEVOX のスタイル ID(数値の文字列) | `3`(ずんだもん ノーマル) | Voice Link |
-| `whisper_revision` | Hugging Face のリビジョン(ブランチ・タグ・コミット) | `main` | Voice Link(取得バージョン) |
-| `voicevox_versions` | 取得する配布物のバージョン(JSON: `core` / `onnxruntime` / `models` / `dict_release` / `dict`。未指定の項目は既定値) | CORE `0.17.1`、ONNX Runtime `1.23.2`、音声モデル `0.17.0`、辞書 `v1.11.1` / `1.11` | Voice Link(取得バージョン) |
-| `tuning` | 上限の調整項目(JSON) | 下表 | Limits |
-| `batch_route` | `Route`(JSON)。ワークのエージェントでは使わない(整理はコンテナ内の Claude Code) | 既定 | ナレッジ画面 |
-| `proofread_route` | `Route`(JSON)。空は校正オフ。ワークでは `provider` が `sandbox`(コンテナ内の Claude Code)か `local` | オフ | Proofread(設定の音声タブ) |
-| `skills_route` | `Route`(JSON) | 軽量モデル | スキル画面([skills.md](skills.md))。設定のエクスポートの対象外 |
-| `debug_mode` | `0` / `1` | 無効 | Debug Mode |
-| `agent_data` | エージェントデータ(JSON `{enabled, text}`。エージェントのみ。コピー・エクスポートの対象外) | 有効・空 | Agent Data |
-| `knowledge_dir` | 絶対パス(空なら既定) | 既定 | ナレッジ画面 |
+| `sandbox_model` | コンテナ内の Claude Code でチャットに使うモデル(settings.json で許可したもの) | 未選択(settings.json の `model`) | 対話画面のモデル選択 / AI Settings の「チャット」(ワーク) |
+| `batch_route` | `Route`(JSON) | Claude が使えれば Sonnet | AI Settings の「ナレッジの整理」 |
+| `proofread_route` | `Route`(JSON)。空は校正オフ。Bedrock 方式では `provider` が `sandbox` のときだけ有効 | オフ | AI Settings の「文字起こしの校正」 |
+| `skills_route` | `Route`(JSON) | 軽量モデル | AI Settings の「スキルの選定」([skills.md](skills.md)) |
+| `prompt_*` | 機能ごとのプロンプトの上書き(全文。空は上書きなし) | なし(全体設定 → 既定) | AI Settings([llm-settings.md](llm-settings.md#プロンプト)) |
+| `web_access` | `0` / `1` | 有効 | 権限タブの Web Search |
+| `command_policy` | コマンド権限(JSON。[command-policy.md](command-policy.md)) | 初期値 | 権限タブの Command Policy |
+| `tuning` | 上限の調整項目(JSON) | 下表 | LLM タブの AI Limits |
+| `sandbox_llm` | 接続先(Bedrock 固定)・1回の指示の上限時間(分)・コンテナの自動停止(分)(JSON) | Bedrock・30分・0(止めない) | Sandbox タブ |
+| `sandbox_claude_settings` | 貼り付けた Claude Code の settings.json(JSON。空は未設定=全体設定を利用。全体設定と同じ内容も空として保存) | 未設定 | Sandbox タブ |
+| `sandbox_claude_sessions` | 会話 ID と Claude Code のセッション ID の対応(JSON、直近 50 件) | なし | なし |
+| `chat_session` | 現在の会話のセッション ID([conversation-session.md](conversation-session.md)) | なし | なし |
+| `stt_engine` | `local` / `google` | `local` | 音声タブの Voice Input |
+| `stt_language` | `auto` / `ja` / `en` / `zh` / `ko` | `auto` | Voice Input |
+| `whisper_revision` | Hugging Face のリビジョン(ブランチ・タグ・コミット) | 固定したコミット | Voice Input(取得バージョン) |
+| `tts_engine` | `google` / `voicevox` | `voicevox` | 音声タブの Voice Output |
+| `voicevox_style` | VOICEVOX のスタイル ID(数値の文字列) | `3`(ずんだもん ノーマル) | Voice Output |
+| `voicevox_versions` | 取得する配布物のバージョン(JSON: `core` / `onnxruntime` / `models` / `dict_release` / `dict`。未指定の項目は既定値) | CORE `0.17.1`、ONNX Runtime `1.23.2`、音声モデル `0.17.0`、辞書 `v1.11.1` / `1.11` | Voice Output(取得バージョン) |
+| `debug_mode` | `0` / `1` | 無効 | その他タブの Debug Mode |
 | `debug_log_dir` | デバッグログの出力先(空なら既定) | 既定 | Debug Mode |
-| `leader_prompt` / `leader_max_active` | リーダーの指示(JSON)と同時に動かす依頼の上限(リーダーのみ) | 既定 | リーダーの設定 |
+| `knowledge_dir` | 絶対パス(空なら既定) | 既定 | ナレッジ画面 |
+| `proxy_choice` | 使うプロキシ(空は既定、`none` は使わない、それ以外は登録済みの ID) | 既定 | その他タブの Proxy([proxy.md](proxy.md)) |
+| `agent_data` | エージェントデータ(JSON `{enabled, text}`。エージェントのみ) | 有効・空 | LLM タブの Agent Data |
+| `leader_prompt` / `leader_max_active` | リーダーの指示(JSON)と同時に動かす依頼の上限(リーダーのみ) | 初期文 / 3 | LLM タブの Leader Prompt / Active Agents([leader.md](leader.md)) |
 
-**全体設定に移した項目**(ベースプロンプト `base_instructions`、OS通知、表示言語、音声入力の待ち時間 `voice_timing`、起動ワード `wake_enabled` / `wake_words`、パーソナルデータ `user_profile`、通信のプロキシの一覧と既定 `proxy_list` / `proxy_default`、チャット以外のプロンプト `global_prompt_*`、Claude Code の settings.json `sandbox_claude_settings_shared`)は、`app_settings` ではなく専用の DB `work/global_settings.db` に保存する([global-settings.md](global-settings.md))。
+**全体設定の項目**(ベースプロンプト `base_instructions`、OS通知 `os_notifications`、表示言語 `language`、音声入力の待ち時間 `voice_timing`、起動ワード `wake_enabled` / `wake_words`、パーソナルデータ `user_profile`、ワークの有効化 `work_enabled`、通信のプロキシの一覧と既定 `proxy_list` / `proxy_default`、チャット以外のプロンプト `global_prompt_*`、Claude Code の settings.json `sandbox_claude_settings_shared`)は、`app_settings` ではなく専用の DB `work/global_settings.db` に保存する([global-settings.md](global-settings.md))。
 
 **キーの一覧(`services/settings_registry.rs`)**: すべての設定キーについて、保存先(エージェントのDB / 全体設定)と、書き出し・コピーの対象かどうか(と検証方法)をここで決める。書き出しの項目、全体設定のバックアップの項目、初回の取り込み・古い値の削除の対象は、この一覧から作る。保存先の取り違えを防ぐため、DBは全体設定のキーを、全体設定はエージェントのキーを書き込みで拒否する。新しい設定を足すときは、この一覧にも登録する。
+
+`ai_link_mode` と `sandbox_model` は一覧に登録していない(書き出し・コピーの対象外。保存先はエージェントの DB)。
 
 自動保存: 調整項目は、入力欄を離れたときに保存する。Command Policy は JSON の編集欄で、「保存」を押したときに検証して保存する。
 
@@ -161,21 +176,16 @@ erDiagram
 | `release_tail_secs` | エージェントを離してから録音を止めるまでの猶予(秒) | 0.0〜3.0 | 0.5 |
 | `history_exchanges` | 過去の会話をそのまま LLM へ渡す往復数の上限。超えた分は要約 | 2〜30 | 10 |
 
-## 使用量の表示
-
-- `usage_logs` を当月(ローカル時間)で集計し、プロバイダー・モデル別に表示する(`UsageHud`)。
-- 金額は `src/lib/pricing.ts` の単価(100 万トークンあたり、USD)からの**概算**で、請求額とは一致しない場合がある。単価が未登録のモデルは金額を出さない。
-- このアプリ経由の呼び出しだけのローカル集計。Web 検索の追加料金や、Google Cloud の利用料は含まない。
-
 ## 設定のエクスポート・インポート(`settings_transfer.rs`)
 
-別の端末への移行やバックアップに使う。設定画面の Backup。会話・ナレッジ・API キーを含むアプリ全体のバックアップは [backup.md](backup.md)。
+別の端末への移行やバックアップに使う。エージェントの設定の「その他」タブの Backup。会話・ナレッジ・API キーを含むアプリ全体のバックアップは [backup.md](backup.md)。
 
 ### 対象
 
-- `app_settings` のうち、キーの一覧(`settings_registry`)で書き出しの対象にした**設定項目**(`routing`・`web_access`・`stt_engine`・`stt_language`・`tts_engine`・`voicevox_style`・`tuning`・`batch_route`・`proofread_route`・`debug_mode`、使うプロキシの選択 `proxy_choice`。全体設定の項目は含まない)と、**コマンド権限**(`app_settings` のキー `command_policy`。書き出しでは設定項目とは別枠 `command_policy` で扱う)。
-- **含まない**: API キー、エージェントデータ(`agent_data`)、端末ごとに異なるナレッジ・デバッグログの保存先(`knowledge_dir` / `debug_log_dir`)、取得する配布物の版(`whisper_revision` / `voicevox_versions`)、リーダーの設定、会話ごとの要約、会話の履歴。
-- 全体設定の項目(ベースプロンプト・パーソナルデータ・起動ワード・音声入力の待ち時間・ナレッジ整理の間隔・表示言語・OS通知)は含まない。全体設定は App Backup(アプリ全体)で書き出す([backup.md](backup.md))。
+- `app_settings` のうち、キーの一覧(`settings_registry`)で書き出しの対象にした**設定項目**(`routing`・`web_access`・`stt_engine`・`stt_language`・`tts_engine`・`voicevox_style`・`tuning`・`batch_route`・`proofread_route`・プロンプトの上書き `prompt_*`(リーダーの `prompt_suggest` を含む)・`debug_mode`・`sandbox_llm`・`sandbox_claude_settings`・使うプロキシの選択 `proxy_choice`。全体設定の項目は含まない)と、**コマンド権限**(`app_settings` のキー `command_policy`。書き出しでは設定項目とは別枠 `command_policy` で扱う)。
+- **含まない**: API キー・AWS 設定、`sandbox.env`、エージェントデータ(`agent_data`)、端末ごとに異なるナレッジ・デバッグログの保存先(`knowledge_dir` / `debug_log_dir`)、取得する配布物の版(`whisper_revision` / `voicevox_versions`)、接続方式、スキルの選定モデル、リーダーの設定、会話(セッション・要約・履歴)。
+- 全体設定の項目(ベースプロンプト・パーソナルデータ・起動ワード・音声入力の待ち時間・表示言語・OS通知・プロキシの一覧など)は含まない。全体設定は App Backup(アプリ全体)で書き出す([backup.md](backup.md))。
+- Claude Code の settings.json は、`env` などに秘密が入りうるが、利用者の指示で対象にしている。
 - 書き出し・取り込みの対象は、選択中のワークスペースの設定。ワークスペース間で設定を写すには、各エージェントの設定の「その他」タブにある設定のコピーを使う([workspace.md](workspace.md))。
 
 ### ファイル
@@ -197,7 +207,7 @@ erDiagram
 
 1. 1,000,000 バイトを超えるファイルは拒否する。
 2. `app` と `version` を確認する(別アプリのファイル・未対応の版は拒否)。
-3. **全項目を検証してから書き込む**。型ごとに検証する: フラグ(`0` / `1`)、JSON として読めるか、許可された値のどれか、文字列(20,000 文字以内)、パーソナルデータ(通常の入力と同じ検証)。**不正な項目が 1 つでもあれば何も変更しない**。
+3. **全項目を検証してから書き込む**。型ごとに検証する: フラグ(`0` / `1`)、JSON として読めるか、許可された値のどれか、文字列(20,000 文字以内)。**不正な項目が 1 つでもあれば何も変更しない**。
 4. ファイルに無い項目は変更しない。未知の項目は読み飛ばす(`skipped`)。
 5. コマンド権限は検証(`cleaned`)して保存する。デバッグモードの出力先を決め直す。
 
@@ -205,4 +215,4 @@ erDiagram
 
 ## 全体設定への追従(全体設定を利用 / 個別設定)
 
-プロンプト(`prompt_*`)・Claude Code の settings.json・Sandbox の Dockerfile は、全体設定にも同じものを持つ。エージェントの保存(上書き・専用の登録)が無ければ「全体設定を利用」で、全体設定を変えると次の呼び出しから自動で反映される(通知はしない)。エージェントが保存すると「個別設定」になり、全体設定の変更では更新されない。「全体設定を利用」で個別の内容を消すと追従へ戻る。解決の順は、エージェントの保存 → 全体設定 → 組み込みの既定。`sandbox.env` は認証情報を含むため対象外。
+プロンプト(`prompt_*`。[llm-settings.md](llm-settings.md#プロンプト))・Claude Code の settings.json・Sandbox の Dockerfile は、全体設定にも同じものを持つ。エージェントの保存(上書き・専用の登録)が無ければ「全体設定を利用」で、全体設定を変えると次の呼び出しから自動で反映される(通知はしない)。エージェントが保存すると「個別設定」になり、全体設定の変更では更新されない。「全体設定を利用」で個別の内容を消すと追従へ戻る。解決の順は、エージェントの保存 → 全体設定 → 組み込みの既定。`sandbox.env` は認証情報を含むため対象外。

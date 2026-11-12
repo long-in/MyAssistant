@@ -1,6 +1,6 @@
 # アプリ全体のバックアップとリストア
 
-全エージェントの会話・設定・ナレッジ・API キーを 1 つの zip に書き出し、復元する。パスワードは任意(`services/backup.rs`、コマンドは `commands/backup.rs`)。画面は全体設定の「アプリ」タブ(App Backup)。設定だけの書き出しは [data-and-settings.md](data-and-settings.md) と [global-settings.md](global-settings.md) を参照。
+全エージェントの会話・設定・ナレッジ・API キーを 1 つの zip に書き出し、復元する。パスワードは任意(`services/backup.rs`、コマンドは `commands/backup.rs`)。画面は全体設定の「その他」タブ(App Backup)。設定だけの書き出しは [data-and-settings.md](data-and-settings.md) と [global-settings.md](global-settings.md) を参照。
 
 ## アーカイブの中身
 
@@ -11,7 +11,8 @@
 | `shared/proxy-secrets.json` | 通信のプロキシのパスワード(平文のまま。`proxy/secrets.json`)。リストアでは、含まれているときだけ差し替える(古いバックアップなら、いまのパスワードを残す) |
 | `shared/kept-knowledge/` | エージェント削除時に残したナレッジ |
 | `ws/<id>/timeline.db` | DB のスナップショット(`VACUUM INTO`) |
-| `ws/<id>/secrets.json`, `ws/<id>/tts_dictionary.json` | API キー(平文のまま)、読み上げ辞書 |
+| `ws/<id>/secrets.json`, `ws/<id>/tts_dictionary.json`, `ws/<id>/sandbox.env` | API キー・AWS 設定(平文のまま)、読み上げ辞書、サンドボックスの環境変数(平文のまま) |
+| `ws/<id>/sandbox/`, `ws/<id>/agent-sandbox/` | 共通の Dockerfile(パーソナルの側に入る。アプリデータ直下の `sandbox/`)、エージェント専用の Dockerfile(登録があるときだけ)([sandbox.md](sandbox.md)) |
 | `ws/<id>/knowledge/` | ナレッジ。保存先がアプリデータの外でも含める。`.` 始まりのフォルダ(ノートの版 `.history`)と、スキル(`skills/`)も含む。コマンド権限は各エージェントの `timeline.db` に入る。直下の `data/`(サンドボックスの担当システムのフォルダ)は含めない |
 
 `<id>` は `personal`・`leader`・エージェントの UUID。`models/`・`voicevox/`・`voice/`、`-wal`/`-shm`、`.bak-vN` は含めない。シンボリックリンクと、名前が UTF-8 でないファイルは取り込まない。
@@ -33,7 +34,7 @@
    - 展開しながら SHA-256 を照合し、展開した DB に `PRAGMA quick_check` と版の確認をする。失敗したら展開先を消す。
 2. **確認と再起動**(`restore_apply`): 画面で確認を取り、予約(`pending-restore.json`)を書いてアプリを再起動する。取り消したら `restore_discard` で展開先を消す。
 3. **差し替え**(`apply_pending`): 次回起動の、DB を開く前(`lib.rs` の `setup` 冒頭)に行う。
-   - 現在のパーソナルのファイルと `work/` を `restore-backup-<日時>/` へ移動する(退避)。
+   - 現在のパーソナルのファイル(DB・キー・辞書・ナレッジ)と `work/`(バックアップにプロキシのパスワードがあれば `proxy/` も)を `restore-backup-<日時>/` へ移動する(退避)。
    - 展開済みの内容を所定の場所へ移動する。
    - 各 DB の `knowledge_dir` を消す(ナレッジは標準の位置へ戻したため)。
    - 途中で失敗したら、置いたものを消して退避から元に戻し、通常どおり起動する。予約は先に消すので、失敗を繰り返さない。
@@ -55,4 +56,5 @@
 - 他の端末へ復元すると、カスタムのナレッジ保存先は標準の位置になる。
 - モデル類(Whisper・VOICEVOX)は含めないため、復元後に必要なら取得し直す。
 - 新しいバージョンのアプリで作ったバックアップは読み込めない。
+- 共通データ(`work/shared_data.json`)と、Docker の専用ボリューム(コンテナ内の `~/.claude` のセッション・インストールしたツール)は含まれない。リストアでは `work/` ごと退避するため、共通データは `restore-backup-<日時>/work/` に残り、新しい `work/` には無い(手で戻す)。
 - 差し替えに失敗しても画面には出ない(ログに残る)。データは元のまま起動する。

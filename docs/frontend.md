@@ -10,7 +10,8 @@ Next.js 16(App Router、`output: "export"`)の静的サイト。Tauri の WebVie
 | `/knowledge` | ナレッジ | ノートの閲覧、整理、入出力([knowledge.md](knowledge.md)) |
 | `/knowledge/all` | 全エージェントのナレッジ | 切り替えずに全エージェントのノートを操作、Finderで開く([knowledge.md](knowledge.md)) |
 | `/skills` | スキル | 決まった依頼への対応手順の一覧・編集、選定モデル([skills.md](skills.md)) |
-| `/setup` | 設定 | API キー、各種設定([data-and-settings.md](data-and-settings.md)) |
+| `/setup` | 設定 | 選択中のエージェントの設定(下記。[data-and-settings.md](data-and-settings.md)) |
+| `/global` | 全体設定 | 全エージェント共通の設定(下記。[global-settings.md](global-settings.md))。`/global#work` で「その他」タブを開く |
 | `/shortcuts` | ショートカット | 一覧。定義は `lib/shortcuts.ts` と共有 |
 | `/debug` | デバッグ | デバッグモードが有効なときだけ([debug-log.md](debug-log.md)) |
 
@@ -44,11 +45,11 @@ Next.js 16(App Router、`output: "export"`)の静的サイト。Tauri の WebVie
 ### ワークスペース
 
 - 状態は `lib/workspace.ts` のストア(`useSyncExternalStore`)で持つ。選択中のワークスペース、エージェント一覧、イメージカラーのパレット、設定の読み直しの印(`settingsVersion`)。バックエンドの `workspace-changed` で読み直す。
-- 選択中のエージェントの色は、ロゴ、画面上端の帯、対話画面右上のバッジ(`WorkspaceBadge`、名称つき)に出る。CSS 変数 `--workspace-color` にも入れる。
+- 選択中のエージェントの色は、ロゴ、画面上端の帯、選択中のメニュー項目に出る(CSS 変数 `--workspace-color`)。
 - 切り替えると、`Chat` は `key` で作り直す(読み上げと録音を止める)。切替先でキーの有無を確かめ、未登録なら設定画面へ移る。設定・ナレッジ・デバッグの各画面も `key` で読み直す。
-- 会話のセッション ID はワークスペースごとに持つ(`Chat.tsx` の `sessions`)。切り替えて戻ると、同じ会話の続きになる。
-- サイドバーを畳んだ状態では、エージェントの色の丸を押して選ぶ(モード切替と合わせて、畳んだままで切り替えられる)。
-- 表記: 切り替えの「Personal / Work」とバッジは、ナビゲーションやメニューバー・トレイに合わせて**英語に固定**している。エージェントの作成ダイアログ、設定のコピーの確認、通知のトースト、MFA 入力欄のエージェント表示は、言語設定に従う。
+- 会話のセッション ID はワークスペースごとに DB に保存し、開くたびに `chat_session_load` で読む([conversation-session.md](conversation-session.md))。切り替えて戻ると、同じ会話の続きになる。
+- エージェントの切り替えは、左端のエージェントレール(`AgentRail`。メニューを畳んでも残る)、`Mod`+`K` のパレット(`AgentPalette`)、メニューバー・トレイから行う([workspace.md](workspace.md#画面))。
+- 表記: 切り替えの「Personal / Work」とメニューの項目は、メニューバー・トレイに合わせて**英語に固定**している。エージェントの作成ダイアログ、設定のコピーの確認、通知のトースト、MFA 入力欄のエージェント表示は、言語設定に従う。
 
 ### 状態管理
 
@@ -64,6 +65,7 @@ Next.js 16(App Router、`output: "export"`)の静的サイト。Tauri の WebVie
 | キー | 動作 | 範囲 |
 | --- | --- | --- |
 | `Space`(押している間) | 押している間録音し、離してから約 0.5 秒(`release_tail_secs`)後に録音を止めて文字起こし・送信する。その間に押し直すと録音を続ける。入力欄にフォーカスがあるときは通常のスペース入力 | 対話画面 |
+| `Esc` | 強制中断(依頼の実行・読み上げ・録音・文字起こしの結果・確認待ちをすべて止める。会話の文脈は残る) | 対話画面 |
 | `Mod`+`Shift`+`M` | 録音の開始 / 停止 | 対話画面 |
 | `Mod`+`1` / `2` / `3` | 対話 / ナレッジ / 設定を開く | どの画面でも |
 | `Mod`+`K` | エージェントの検索パレットを開く(名称で絞り込み、↑↓で選び、Enterでそのエージェントのチャットへ切り替え、Escで閉じる) | どの画面でも |
@@ -85,19 +87,19 @@ Next.js 16(App Router、`output: "export"`)の静的サイト。Tauri の WebVie
 
 | タブ | 節 |
 | --- | --- |
-| LLM | AI Link(API キー、AWS、端末内の LLM。リーダーは API キーのコピー)、Limits(検索回数などの上限。リーダー以外)、AI Settings(機能ごとのモデルとプロンプト)、Agent Data(リーダーは Leader Prompt・上限) |
-| 音声 | Voice Input(Whisper の取得バージョンを含む)、Voice Output(VOICEVOX の取得バージョンを含む) |
+| LLM | AI Link(接続方式(パーソナル・リーダー)、API キー、AWS、端末内の LLM)、Copy API key(リーダーのみ)、AI Limits(検索回数などの上限。リーダー以外)、AI Settings(機能ごとのモデルとプロンプト。[llm-settings.md](llm-settings.md))、Agent Data(ワークのエージェント)/ Leader Prompt・Active Agents(リーダー) |
+| 音声 | Voice Input(Whisper の取得バージョンを含む)、Voice Output(VOICEVOX の取得バージョン・読み上げ辞書・定型音声を含む) |
 | 権限 | Web Search、Command Policy(リーダーには無い。Command Policy は Bedrock 方式(ワークは常に)でも出さない) |
-| Sandbox | 常に出るタブ。ただしパーソナルは、AI Link の接続方式が API のあいだは、「Bedrock 方式のときだけ使えます」という案内だけを出す(接続方式の読み込みが終わるまでは何も出さない)。ワークのエージェントは常にサンドボックスで動き、切り替えは無い。コンテナの状態・作り直し、担当システムのフォルダ(`/knowledge/data`)の場所と「Finder で開く」、専用の Dockerfile、1回の指示の上限時間(`SandboxTimeout`)、Claude Code の settings.json(モデル・許可するツール。`ClaudeSettingsEditor`)、`sandbox.env` のエディタ([sandbox.md](sandbox.md)) |
-| その他 | 名前・色の編集、使うプロキシの選択(Proxy)、設定の書き出し・取り込み(Backup)、設定のコピー、Debug Mode、削除 |
+| Sandbox | 常に出るタブ。ただしパーソナル・リーダーは、AI Link の接続方式が API のあいだは、「Bedrock 方式のときだけ使えます」という案内だけを出す(接続方式の読み込みが終わるまでは何も出さない)。ワークのエージェントは常にサンドボックスで動き、切り替えは無い。準備のチェックリスト(Docker・イメージのビルド・コンテナの起動。`SandboxSteps`)と、詳細設定(担当システムのフォルダ `/knowledge/data`、専用の Dockerfile、`sandbox.env`、上限時間と自動停止、Claude Code の settings.json)([sandbox.md](sandbox.md#設定画面)) |
+| その他 | 名前・色の編集(Agent)、使うプロキシの選択(Proxy)、設定の書き出し・取り込み(Backup)、設定のコピー(Copy Settings。ワークのエージェント)、Debug Mode、削除(Danger Zone。ワークのエージェント) |
 
 ### 全体設定(`/global`)
 
 | タブ | 節 |
 | --- | --- |
-| AIへの指示 | Base Prompt、Shared Data、Personal Data |
+| AIへの指示 | Base Prompt、Shared Prompts(チャット以外のプロンプト)、Shared Data、Personal Data |
 | 音声 | Wake Words、Voice Timing |
-| Sandbox | 共通の Dockerfile(Sandbox Image) |
+| Sandbox | 共通の Dockerfile(Sandbox Image)、Shared Claude Settings(全体の settings.json) |
 | その他 | Language、OS Notifications、Work(ワークの有効化)、Proxy、App Backup |
 
 詳細は [global-settings.md](global-settings.md)。
