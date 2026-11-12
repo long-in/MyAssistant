@@ -9,6 +9,7 @@ use crate::{
     services::{
         audio::Recorder,
         batch, debug_log, download_progress::Progress, knowledge,
+        playback::{self, Player},
         llm_router::{self, Route},
         proofread, pronunciation, secrets, settings_transfer::MAX_FILE_BYTES, stt,
         stt::SttEngine,
@@ -564,6 +565,38 @@ pub async fn synthesize_speech(app: AppHandle, ctx: Ctx, text: String) -> Result
         return tts::synthesize(&ctx, &pronounced(&ctx, &text)).await;
     }
     Ok(STANDARD.encode(synthesize_bytes(&app, &ctx, voice, &text).await?))
+}
+
+/// 音声(base64のMP3またはWAV)を再生し始め、長さ(秒)を返す。直前の再生は止める。
+#[tauri::command]
+pub async fn play_audio(app: AppHandle, b64: String) -> Result<f64, AppError> {
+    let bytes = STANDARD.decode(b64).map_err(|_| AppError::BadResponse)?;
+    tauri::async_runtime::spawn_blocking(move || app.state::<Player>().play(&bytes))
+        .await
+        .map_err(|e| AppError::Audio(e.to_string()))?
+}
+
+/// 再生中の音声を止める。再生していなければ何もしない。
+#[tauri::command]
+pub fn stop_audio(player: State<'_, Player>) {
+    player.stop();
+}
+
+/// 再生中の音声の直近波形(-1.0〜1.0、128点)。再生していなければ空。
+#[tauri::command]
+pub fn playback_waveform(player: State<'_, Player>) -> Vec<f32> {
+    player.waveform(128)
+}
+
+/// 通信系の障害を知らせる通知音。
+const ERROR_SOUND: &[u8] = include_bytes!("../../sounds/error.wav");
+
+/// 通知音を鳴らす。読み上げの再生には触れない。
+#[tauri::command]
+pub async fn play_error_sound() -> Result<(), AppError> {
+    tauri::async_runtime::spawn_blocking(|| playback::play_effect(ERROR_SOUND))
+        .await
+        .map_err(|e| AppError::Audio(e.to_string()))?
 }
 
 #[tauri::command]

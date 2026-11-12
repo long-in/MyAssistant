@@ -651,36 +651,32 @@ const AUDIBLE_ERRORS = new Set([
   "unauthorized",
 ]);
 
-let errorSound: HTMLAudioElement | null = null;
-
+/** 通知音を鳴らす。再生はRust側(WebViewの音声出力は放置で無音になるため)。 */
 export function playErrorSound() {
-  try {
-    errorSound ??= new Audio("/sounds/error.wav");
-    errorSound.currentTime = 0;
-    void errorSound.play().catch(() => {});
-  } catch {
-    // 通知音の失敗でエラー処理自体を壊さない
-  }
+  // 通知音の失敗でエラー処理自体を壊さない
+  void invoke<void>("play_error_sound").catch(() => {});
 }
 
-let audioCtx: AudioContext | null = null;
-let currentSource: AudioBufferSourceNode | null = null;
-let outputAnalyser: AnalyserNode | null = null;
-/** AudioContextが使えないときのフォールバック再生。 */
-let currentAudio: HTMLAudioElement | null = null;
+/*
+ * 読み上げの再生はRust側(cpal)で行う。WebView(WKWebView)の音声出力は、長く使わないと
+ * 状態は再生中のまま黙って無音になり、Web側からは検知も復旧もできないため。
+ */
 let speaking = false;
-/** 再生中の読み上げの情報。字幕を再生位置に合わせるために使う。`text`は読み上げている本文。 */
+/** 再生中の読み上げの情報。字幕を再生位置に合わせるために使う。`text`は読み上げている本文、`startedAt`は`performance.now()`。 */
 let playback: { text: string; startedAt: number; duration: number } | null = null;
+/** 再生の世代。停止と再生開始のたびに進め、再生を始める間に止められたかを見分ける。 */
+let playbackId = 0;
+/** 最後に始めた再生の番号。止められた再生の後に、新しい再生が始まっているかを見分ける。 */
+let lastPlay = 0;
 
 /** 読み上げ音声を再生中か。 */
 export const isSpeaking = () => speaking;
 
 /** `text`を読み上げ中なら、再生の進行度(0〜1)。それ以外はnull。 */
 export function speechProgress(text: string): number | null {
-  if (!speaking || !playback || playback.text !== text) return null;
-  const now = currentAudio ? currentAudio.currentTime : audioCtx?.currentTime;
-  if (now === undefined || !(playback.duration > 0)) return null;
-  return Math.min(1, Math.max(0, (now - playback.startedAt) / playback.duration));
+  if (!speaking || !playback || playback.text !== text || !(playback.duration > 0)) return null;
+  const elapsed = (performance.now() - playback.startedAt) / 1000;
+  return Math.min(1, Math.max(0, elapsed / playback.duration));
 }
 
 /** 再生中の読み上げが終わるまで待つ(上限`maxMs`)。長い返答の途中でマイクが開かないよう、上限は十分長くしてある。 */
@@ -689,50 +685,11 @@ export async function waitForSpeechEnd(maxMs = 300000): Promise<void> {
   while (speaking && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
 }
 
-/** 読み上げ音声の波形取得用。再生がなければ無音を返す。AudioContextが使えなければnull。 */
-export function getOutputAnalyser(): AnalyserNode | null {
-  if (!audioCtx) return null;
-  if (!outputAnalyser) {
-    outputAnalyser = audioCtx.createAnalyser();
-    outputAnalyser.fftSize = 1024;
-    outputAnalyser.connect(audioCtx.destination);
-  }
-  return outputAnalyser;
-}
+/** 再生中の読み上げの直近波形(-1.0〜1.0)。再生していなければ空。 */
+export const playbackWaveform = () => invoke<number[]>("playback_waveform");
 
-/**
- * 自動再生のためにAudioContextを有効化する。
- * ユーザー操作(送信・マイク操作)の中で呼んでおくと、以降の応答は操作なしで再生できる。
- */
-export function unlockAudio() {
-  try {
-    installAudioRecovery();
-    audioCtx ??= new AudioContext();
-    if (audioCtx.state !== "running") void audioCtx.resume().catch(() => {});
-  } catch {
-    // 非対応環境ではHTMLAudioへフォールバックする
-  }
-}
-
-let recoveryInstalled = false;
-
-/**
- * 放置やスリープで中断されたAudioContextを、アプリが前面に戻ったときに復旧する。
- * 中断(suspended/interrupted)のまま放置されると、次の応答が無音になるため。
- */
-function installAudioRecovery() {
-  if (recoveryInstalled || typeof window === "undefined") return;
-  recoveryInstalled = true;
-  const recover = () => {
-    if (document.visibilityState === "hidden" || !audioCtx || audioCtx.state === "running" || audioCtx.state === "closed") return;
-    void audioCtx.resume().catch(() => {});
-  };
-  document.addEventListener("visibilitychange", recover);
-  window.addEventListener("focus", recover);
-}
-
-/** 再生終了通知が来なかった場合に再生中扱いを解除するまでの余裕(ms)。 */
-const SPEAKING_GRACE_MS = 2000;
+/** 再生時間を過ぎてから再生中扱いを解除するまでの余裕(ms)。出力デバイスの遅延のぶん。 */
+const SPEAKING_GRACE_MS = 300;
 let speakingTimer: ReturnType<typeof setTimeout> | null = null;
 
 const clearSpeakingTimer = () => {
@@ -740,118 +697,45 @@ const clearSpeakingTimer = () => {
   speakingTimer = null;
 };
 
-/** AudioContextを破棄する。長時間の放置などで復帰できなくなった場合に作り直すための準備。 */
-function resetAudio() {
+/** 再生中扱いを解除する(音は止めない)。 */
+function endSpeaking() {
   clearSpeakingTimer();
   speaking = false;
   playback = null;
-  currentSource = null;
-  outputAnalyser = null;
-  const old = audioCtx;
-  audioCtx = null;
-  void old?.close().catch(() => {});
-}
-
-/** 再生可能な状態のAudioContextを返す。停止したまま戻らなければ作り直し、それでも駄目なら例外。 */
-async function runningAudioContext(): Promise<AudioContext> {
-  const tryResume = async () => {
-    unlockAudio();
-    if (audioCtx && audioCtx.state !== "running") {
-      await Promise.race([audioCtx.resume().catch(() => {}), new Promise((r) => setTimeout(r, 1000))]);
-    }
-    return audioCtx?.state === "running";
-  };
-  // 放置後はsuspended/interruptedのまま戻らないことがあるため、1度だけ作り直して再試行する
-  if (!(await tryResume())) {
-    resetAudio();
-    if (!(await tryResume())) throw new Error("AudioContext is not running");
-  }
-  return audioCtx!;
 }
 
 /** 再生中の読み上げを止める。 */
 export function stopSpeech(): void {
-  try {
-    currentSource?.stop();
-  } catch {
-    // すでに停止済み
-  }
-  if (currentAudio) {
-    const audio = currentAudio;
-    currentAudio = null;
-    audio.pause();
-  }
-  clearSpeakingTimer();
-  speaking = false;
-  playback = null;
-}
-
-/** AudioContextを使えないときに、HTMLAudioで再生する。 */
-async function playWithHtmlAudio(bytes: Uint8Array, text?: string): Promise<void> {
-  const riff = bytes[0] === 0x52 && bytes[1] === 0x49; // VOICEVOXのWAVは"RIFF"で始まる
-  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: riff ? "audio/wav" : "audio/mpeg" }));
-  const audio = new Audio(url);
-  const finish = () => {
-    URL.revokeObjectURL(url);
-    if (currentAudio !== audio) return;
-    currentAudio = null;
-    clearSpeakingTimer();
-    speaking = false;
-    playback = null;
-  };
-  audio.onended = finish;
-  audio.onerror = finish;
-  currentAudio = audio;
-  try {
-    await audio.play();
-  } catch (e) {
-    finish();
-    throw e;
-  }
-  if (currentAudio !== audio) return; // 再生を始める間に止められた
-  speaking = true;
-  const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
-  playback = text ? { text, startedAt: 0, duration } : null;
-  if (duration > 0) speakingTimer = setTimeout(finish, duration * 1000 + SPEAKING_GRACE_MS);
+  playbackId++;
+  endSpeaking();
+  void invoke<void>("stop_audio").catch(() => {});
 }
 
 /**
  * 再生を開始する。直前の再生は止める。再生できない場合は`playback_error`で失敗する。
+ * `b64`はbase64のMP3またはWAV。
  * `text`は読み上げる本文。渡すと`speechProgress`で再生位置を取れる(定型音声など本文がないものは省く)。
  */
 export async function playBase64Mp3(b64: string, text?: string): Promise<void> {
   stopSpeech();
+  const id = playbackId;
+  const play = ++lastPlay;
+  let duration: number;
   try {
-    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    // 操作なしで再生を始めると(常時待機の応答など)中断状態のままになり、終了通知が来ず再生中扱いが残る。
-    // 復旧できなければHTMLAudioで再生し、それも駄目なら失敗にする
-    let ctx: AudioContext;
-    try {
-      ctx = await runningAudioContext();
-    } catch {
-      await playWithHtmlAudio(bytes, text);
-      return;
-    }
-    const buffer = await ctx.decodeAudioData(bytes.buffer);
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.connect(getOutputAnalyser() ?? ctx.destination);
-    const finish = () => {
-      if (currentSource !== source) return;
-      clearSpeakingTimer();
-      speaking = false;
-      playback = null;
-    };
-    source.onended = finish;
-    source.start();
-    currentSource = source;
-    speaking = true;
-    playback = text ? { text, startedAt: ctx.currentTime, duration: buffer.duration } : null;
-    // 再生中にコンテキストが中断されるとonendedが来ないため、再生時間を過ぎたら再生中扱いを解除する
-    speakingTimer = setTimeout(finish, buffer.duration * 1000 + SPEAKING_GRACE_MS);
+    duration = await invoke<number>("play_audio", { b64 });
   } catch (e) {
-    throw { code: "playback_error", message: String(e) } satisfies AppError;
+    throw { code: "playback_error", message: errorMessage(e) } satisfies AppError;
   }
+  if (id !== playbackId) {
+    // 再生を始める間に止められた。次の再生が始まっていれば、Rust側で既にそちらへ置き換わるので止めない
+    if (play === lastPlay) void invoke<void>("stop_audio").catch(() => {});
+    return;
+  }
+  speaking = true;
+  playback = text ? { text, startedAt: performance.now(), duration } : null;
+  speakingTimer = setTimeout(() => {
+    if (id === playbackId) endSpeaking();
+  }, duration * 1000 + SPEAKING_GRACE_MS);
 }
 
 /** メッセージを返しつつ、必要なら通知音を鳴らす。 */

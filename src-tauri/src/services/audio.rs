@@ -155,14 +155,7 @@ impl Recorder {
         let Some(active) = slot.as_ref() else { return Vec::new() };
         let buf = active.buf.lock().unwrap_or_else(|p| p.into_inner());
         let window = (active.rate as usize / 10).min(buf.len());
-        if points == 0 || window < points {
-            return Vec::new();
-        }
-        buf[buf.len() - window..]
-            .chunks(window / points)
-            .take(points)
-            .map(|c| c.iter().copied().fold(0.0f32, |m, x| if x.abs() > m.abs() { x } else { m }))
-            .collect()
+        peaks(&buf[buf.len() - window..], points)
     }
 
     /// 直近`keep_ms`ミリ秒だけを残し、それより古い入力を捨てる。
@@ -186,6 +179,18 @@ impl Recorder {
         let samples = std::mem::take(&mut *active.buf.lock().unwrap_or_else(|p| p.into_inner()));
         Ok(resample(&samples, active.rate, WHISPER_RATE))
     }
+}
+
+/// `window`を`points`個の代表値(各区間でもっとも振幅の大きいサンプル)に縮約する。足りなければ空。波形表示用。
+pub fn peaks(window: &[f32], points: usize) -> Vec<f32> {
+    if points == 0 || window.len() < points {
+        return Vec::new();
+    }
+    window
+        .chunks(window.len() / points)
+        .take(points)
+        .map(|c| c.iter().copied().fold(0.0f32, |m, x| if x.abs() > m.abs() { x } else { m }))
+        .collect()
 }
 
 /// 線形補間によるリサンプリング。

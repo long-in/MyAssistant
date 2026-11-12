@@ -144,6 +144,10 @@ pub fn run() {
       commands::voice::start_recording,
       commands::voice::cancel_recording,
       commands::voice::recording_waveform,
+      commands::voice::play_audio,
+      commands::voice::stop_audio,
+      commands::voice::playback_waveform,
+      commands::voice::play_error_sound,
       commands::voice::stop_recording_and_transcribe,
       commands::voice::stop_recording_and_check_wake,
       commands::voice::trim_recording,
@@ -267,6 +271,7 @@ pub fn run() {
       services::sandbox::start(app.handle());
       app.manage(services::graph::GraphCache::default());
       app.manage(services::audio::Recorder::default());
+      app.manage(services::playback::Player::default());
       app.manage(services::stt::SttEngine::default());
       app.manage(services::vad::VadEngine::default());
       app.manage(services::voicevox::VoicevoxEngine::default());
