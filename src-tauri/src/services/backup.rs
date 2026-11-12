@@ -192,7 +192,7 @@ impl<W: Write + Seek> Packer<W> {
             self.zip.write_all(&buf[..n]).map_err(io)?;
             self.bytes += n as u64;
         }
-        self.files.insert(name.to_owned(), format!("{:x}", hasher.finalize()));
+        self.files.insert(name.to_owned(), crate::services::local_llm::hex(&hasher.finalize()));
         Ok(())
     }
 
@@ -454,7 +454,7 @@ fn prepare_inner(src: &Path, stage: &Path, password: Option<&str>) -> Result<Pre
             hasher.update(&buf[..n]);
             out.write_all(&buf[..n]).map_err(io)?;
         }
-        if format!("{:x}", hasher.finalize()) != *expected {
+        if crate::services::local_llm::hex(&hasher.finalize()) != *expected {
             return Err(bad(format!("内容が壊れています: {name}")));
         }
     }
