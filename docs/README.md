@@ -19,7 +19,7 @@
 | [user-profile.md](user-profile.md) | パーソナルデータ |
 | [agent-file-tools.md](agent-file-tools.md) | ファイル操作・設計書の参照・インターネット検索のツール |
 | [agent-command-tasks.md](agent-command-tasks.md) | 作業依頼(計画の承認とコマンド実行) |
-| [command-policy.md](command-policy.md) | コマンドの許可・拒否の判定とポリシーファイル |
+| [command-policy.md](command-policy.md) | コマンドの許可・拒否の判定とポリシー(DB) |
 | [sandbox.md](sandbox.md) | Docker サンドボックス(全エージェント共通のイメージと Dockerfile・環境変数・分離・後始末) |
 | [data-and-settings.md](data-and-settings.md) | 保存データ、設定項目、調整値、設定のエクスポート・インポート |
 | [backup.md](backup.md) | アプリ全体のバックアップとリストア(zip の中身、検証、再起動時の差し替え) |

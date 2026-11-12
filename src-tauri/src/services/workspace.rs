@@ -115,6 +115,8 @@ impl WorkspaceCtx {
     /// フォルダ名を小文字にそろえ、アプリが使うフォルダ(`data`・`inbox`・`memory`・`skills`・`captures`・`preferences`)を(無ければ)作る。
     fn prepare_knowledge(&self) {
         let Ok(root) = super::batch::knowledge_root(self) else { return };
+        // 以前のナレッジのコマンド権限のファイルは、DBへ取り込む
+        super::command_policy::import_file(&self.db, &root);
         if root.is_dir() {
             let n = super::knowledge::lowercase_dirs(&root);
             if n > 0 {
