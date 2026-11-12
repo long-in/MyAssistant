@@ -1,6 +1,7 @@
 /** 日本語の原文 → 英語。辞書にない文字列は原文のまま表示される。 */
 export const EN: Record<string, string> = {
   "コマンドの拒否は permissions.deny で決めます。雛形には rm・sudo などの初期値が入っています。ここもエージェントの settings.json も空のときは、初期値の拒否だけを渡します。": "Command denials are set by permissions.deny. The template includes defaults such as rm and sudo. When both this and the agent's settings.json are empty, only the default denials are passed.",
+  "Sandbox は Amazon Bedrock 方式のときだけ使えます。LLM タブで接続方式を Amazon Bedrock にしてください。": "Sandbox is only available with the Amazon Bedrock connection mode. Set the connection mode to Amazon Bedrock in the LLM tab.",
   "コンテナ内の Claude Code で拒否するコマンドは、Sandbox タブの settings.json(permissions.deny)で決めます。": "Commands denied to Claude Code in the container are set in settings.json (permissions.deny) on the Sandbox tab.",
   "右のパネルを畳む": "Hide the side panel",
   "右のパネルを開く": "Show the side panel",

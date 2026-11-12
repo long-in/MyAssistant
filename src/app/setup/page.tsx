@@ -1232,12 +1232,14 @@ export default function Setup() {
   const [busy, setBusy] = useState<string | null>(null);
   const [usage, setUsage] = useState<Partial<Record<Provider, string[]>>>({});
   const [linkMode, setLinkMode] = useState<LinkMode>("api");
+  const [linkModeLoaded, setLinkModeLoaded] = useState(false); // 接続方式の読み込み前は、Sandbox の案内を出さない
 
   const refresh = useCallback(
     () =>
       Promise.all([getKeyStatus(), ttsKeyRegistered(), getSttEngine(), getSttLanguage(), sttModelUpgradable(), getTtsEngine(), voicevoxInstalled(), getVoicevoxStyle(), fetchTtsReady(), loadLinkMode()])
         .then(([s, t, e, l, u, te, vi, vs, sr, lm]) => {
           setLinkMode(lm);
+          setLinkModeLoaded(true);
           setTtsEngineState(te);
           setVvInstalled(vi);
           setVvStyle(vs);
@@ -1357,7 +1359,7 @@ export default function Setup() {
                   </div>
                   <Select value={linkMode} disabled={busy === "mode"} onValueChange={(v) => run("mode", () => saveLinkMode(v as LinkMode))}>
                     <SelectTrigger size="sm" aria-label={t("接続方式")} className="w-36">
-                      <SelectValue />
+                      <SelectValue>{linkMode === "bedrock" ? "Amazon Bedrock" : "API"}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="api">API</SelectItem>
@@ -1550,7 +1552,15 @@ export default function Setup() {
             </TabsContent>
           )}
           <TabsContent value="sandbox" className="flex flex-col gap-6">
-            <SandboxPanel key={active.id} workspaceId={active.id} />
+            {bedrockMode ? (
+              <SandboxPanel key={active.id} workspaceId={active.id} />
+            ) : (
+              linkModeLoaded && (
+                <p className="rounded-md border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
+                  {t("Sandbox は Amazon Bedrock 方式のときだけ使えます。LLM タブで接続方式を Amazon Bedrock にしてください。")}
+                </p>
+              )
+            )}
           </TabsContent>
 
           <TabsContent value="agent" className="flex flex-col gap-6">
