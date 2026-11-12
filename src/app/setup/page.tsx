@@ -1222,6 +1222,8 @@ export default function Setup() {
   const workAgent = active.id !== LEADER_ID && active.id !== PERSONAL_ID;
   // 接続方式はAPIかBedrockのどちらか一方(ワークはBedrock固定)。Bedrock 方式はすべてコンテナで動くので、ローカル(Qwen)は API 方式だけ
   const bedrockMode = workAgent || linkMode === "bedrock";
+  // 権限タブの項目は API 方式だけにある。Bedrock 方式(ワークは常に)はコンテナ内の Claude Code が動き、ツールの許可・拒否は Sandbox タブの settings.json で決める
+  const showAccess = active.id !== LEADER_ID && !bedrockMode;
   const providers = PROVIDERS.filter((p) => (bedrockMode ? p === "bedrock" : p === "anthropic" || p === "local"));
   const linked = providers.filter((p) => status[p]).length;
 
@@ -1243,11 +1245,11 @@ export default function Setup() {
           }
         />
 
-        <Tabs value={tab} onValueChange={setTab} className="gap-6">
+        <Tabs value={tab === "access" && !showAccess ? "llm" : tab} onValueChange={setTab} className="gap-6">
           <TabsList variant="line" className="w-full justify-start overflow-x-auto border-b pb-1">
             <TabsTrigger value="llm" className="flex-none gap-1.5 px-3"><Brain className="size-3.5" />LLM</TabsTrigger>
             <TabsTrigger value="voice" className="flex-none gap-1.5 px-3"><AudioLines className="size-3.5" />{t("音声")}</TabsTrigger>
-            {active.id !== LEADER_ID && <TabsTrigger value="access" className="flex-none gap-1.5 px-3"><ShieldCheck className="size-3.5" />{t("権限")}</TabsTrigger>}
+            {showAccess && <TabsTrigger value="access" className="flex-none gap-1.5 px-3"><ShieldCheck className="size-3.5" />{t("権限")}</TabsTrigger>}
             <TabsTrigger value="sandbox" className="flex-none gap-1.5 px-3"><Container className="size-3.5" />Sandbox</TabsTrigger>
             <TabsTrigger value="agent" className="flex-none gap-1.5 px-3"><Bot className="size-3.5" />{t("その他")}</TabsTrigger>
           </TabsList>
@@ -1463,11 +1465,10 @@ export default function Setup() {
           </TabsContent>
 
 
-          {active.id !== LEADER_ID && (
+          {showAccess && (
             <TabsContent value="access" className="flex flex-col gap-6">
-              {!bedrockMode && <WebAccess />}
-              {/* Bedrock 方式(ワークは常に)は、すべてコンテナ内の Claude Code で動き、Web検索を含むツールの許可・拒否は settings.json で決める */}
-              {!bedrockMode && <CommandPolicyEditor />}
+              <WebAccess />
+              <CommandPolicyEditor />
             </TabsContent>
           )}
           <TabsContent value="sandbox" className="flex flex-col gap-6">
