@@ -25,7 +25,7 @@ export default function MfaModal() {
   useEffect(() => {
     const un = listen<AwsMfaPrompt>(AWS_MFA_EVENT, (e) => {
       setCode("");
-      setQueue((q) => [...q.filter((p) => p.workspace_id !== e.payload.workspace_id), e.payload]);
+      setQueue((q) => [...q.filter((p) => p.workspace_id !== e.payload.workspace_id || p.slot !== e.payload.slot), e.payload]);
     });
     return () => {
       un.then((f) => f());
@@ -37,7 +37,7 @@ export default function MfaModal() {
   const submit = async () => {
     setBusy(true);
     try {
-      await submitAwsMfa(prompt.workspace_id, code);
+      await submitAwsMfa(prompt.workspace_id, prompt.slot, code);
       done();
     } catch (e) {
       toast.error(reportError(e));
@@ -46,7 +46,7 @@ export default function MfaModal() {
     }
   };
   const cancel = () => {
-    cancelAwsMfa(prompt.workspace_id).catch(() => {});
+    cancelAwsMfa(prompt.workspace_id, prompt.slot).catch(() => {});
     done();
   };
 
@@ -71,6 +71,7 @@ export default function MfaModal() {
           {t("エージェント: {name}", { name: prompt.workspace_name ?? t("パーソナル") })}
         </p>
         <p className="mt-2 text-xs text-muted-foreground">
+          {prompt.slot === "sandbox" && <>{t("コンテナ内のコマンド用のAWS設定です。")} </>}
           {t("AWSプロファイル「{profile}」のスイッチロールにMFAが必要です。", { profile: prompt.profile })}
         </p>
         <p className="mt-1 break-all font-mono text-[0.65rem] text-muted-foreground">{prompt.mfa_serial}</p>

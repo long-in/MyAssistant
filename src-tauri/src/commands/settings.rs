@@ -39,7 +39,7 @@ pub async fn save_api_key(ctx: Ctx, provider: String, key: String) -> Result<(),
 pub fn delete_api_key(ctx: Ctx, provider: String) -> Result<(), AppError> {
     match Provider::from_str(&provider)? {
         // 保存内容に加えて、メモリ上の一時クレデンシャルも消す
-        Provider::Bedrock => aws::delete(&ctx),
+        Provider::Bedrock => aws::delete(&ctx, aws::AwsSlot::Bedrock),
         p => ctx.secrets.delete_key(p),
     }
 }

@@ -6,8 +6,10 @@ import { StatusPill, UsedBy, linkCardClass } from "@/components/GlobalPanels";
 import { toast } from "sonner";
 import { useT } from "@/lib/i18n";
 import {
+  type AwsSlot,
   type AwsStatus,
   deleteApiKey,
+  deleteAwsConfig,
   type AwsProfile,
   getAwsFiles,
   getAwsStatus,
@@ -36,11 +38,21 @@ aws_access_key_id = AKIA...
 aws_secret_access_key = ...`;
 
 /**
- * Amazon Bedrock(Claude)の接続設定。`~/.aws/config`と`~/.aws/credentials`の中身をそのまま貼り付けて登録する。
+ * AWSの接続設定。`~/.aws/config`と`~/.aws/credentials`の中身をそのまま貼り付けて登録する。
  * 登録後は「更新」を開くと保存済みの内容が入った状態で編集できる。
+ * `slot`が`bedrock`なら Amazon Bedrock(Claude)用、`sandbox`ならコンテナ内のコマンド(aws CLI・SDK)用。用途ごとに別々に保存する。
  */
-export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => void; usedBy?: string[] }) {
+export default function AwsPanel({
+  onChanged,
+  usedBy = [],
+  slot = "bedrock",
+}: {
+  onChanged: () => void;
+  usedBy?: string[];
+  slot?: AwsSlot;
+}) {
   const t = useT();
+  const bedrock = slot === "bedrock";
   const [status, setStatus] = useState<AwsStatus | null>(null);
   const [open, setOpen] = useState(false);
   const [config, setConfig] = useState("");
@@ -51,10 +63,10 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
 
   const refresh = useCallback(
     () =>
-      getAwsStatus()
+      getAwsStatus(slot)
         .then(setStatus)
         .catch((e) => toast.error(reportError(e))),
-    [],
+    [slot],
   );
   useEffect(() => {
     refresh();
@@ -80,7 +92,7 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
   useEffect(() => {
     if (!open) return;
     let alive = true;
-    getAwsFiles()
+    getAwsFiles(slot)
       .then((f) => {
         if (!alive) return;
         setConfig(f.config);
@@ -90,7 +102,7 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
     return () => {
       alive = false;
     };
-  }, [open]);
+  }, [open, slot]);
 
   const run = async (kind: NonNullable<typeof busy>, fn: () => Promise<AwsStatus | void>, ok?: string) => {
     setBusy(kind);
@@ -134,7 +146,7 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
           )}
         />
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium">Amazon Bedrock (Claude)</div>
+          <div className="text-sm font-medium">{bedrock ? "Amazon Bedrock (Claude)" : t("コンテナ内の AWS")}</div>
           <div className="text-xs text-muted-foreground">{t("AWSのスイッチロール(MFA対応)または IAM Identity Center(SSO)で接続")}</div>
         </div>
         <span className="hidden sm:inline" aria-live="polite">
@@ -147,7 +159,7 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
             size="icon-sm"
             aria-label={t("削除")}
             disabled={busy !== null}
-            onClick={() => run("delete", () => deleteApiKey("bedrock"))}
+            onClick={() => run("delete", () => (bedrock ? deleteApiKey("bedrock") : deleteAwsConfig(slot)))}
           >
             <Trash2 />
           </Button>
@@ -168,14 +180,14 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
         </Button>
       </div>
 
-      <UsedBy features={usedBy} linked={registered} />
+      {bedrock && <UsedBy features={usedBy} linked={registered} />}
 
       {registered && (
         <div className="mt-3 flex flex-wrap items-center gap-2 pl-5">
           <Select
             items={items}
             value={status?.selected ?? ""}
-            onValueChange={(v) => v && run("save", () => selectAwsProfile(v as string))}
+            onValueChange={(v) => v && run("save", () => selectAwsProfile(v as string, slot))}
           >
             <SelectTrigger className="w-64" aria-label={t("AWSプロファイル")}>
               <SelectValue />
@@ -191,7 +203,7 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
             variant="outline"
             size="sm"
             disabled={busy !== null}
-            onClick={() => run("test", testAwsConnection, t("AWSの認証に成功しました。"))}
+            onClick={() => run("test", () => testAwsConnection(slot), t("AWSの認証に成功しました。"))}
           >
             {busy === "test" ? <Loader2 className="animate-spin" /> : <Plug />}
             {busy === "test" ? t("確認中…") : t("接続テスト")}
@@ -209,7 +221,9 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
 
       {registered && (
         <p className="mt-3 pl-5 text-xs text-muted-foreground">
-          {t("Bedrockのモデルは、Sandbox タブの Claude Code の settings.json で決めます。接続テストは、AWSの認証(MFA・SSO・ロールの引き受け)が通るかを確かめます。")}
+          {bedrock
+            ? t("Bedrockのモデルは、Sandbox タブの Claude Code の settings.json で決めます。接続テストは、AWSの認証(MFA・SSO・ロールの引き受け)が通るかを確かめます。")
+            : t("コンテナ内の aws コマンド・SDK は、この認証情報の一時キーを自動で取得します。MFA・SSO の承認が必要なときは、その時点で画面に表示します。接続テストは、AWSの認証が通るかを確かめます。")}
         </p>
       )}
 
@@ -218,7 +232,7 @@ export default function AwsPanel({ onChanged, usedBy = [] }: { onChanged: () => 
           className="mt-3 flex flex-col gap-3 pl-5"
           onSubmit={async (e) => {
             e.preventDefault();
-            const ok = await run("save", () => saveAwsConfig(config, credentials, chosen), t("AWSの設定を保存しました。"));
+            const ok = await run("save", () => saveAwsConfig(config, credentials, chosen, slot), t("AWSの設定を保存しました。"));
             if (ok) {
               setConfig("");
               setCredentials("");

@@ -186,7 +186,7 @@ pub fn copy(from: &WorkspaceCtx, to: &WorkspaceCtx, opts: CopyOptions) -> Result
         return Err(e);
     }
     if opts.include_keys {
-        aws::reset(to); // 差し替えたAWS設定で取り直すため、古い一時クレデンシャルは捨てる
+        aws::reset_all(to); // 差し替えたAWS設定で取り直すため、古い一時クレデンシャルは捨てる
     }
     Ok(CopyReport { settings: v.report().applied, keys, words: words.map_or(0, |w| w.len()) })
 }

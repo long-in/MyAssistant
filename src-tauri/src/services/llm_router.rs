@@ -73,7 +73,7 @@ pub fn link_mode(ctx: &WorkspaceCtx) -> LinkMode {
         Some("api") => LinkMode::Api,
         Some("bedrock") => LinkMode::Bedrock,
         _ => {
-            let aws = ctx.secrets.has_aws().unwrap_or(false);
+            let aws = ctx.secrets.has_aws(super::secrets::AwsSlot::Bedrock).unwrap_or(false);
             let api = ctx.secrets.has_key(Provider::Anthropic).unwrap_or(false);
             if aws && !api { LinkMode::Bedrock } else { LinkMode::Api }
         }
@@ -274,7 +274,7 @@ mod tests {
         assert_eq!(link_mode(&personal), LinkMode::Api);
         personal
             .secrets
-            .set_aws_files("[default]\nregion = us-east-1", "[default]\naws_access_key_id = A\naws_secret_access_key = B")
+            .set_aws_files(crate::services::secrets::AwsSlot::Bedrock, "[default]\nregion = us-east-1", "[default]\naws_access_key_id = A\naws_secret_access_key = B")
             .unwrap();
         assert_eq!(link_mode(&personal), LinkMode::Bedrock);
         personal.secrets.set_key(Provider::Anthropic, "k").unwrap();

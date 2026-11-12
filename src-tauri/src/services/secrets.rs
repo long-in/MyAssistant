@@ -60,6 +60,33 @@ const AWS_CONFIG_ACCOUNT: &str = "aws_config";
 const AWS_CREDENTIALS_ACCOUNT: &str = "aws_credentials";
 /// 使うプロファイル名(秘密ではないが、保存先を分けないため同じストアに置く)。
 const AWS_PROFILE_ACCOUNT: &str = "aws_profile";
+/// サンドボックスのコンテナ内のコマンド(aws CLI・SDK)が使うAWS設定。Bedrock用とは別に持つ。
+const SANDBOX_AWS_CONFIG_ACCOUNT: &str = "sandbox_aws_config";
+const SANDBOX_AWS_CREDENTIALS_ACCOUNT: &str = "sandbox_aws_credentials";
+const SANDBOX_AWS_PROFILE_ACCOUNT: &str = "sandbox_aws_profile";
+
+/// AWS設定の用途。用途ごとに、貼り付けた内容・プロファイル・一時クレデンシャルを別々に持つ。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AwsSlot {
+    /// Amazon Bedrock(コンテナ内の Claude Code の呼び出しを、ホストで署名する)。
+    #[default]
+    Bedrock,
+    /// コンテナ内のコマンドが AWS へ接続するときの認証情報。
+    Sandbox,
+}
+
+impl AwsSlot {
+    pub const ALL: [Self; 2] = [Self::Bedrock, Self::Sandbox];
+
+    /// 保存先の名前(config・credentials・プロファイル)。
+    fn accounts(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Self::Bedrock => (AWS_CONFIG_ACCOUNT, AWS_CREDENTIALS_ACCOUNT, AWS_PROFILE_ACCOUNT),
+            Self::Sandbox => (SANDBOX_AWS_CONFIG_ACCOUNT, SANDBOX_AWS_CREDENTIALS_ACCOUNT, SANDBOX_AWS_PROFILE_ACCOUNT),
+        }
+    }
+}
 
 /// `Secrets::backup`で控えた内容。中身はこのモジュールの外へ出さない。
 pub struct SecretsBackup(HashMap<String, String>);
@@ -217,7 +244,7 @@ impl Secrets {
     /// そのプロバイダーを使えるか。ローカルはキーではなく、取得済みかどうか(全ワークスペース共通)。
     pub fn has_key(&self, provider: Provider) -> Result<bool, AppError> {
         match provider {
-            Provider::Bedrock => self.has_aws(),
+            Provider::Bedrock => self.has_aws(AwsSlot::Bedrock),
             Provider::Local => Ok(super::local_llm::installed()),
             p => Ok(self.get_secret(p.as_str())?.is_some()),
         }
@@ -240,41 +267,42 @@ impl Secrets {
 
     pub fn delete_key(&self, provider: Provider) -> Result<(), AppError> {
         match provider {
-            Provider::Bedrock => self.delete_aws(),
+            Provider::Bedrock => self.delete_aws(AwsSlot::Bedrock),
             Provider::Local => Err(AppError::InvalidProvider(provider.as_str().to_owned())),
             p => self.delete_secret(p.as_str()),
         }
     }
 
-    pub fn has_aws(&self) -> Result<bool, AppError> {
-        Ok(self.get_secret(AWS_CONFIG_ACCOUNT)?.is_some() || self.get_secret(AWS_CREDENTIALS_ACCOUNT)?.is_some())
+    pub fn has_aws(&self, slot: AwsSlot) -> Result<bool, AppError> {
+        let (config, credentials, _) = slot.accounts();
+        Ok(self.get_secret(config)?.is_some() || self.get_secret(credentials)?.is_some())
     }
 
     /// Rust内部のAWS認証(`aws.rs`)専用。公開してよいのは、本人が確認・編集する`get_aws_files`コマンドだけ。未登録の側は空文字を返す。
-    pub fn get_aws_files(&self) -> Result<(String, String), AppError> {
-        Ok((
-            self.get_secret(AWS_CONFIG_ACCOUNT)?.unwrap_or_default(),
-            self.get_secret(AWS_CREDENTIALS_ACCOUNT)?.unwrap_or_default(),
-        ))
+    pub fn get_aws_files(&self, slot: AwsSlot) -> Result<(String, String), AppError> {
+        let (config, credentials, _) = slot.accounts();
+        Ok((self.get_secret(config)?.unwrap_or_default(), self.get_secret(credentials)?.unwrap_or_default()))
     }
 
-    pub fn set_aws_files(&self, config: &str, credentials: &str) -> Result<(), AppError> {
-        self.set_secret(AWS_CONFIG_ACCOUNT, config)?;
-        self.set_secret(AWS_CREDENTIALS_ACCOUNT, credentials)
+    pub fn set_aws_files(&self, slot: AwsSlot, config: &str, credentials: &str) -> Result<(), AppError> {
+        let (config_account, credentials_account, _) = slot.accounts();
+        self.set_secret(config_account, config)?;
+        self.set_secret(credentials_account, credentials)
     }
 
-    pub fn get_aws_profile(&self) -> Result<Option<String>, AppError> {
-        self.get_secret(AWS_PROFILE_ACCOUNT)
+    pub fn get_aws_profile(&self, slot: AwsSlot) -> Result<Option<String>, AppError> {
+        self.get_secret(slot.accounts().2)
     }
 
-    pub fn set_aws_profile(&self, name: &str) -> Result<(), AppError> {
-        self.set_secret(AWS_PROFILE_ACCOUNT, name)
+    pub fn set_aws_profile(&self, slot: AwsSlot, name: &str) -> Result<(), AppError> {
+        self.set_secret(slot.accounts().2, name)
     }
 
-    pub fn delete_aws(&self) -> Result<(), AppError> {
-        self.delete_secret(AWS_CONFIG_ACCOUNT)?;
-        self.delete_secret(AWS_CREDENTIALS_ACCOUNT)?;
-        self.delete_secret(AWS_PROFILE_ACCOUNT)
+    pub fn delete_aws(&self, slot: AwsSlot) -> Result<(), AppError> {
+        let (config, credentials, profile) = slot.accounts();
+        self.delete_secret(config)?;
+        self.delete_secret(credentials)?;
+        self.delete_secret(profile)
     }
 }
 
