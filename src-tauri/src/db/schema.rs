@@ -3,10 +3,10 @@
 //! - 開くたびに、未適用の版を古い順に1つずつ当てる。各版は1つのトランザクションで当て、版の番号も同じトランザクションで書く。
 //! - 既存のDBを書き換える前に、同じフォルダへ`<ファイル名>.bak-v<元の版>`として複製を残す(`VACUUM INTO`)。複製できなければ開かない。
 //! - 版0は、版管理を入れる前のDB(または空のDB)。版1はその時点のスキーマと同じなので、既存のDBにはそのまま当たる。
-//! - リーダーの台帳(`leader_tasks`)は版とは別に、DBの役割(`Role`)で作る・片付ける。
+//! - リーダーの台帳(`leader_tasks`)は版とは別に、DBの役割(`Role`)で作る。
 use std::path::{Path, PathBuf};
 
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{Connection, TransactionBehavior};
 
 use crate::utils::error::AppError;
 
@@ -185,10 +185,9 @@ pub fn prepare(conn: &mut Connection, path: Option<&Path>, role: Role) -> Result
     // 同じファイルを複数の接続で開くことがあるため、読み取りが書き込みを待たないWALにする(メモリ上のDBでは無視される)
     conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))?;
     migrate(conn, path, LATEST)?;
-    rename_legacy_ledger_columns(conn)?;
     match role {
         Role::Leader => conn.execute_batch(LEDGER)?,
-        Role::Agent => drop_unused_ledger(conn)?,
+        Role::Agent => {}
     }
     Ok(())
 }
@@ -229,34 +228,6 @@ fn backup(conn: &Connection, path: &Path, from: u32) -> Result<PathBuf, AppError
         .map_err(|e| AppError::Db(format!("backup before migration failed: {e}")))?;
     log::info!("database backed up before migration: {}", dest.display());
     Ok(dest)
-}
-
-/// 旧名(`space_id` / `space_name`)の台帳の列を、新名(`agent_id` / `agent_name`)へ改名する。行は残る。
-fn rename_legacy_ledger_columns(conn: &Connection) -> Result<(), AppError> {
-    if !table_exists(conn, "leader_tasks")? {
-        return Ok(());
-    }
-    for (old, new) in [("space_id", "agent_id"), ("space_name", "agent_name")] {
-        let has_old: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('leader_tasks') WHERE name = ?1)", [old], |r| r.get(0))?;
-        if has_old {
-            conn.execute_batch(&format!("ALTER TABLE leader_tasks RENAME COLUMN {old} TO {new};"))?;
-        }
-    }
-    Ok(())
-}
-
-/// リーダー以外のDBにある台帳を片付ける(以前は全DBに作っていた)。行があれば消さずに残す。
-fn drop_unused_ledger(conn: &Connection) -> Result<(), AppError> {
-    if !table_exists(conn, "leader_tasks")? {
-        return Ok(());
-    }
-    let rows: Option<i64> = conn.query_row("SELECT 1 FROM leader_tasks LIMIT 1", [], |r| r.get(0)).optional()?;
-    if rows.is_some() {
-        log::warn!("leader_tasks has rows in a non-leader database; kept as is");
-        return Ok(());
-    }
-    conn.execute_batch("DROP TABLE leader_tasks;")?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -347,9 +318,6 @@ mod tests {
         assert_eq!(left, 0);
         let summaries: i64 = conn.query_row("SELECT COUNT(*) FROM conversation_summaries", [], |r| r.get(0)).unwrap();
         assert_eq!(summaries, 1);
-
-        // 空の台帳はリーダー以外では片付ける
-        assert!(!table_exists(&conn, "leader_tasks").unwrap());
     }
 
     #[test]
@@ -375,30 +343,12 @@ mod tests {
     }
 
     #[test]
-    fn leader_keeps_its_ledger_and_agents_keep_one_with_rows() {
-        let (_d, path) = legacy_file();
-        let mut conn = Connection::open(&path).unwrap();
-        prepare(&mut conn, Some(&path), Role::Leader).unwrap();
-        assert!(table_exists(&conn, "leader_tasks").unwrap());
-
+    fn only_the_leader_gets_a_ledger() {
+        let mut leader = Connection::open_in_memory().unwrap();
+        prepare(&mut leader, None, Role::Leader).unwrap();
+        assert!(table_exists(&leader, "leader_tasks").unwrap());
         let mut agent = Connection::open_in_memory().unwrap();
-        agent.execute_batch(LEGACY).unwrap();
-        agent
-            .execute_batch("INSERT INTO leader_tasks VALUES ('x','b','i','s','n','ss','done',0,'2026-01-01T00:00:00.000Z');")
-            .unwrap();
         prepare(&mut agent, None, Role::Agent).unwrap();
-        assert!(table_exists(&agent, "leader_tasks").unwrap());
-    }
-
-    #[test]
-    fn legacy_ledger_columns_are_renamed_and_rows_kept() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(LEGACY).unwrap();
-        conn.execute_batch("INSERT INTO leader_tasks VALUES ('x','b','i','sid','名','ss','done',0,'2026-01-01T00:00:00.000Z');").unwrap();
-        prepare(&mut conn, None, Role::Leader).unwrap();
-        let (id, name): (String, String) = conn.query_row("SELECT agent_id, agent_name FROM leader_tasks WHERE id = 'x'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
-        assert_eq!((id.as_str(), name.as_str()), ("sid", "名"));
-        // 2回目は何もしない
-        prepare(&mut conn, None, Role::Leader).unwrap();
+        assert!(!table_exists(&agent, "leader_tasks").unwrap());
     }
 }

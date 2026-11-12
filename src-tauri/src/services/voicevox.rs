@@ -164,12 +164,11 @@ fn files_exist(l: &Layout) -> bool {
     l.core().is_file() && l.onnxruntime().is_file() && l.dict().is_dir() && MODEL_FILES.iter().all(|m| l.models().join(m).is_file())
 }
 
-/// 取得済みで使えるもののバージョン。記録がない取得物(記録を付ける前に取得したもの)は既定値のものとして扱う。
+/// 取得済みで使えるもののバージョン。記録がない・取得の途中のものは未取得として扱う。
 pub fn installed_versions(app_data: &Path) -> Option<Versions> {
     let versions = match read_record(app_data) {
         Some(r) if r.complete => r.versions,
-        Some(_) => return None,
-        None => Versions::default(),
+        _ => return None,
     };
     files_exist(&Layout::new(app_data, &versions)).then_some(versions)
 }
@@ -580,6 +579,7 @@ mod tests {
     fn installed_needs_every_file() {
         let dir = tempfile::tempdir().unwrap();
         let l = Layout::new(dir.path(), &Versions::default());
+        write_record(dir.path(), &Record { complete: true, versions: Versions::default() }).unwrap();
         for p in [l.core(), l.onnxruntime(), l.models().join(MODEL_FILES[0])] {
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, b"x").unwrap();
@@ -604,19 +604,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let custom = Versions { onnxruntime: "9.9.9".into(), dict: "2.0".into(), ..Versions::default() };
         put_files(dir.path(), &custom);
-        // 記録がなければ既定値のレイアウトを探すので、別バージョンのファイルは見つからない
+        // 記録がなければ未取得として扱う
         assert_eq!(installed_versions(dir.path()), None);
         write_record(dir.path(), &Record { complete: false, versions: custom.clone() }).unwrap();
         assert_eq!(installed_versions(dir.path()), None);
         write_record(dir.path(), &Record { complete: true, versions: custom.clone() }).unwrap();
         assert_eq!(installed_versions(dir.path()), Some(custom));
-    }
-
-    #[test]
-    fn legacy_install_without_record_counts_as_default_versions() {
-        let dir = tempfile::tempdir().unwrap();
-        put_files(dir.path(), &Versions::default());
-        assert_eq!(installed_versions(dir.path()), Some(Versions::default()));
     }
 
     #[test]

@@ -96,7 +96,7 @@ erDiagram
 - `conversation_logs.is_processed`: 整理バッチがナレッジへ反映したかどうか([knowledge.md](knowledge.md))。
 - **日時**はすべて UTC・ミリ秒・`Z` 付きの RFC3339(例 `2026-01-01T00:00:00.123Z`)。SQL の既定値(`schema::NOW_SQL`)と Rust で作る値(`db::now()`)を同じ形にしている。
 - 接続は `Mutex<Connection>`。ロックが毒されても(パニック後)中身を使い続ける。同じファイルを複数の接続で開くことがある(整理バッチで一時的に開くなど)ため、WAL(`timeline.db-wal` / `-shm`)と `busy_timeout`(5 秒)を設定する。
-- DB の役割(`db::Role`)は、開くときにワークスペースの ID で決める。リーダーは `leader_tasks` を作り、それ以外は以前のアプリが作っていた空の `leader_tasks` を消す(行があれば残して警告する)。
+- DB の役割(`db::Role`)は、開くときにワークスペースの ID で決める。リーダーだけが `leader_tasks` を作る。
 
 ### 版とマイグレーション(`db/schema.rs`)
 
@@ -185,7 +185,7 @@ erDiagram
   "version": 1,
   "exported_at": "2026-10-29T03:00:00Z",
   "settings": { "routing": "{...}", "web_access": "1" },
-  "command_policy": { "version": 3, "allow": [] }
+  "command_policy": { "allow": [] }
 }
 ```
 

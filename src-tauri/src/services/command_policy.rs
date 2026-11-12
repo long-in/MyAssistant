@@ -22,8 +22,8 @@ const DEFAULT_ALLOW: [&str; 24] = [
     "echo", "grep", "rg", "find", "tree", "git status", "git log", "git diff", "git show",
 ];
 
-/// 版3で足した読み取り系。古いポリシーファイルにも移行時に足す。
-const ALLOW_ADDED_V3: [&str; 24] = [
+/// 読み取り系の許可の初期値(`DEFAULT_ALLOW`の続き)。
+const DEFAULT_ALLOW_MORE: [&str; 24] = [
     "ps", "id", "hostname", "uptime", "printenv", "basename", "dirname", "realpath", "readlink", "diff", "cut", "tr",
     "lsof", "git rev-parse", "git ls-files", "git blame", "git remote -v", "git branch --show-current",
     "git branch -a", "git branch --list", "git branch -v", "git tag -l", "git tag --list", "git config --get",
@@ -94,21 +94,11 @@ const DEFAULT_ASK: [&str; 22] = [
     "brew uninstall", "brew remove", "npm publish", "cargo publish", "git rebase",
 ];
 
-/// ポリシーファイルの現在の版。この版より古いファイルは、初期値の拒否・askを足して読み込む。
-const POLICY_VERSION: u32 = 5;
-
-fn legacy_version() -> u32 {
-    1
-}
-
 /// ナレッジで管理するコマンド権限。各要素は`git status`のようなコマンド名と引数の接頭辞。
 /// 欠けている項目は初期値になる(`Default`が初期値)。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Policy {
-    /// ファイルの版。無ければ版を持たなかった頃のファイルとして扱う。
-    #[serde(default = "legacy_version")]
-    pub version: u32,
     /// 承認なしで実行する(拒否・askより弱い)。コマンド名と引数の先頭が一致したときだけ有効。
     pub allow: Vec<String>,
     /// 常に個別承認を求める。引数の途中にあっても一致する。
@@ -135,8 +125,7 @@ impl Default for Policy {
     fn default() -> Self {
         let owned = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
         Self {
-            version: POLICY_VERSION,
-            allow: owned(&DEFAULT_ALLOW).into_iter().chain(owned(&ALLOW_ADDED_V3)).collect(),
+            allow: owned(&DEFAULT_ALLOW).into_iter().chain(owned(&DEFAULT_ALLOW_MORE)).collect(),
             ask: owned(&DEFAULT_ASK),
             deny: owned(&DEFAULT_DENY),
             deny_words: owned(&DEFAULT_DENY_WORDS),
@@ -159,30 +148,6 @@ impl Policy {
     /// ファイルを読めないときの退避。許可リストは空で、拒否・askなどの規則は初期値のまま。
     fn fallback() -> Self {
         Self { allow: Vec::new(), ..Self::default() }
-    }
-
-    /// 古い版のファイルに、後から規則へ移した初期値の拒否・askなどを足す(ユーザーの項目は残す)。
-    fn migrated(mut self) -> Self {
-        if self.version >= POLICY_VERSION {
-            return self;
-        }
-        let d = Self::default();
-        let union = |mine: &mut Vec<String>, add: Vec<String>| {
-            for item in add {
-                if !mine.contains(&item) {
-                    mine.push(item);
-                }
-            }
-        };
-        union(&mut self.deny, d.deny);
-        union(&mut self.ask, d.ask);
-        union(&mut self.allow, ALLOW_ADDED_V3.iter().map(|s| (*s).to_owned()).collect());
-        self.deny_words = d.deny_words;
-        self.protected = d.protected;
-        self.system_paths = d.system_paths;
-        self.system_exceptions = d.system_exceptions;
-        self.version = POLICY_VERSION;
-        self
     }
 }
 
@@ -381,11 +346,6 @@ pub fn load(knowledge_root: &Path) -> Policy {
         return defaults;
     }
     match fs::read_to_string(&file).map_err(|e| e.to_string()).and_then(|s| serde_json::from_str::<Policy>(&s).map_err(|e| e.to_string())) {
-        Ok(p) if p.version < POLICY_VERSION => {
-            let p = p.migrated();
-            write(&p);
-            p
-        }
         Ok(p) => p,
         Err(e) => {
             log::warn!("command policy is invalid: {e}");
@@ -419,7 +379,6 @@ impl Policy {
             Ok(out)
         };
         Ok(Self {
-            version: POLICY_VERSION,
             allow: clean(&self.allow)?,
             ask: clean(&self.ask)?,
             deny: clean(&self.deny)?,
@@ -1327,21 +1286,6 @@ mod tests {
     }
 
     #[test]
-    fn old_policy_files_gain_the_default_rules() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join("knowledge");
-        let file = ensure_dir(&root, &[POLICY_DIR.to_owned()]).unwrap().join(POLICY_FILE);
-        fs::write(&file, r#"{ "allow": ["make"], "deny": ["curl"] }"#).unwrap();
-        let p = load(&root);
-        assert!(p.allow.contains(&"make".to_owned()) && p.allow.contains(&"ps".to_owned()));
-        assert!(p.deny.contains(&"curl".to_owned()) && p.deny.contains(&"shutdown".to_owned()));
-        assert!(p.ask.contains(&"git push".to_owned()));
-        assert!(matches!(classify("rm x", &p), Verdict::Deny(_)));
-        // 移行した内容が書き戻されている
-        assert!(fs::read_to_string(&file).unwrap().contains("\"version\": 5"));
-    }
-
-    #[test]
     fn save_cleans_and_roundtrips() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("knowledge");
@@ -1373,7 +1317,7 @@ mod tests {
         let file = root.join(POLICY_DIR).join(POLICY_FILE);
         assert!(file.is_file());
         // ユーザーが編集した内容が次回から使われる(空のリストも空のまま)
-        fs::write(&file, r#"{ "version": 5, "allow": ["make"], "deny": ["curl"], "ask": [] }"#).unwrap();
+        fs::write(&file, r#"{ "allow": ["make"], "deny": ["curl"], "ask": [] }"#).unwrap();
         let p = load(&root);
         assert_eq!((p.allow, p.deny, p.ask), (vec!["make".to_owned()], vec!["curl".to_owned()], vec![]));
         // 壊れていれば許可リストは空。拒否などは初期値のまま
