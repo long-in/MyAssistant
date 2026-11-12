@@ -503,6 +503,8 @@ export const EN: Record<string, string> = {
   "未取得": "Not downloaded",
   "取得中…": "Downloading…",
   "取得し直す": "Download again",
+  "取得": "Download",
+  "端末内で音声を認識します(キー不要・無料)。ローカル音声認識モデル(約550MB)をダウンロードします。": "Recognizes speech on this device (no key needed, free). Downloads the local speech recognition model (about 550MB).",
   "ローカルLLMを取得しました。": "Downloaded the local LLM.",
   "ローカルLLMを削除しました。": "Deleted the local LLM.",
   "取得を中断しました。": "Download stopped.",

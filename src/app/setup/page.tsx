@@ -25,7 +25,7 @@ import { copyTargets, type CopyRequest } from "@/lib/copyTargets";
 import { DEFAULT_TUNING, getTuning, setTuning, LEADER_ID, PERSONAL_ID, getAgentData, saveAgentData, errorMessage, updateAgent, AGENT_NAME_MAX, leaderCopyApiKey, leaderGetPrompt, leaderSetPrompt, leaderGetLimit, leaderSetLimit, LEADER_LIMIT_MAX, type DeleteReport } from "@/lib/api";
 import { bumpSettingsVersion, refreshWorkspace, useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
-import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getApiSettings, setApiSettings, getApiSettingsPresets, resetApiSettings, type ApiSettingsPreset, type ApiSettingsPresetId, getDebugLogDir, getDebugMode, openDebugLogDir, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, voicevoxDownloadProgress, sttDownloadProgress, getSttLanguage, downloadSttModel, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, loadBatchRoute, loadProofreadRoute, loadRouting, loadSkillsRoute, loadLinkMode, saveLinkMode, type LinkMode, loadSuggestRoute, type Route, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
+import { PROVIDERS, PROVIDER_LABELS, type KeyStatus, type Provider, deleteApiKey, deleteTtsKey, exportSettings, importSettings, getKeyStatus, type Tuning, DEBUG_MODE_EVENT, type VoicePhrase, generateVoicePhrases, getApiSettings, setApiSettings, getApiSettingsPresets, resetApiSettings, type ApiSettingsPreset, type ApiSettingsPresetId, getDebugLogDir, getDebugMode, openDebugLogDir, getTtsDictionary, setTtsDictionary, exportTtsDictionary, importTtsDictionary, type DictionaryEntry, type TtsDictionary, getSttEngine, getTtsEngine, getModelSources, getVoicevoxStyle, setVoicevoxVersions, setWhisperRevision, type ModelSources, type VoicevoxVersions, installVoicevox, voicevoxDownloadProgress, sttDownloadProgress, type DownloadProgress, getSttLanguage, downloadSttModel, sttModelReady, sttModelUpgradable, setSttLanguage, type SttLanguage, reportError, saveApiKey, loadBatchRoute, loadProofreadRoute, loadRouting, loadSkillsRoute, loadLinkMode, saveLinkMode, type LinkMode, loadSuggestRoute, type Route, saveTtsKey, setSttEngine, setTtsEngine, setVoicevoxStyle, type TtsEngine, type VoicevoxSpeaker, voicevoxInstalled, voicevoxSpeakers, ttsReady as fetchTtsReady, type SttEngine, setDebugLogDir, setDebugMode, playBase64Mp3, stopSpeech, ttsKeyRegistered, voicePhraseAudio, voicePhrasesStatus, waitForSpeechEnd } from "@/lib/api";
 import AiSettings from "@/components/AiSettings";
 import { Heading, PageHeader, ProxyChoice, StatusPill, TuningPanel, UsedBy, linkCardClass, type TuningField } from "@/components/GlobalPanels";
 
@@ -909,6 +909,31 @@ function SettingsTransfer() {
   );
 }
 
+/** ローカル音声認識(Whisper)のモデルの取得。取得の実行と進み具合は親が持つ(更新ボタンと同じ取得を共有する)。 */
+function WhisperPanel({ ready, active, progress, onInstall }: { ready: boolean; active: boolean; progress: DownloadProgress | null; onInstall: () => void }) {
+  const t = useT();
+  return (
+    <div className="border-t py-3">
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            Whisper
+            <Badge variant={ready ? "default" : "outline"}>{ready ? t("取得済み") : t("未取得")}</Badge>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {t("端末内で音声を認識します(キー不要・無料)。ローカル音声認識モデル(約550MB)をダウンロードします。")}
+          </div>
+        </div>
+        <Button size="sm" variant="outline" disabled={active} onClick={onInstall}>
+          {active ? <Loader2 className="animate-spin" /> : <Download />}
+          {active ? t("取得中…") : ready ? t("取得し直す") : t("取得")}
+        </Button>
+      </div>
+      {active && <DownloadBar progress={progress} className="mt-3" />}
+    </div>
+  );
+}
+
 /** VOICEVOX COREの取得と声の選択。COREは同梱せず、公式の配布物をアプリデータへ取得して使う。 */
 function VoicevoxPanel({ installed, style, onChanged, onStyle }: { installed: boolean; style: number; onChanged: () => void; onStyle: (id: number) => void }) {
   const t = useT();
@@ -1129,6 +1154,7 @@ export default function Setup() {
   const [sttEngine, setSttEngineState] = useState<SttEngine>("local");
   const [sttLang, setSttLang] = useState<SttLanguage>("auto");
   const [sttUpgradable, setSttUpgradable] = useState(false);
+  const [sttModel, setSttModel] = useState(false); // ローカル音声認識モデルが取得済みか
   const [busy, setBusy] = useState<string | null>(null);
   const [usage, setUsage] = useState<Partial<Record<Provider, string[]>>>({});
   const [linkMode, setLinkMode] = useState<LinkMode>("api");
@@ -1136,8 +1162,9 @@ export default function Setup() {
 
   const refresh = useCallback(
     () =>
-      Promise.all([getKeyStatus(), ttsKeyRegistered(), getSttEngine(), getSttLanguage(), sttModelUpgradable(), getTtsEngine(), voicevoxInstalled(), getVoicevoxStyle(), fetchTtsReady(), loadLinkMode()])
-        .then(([s, t, e, l, u, te, vi, vs, sr, lm]) => {
+      Promise.all([getKeyStatus(), ttsKeyRegistered(), getSttEngine(), getSttLanguage(), sttModelUpgradable(), getTtsEngine(), voicevoxInstalled(), getVoicevoxStyle(), fetchTtsReady(), loadLinkMode(), sttModelReady()])
+        .then(([s, t, e, l, u, te, vi, vs, sr, lm, sm]) => {
+          setSttModel(sm);
           setLinkMode(lm);
           setLinkModeLoaded(true);
           setTtsEngineState(te);
@@ -1336,6 +1363,12 @@ export default function Setup() {
                 <option value="google" disabled={!ttsReady}>Google Cloud</option>
               </select>
             </div>
+            <WhisperPanel
+              ready={sttModel}
+              active={sttActive}
+              progress={sttProgress}
+              onInstall={() => run("sttmodel", downloadSttModel, t("音声認識モデルをインストールしました。"))}
+            />
             {sttEngine === "local" && sttUpgradable && (
               <div className="flex items-center gap-3 border-t py-3">
                 <div className="min-w-0 flex-1">
@@ -1352,11 +1385,6 @@ export default function Setup() {
                   {sttActive ? <Loader2 className="animate-spin" /> : <Download />}
                   {sttActive ? t("ダウンロード中…") : t("更新")}
                 </Button>
-              </div>
-            )}
-            {sttEngine === "local" && sttActive && (
-              <div className="border-b pb-3">
-                <DownloadBar progress={sttProgress} />
               </div>
             )}
             <div className="flex items-center gap-3 border-t py-3">
