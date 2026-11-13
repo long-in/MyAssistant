@@ -112,7 +112,7 @@ AWS の認証情報はコンテナへ直接は渡さず、ホストの中継(`se
 - **エージェントを削除するときは、ナレッジと同じ扱い**(「ナレッジも一緒に削除する」で削除、そうでなければ `kept-knowledge/` へ移して残す。独自の保存先なら消さない)。削除の確認画面に明記する。
 - **バックアップには含めない**(ソースコードは Git などで管理され、大きくなりやすいため)。リストアするとナレッジは退避されるので、それまでの `data/` は `restore-backup-<日時>/` の中に残り、新しい `data/` は資料の置き場 `data/reports/` だけが戻った状態から始まる。
 - **資料の置き場 `data/reports/`**: 資料(レポート・まとめ・報告書など)の作成を頼まれたら、ここへ作る(ベースプロンプトと作業環境の説明で指示する)。同じ会話で修正を頼まれたら、新しいファイルを足さず、その資料を更新する。アプリで作った生成物なので、`data/` の中で唯一バックアップに含め、通常の会話の `create_file` でも作成・上書きできる([agent-file-tools.md](agent-file-tools.md))。ノートではないので、一覧・索引・整理の対象外で、画面では閲覧だけなのは `data/` と同じ(`knowledge::is_report`)。
-- 以前は `/workspace` を別にマウントしていたが、廃止した。以前のフォルダ(`<ワークスペースのフォルダ>/workspace/`)は移さないので、必要なら `data/` へ手動で移す。Dockerfile のテンプレートの `/workspace` は、既存の Dockerfile との互換のため残している(使わない)。
+- 以前は `/workspace` を別にマウントしていたが、廃止した。以前のフォルダ(`<ワークスペースのフォルダ>/workspace/`)は移さないので、必要なら `data/` へ手動で移す。Dockerfile のテンプレートからも `/workspace` を外した(作業ディレクトリは `/knowledge`)。作成済みの Dockerfile に残っていても害はない(マウントせず、実行時は `-w` で作業ディレクトリを指定する)。
 - マウント元(ナレッジの場所)が変わると、次の指示でコンテナを作り直す(専用ボリュームは残る)。マウント元はコンテナのラベル `myassistant.mounts` に残して比べる。
 - ナレッジは、コンテナ内の Claude Code(会話・ナレッジ整理)と、ホスト側の機能(画面からの編集など)の両方から書き換わる。同時に書き換えたときの扱いは「後回しにした項目」。
 
@@ -148,8 +148,8 @@ AWS の認証情報はコンテナへ直接は渡さず、ホストの中継(`se
   - 外部のエディタ: 「ファイルを表示」で Finder に出して編集。画面へ戻ると(編集中でなければ)自動で読み込み直す。
 - イメージ名は Dockerfile の内容のハッシュで決まる。変更すると、イメージとコンテナが「古い」状態になり、Sandbox タブで再ビルドとコンテナの起動(作り直し)をやり直すまでチャットは使えない(専用ボリュームは残る)。古いタグは、コンテナを作り直すときに消す(使用中のものは残る)。
 - ビルドの文脈は Dockerfile のフォルダだけ。環境変数・認証情報はビルドに渡さない。ビルドは全体で1本ずつ。進捗は `sandbox-build-progress` イベント(`scope` は `shared` かエージェント ID)。
-- 標準の内容: `node:22-bookworm-slim`(Claude Code は Node.js 22 以上が必要)に、AWS CLI v2・git・jq・ripgrep・python3 と、Claude Code(`@anthropic-ai/claude-code`、版を固定。現在 2.1.311)を入れたもの。Claude Code の版は Dockerfile の `CLAUDE_CODE_VERSION` を書き換えて更新する。読み取り専用のファイルシステムで動くため、自動更新は止める(`DISABLE_AUTOUPDATER=1`)。
-- 崩してはいけない前提: 非 root のユーザー `agent`、`/knowledge` `/home/agent`(テンプレートは `/workspace` も作るが、マウントには使わない)、`sh` と `setsid`(util-linux)、`claude` コマンド。コンテナを作った直後に、`setsid`・`agent`・`claude` を診断し、満たさなければエラーにする。
+- 標準の内容: `node:26-bookworm-slim`(Claude Code は Node.js 22 以上が必要)に、AWS CLI v2・git・jq・ripgrep・python3 と、Claude Code(`@anthropic-ai/claude-code`、版を固定。現在 2.1.311)を入れたもの。作成済みの Dockerfile はテンプレートの変更で書き換わらないので、Node.js の版を上げるには画面でテンプレートに戻すか `FROM` を書き換えて再ビルドする。Claude Code の版は Dockerfile の `CLAUDE_CODE_VERSION` を書き換えて更新する。読み取り専用のファイルシステムで動くため、自動更新は止める(`DISABLE_AUTOUPDATER=1`)。
+- 崩してはいけない前提: 非 root のユーザー `agent`、`/knowledge` `/home/agent`、`sh` と `setsid`(util-linux)、`claude` コマンド。コンテナを作った直後に、`setsid`・`agent`・`claude` を診断し、満たさなければエラーにする。
 
 ## 名前とエージェントの対応
 

@@ -1,8 +1,8 @@
 # MyAssistant サンドボックスの標準イメージ(自由に編集できます)。
 # 変更したら、Sandbox 設定のチェックリストで、イメージのビルドとコンテナの起動をやり直してください。
-# 必要なもの: 非 root のユーザー `agent`、`/workspace`・`/knowledge`、`sh`、`setsid`(util-linux)、`claude`。
-# Claude Code は Node.js 22 以上が必要です。
-FROM node:22-bookworm-slim
+# 必要なもの: 非 root のユーザー `agent`、`/knowledge`、`sh`、`setsid`(util-linux)、`claude`。
+# Claude Code は Node.js 22 以上(標準は 26 系)が必要です。
+FROM node:26-bookworm-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -23,9 +23,9 @@ RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
 ENV DISABLE_AUTOUPDATER=1
 
 RUN useradd --create-home --home-dir /home/agent --uid 10001 --shell /bin/sh agent \
-    && mkdir -p /workspace /knowledge \
-    && chown agent:agent /workspace /knowledge
+    && mkdir -p /knowledge \
+    && chown agent:agent /knowledge
 
-WORKDIR /workspace
+WORKDIR /knowledge
 USER agent
 CMD ["sleep", "infinity"]

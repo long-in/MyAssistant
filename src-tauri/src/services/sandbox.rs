@@ -52,7 +52,7 @@ const BUILD_KEY: &str = "shared";
 const AGENT_DOCKERFILE_DIR: &str = "agent-sandbox";
 /// Dockerfileの最大バイト数(画面から保存するとき)。
 const DOCKERFILE_MAX_BYTES: usize = 256 * 1024;
-/// コンテナを作ったときのマウント元(ナレッジとワークスペース)。変わったら作り直す。
+/// コンテナを作ったときのマウント元(ナレッジ)。変わったら作り直す。
 const LABEL_MOUNTS: &str = "myassistant.mounts";
 
 const DOCKERFILE_DIR: &str = "sandbox";
@@ -1378,11 +1378,11 @@ mod tests {
 
     #[test]
     fn template_meets_the_container_prerequisites() {
-        // Claude Code は Node.js 22 以上が必要。版は固定し、読み取り専用のファイルシステムでは自動更新を止める
-        assert!(TEMPLATE.contains("FROM node:22"));
+        // Claude Code は Node.js 22 以上が必要(標準は 26 系)。版は固定し、読み取り専用のファイルシステムでは自動更新を止める
+        assert!(TEMPLATE.contains("FROM node:26"));
         assert!(TEMPLATE.contains("ARG CLAUDE_CODE_VERSION=") && TEMPLATE.contains("@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"));
         assert!(TEMPLATE.contains("DISABLE_AUTOUPDATER=1"));
-        assert!(TEMPLATE.contains("/workspace /knowledge") && TEMPLATE.contains("USER agent") && TEMPLATE.contains("util-linux"));
+        assert!(TEMPLATE.contains("mkdir -p /knowledge") && !TEMPLATE.contains("/workspace") && TEMPLATE.contains("USER agent") && TEMPLATE.contains("util-linux"));
     }
 
     #[test]

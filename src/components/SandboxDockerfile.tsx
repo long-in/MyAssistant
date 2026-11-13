@@ -195,7 +195,7 @@ export default function SandboxDockerfile({
               <li>{t("登録すると、共通の Dockerfile の内容がコピーされます。以後、共通を変更しても専用には反映されません。")}</li>
               <li>{t("画面で編集して保存するか、「Finder で開く」で外部のエディタで編集できます(同じファイルです)。")}</li>
               <li>{t("作成・編集・解除をしたら、上の手順でイメージを再ビルドし、コンテナを作り直してください。専用ボリュームは残ります。")}</li>
-              <li>{t("ユーザー agent、sh、setsid(util-linux)、/workspace と /home/agent が必要です。")}</li>
+              <li>{t("ユーザー agent、sh、setsid(util-linux)、/knowledge と /home/agent が必要です。")}</li>
             </ul>
           </>
         ) : (
@@ -205,7 +205,7 @@ export default function SandboxDockerfile({
               <li>{t("画面で編集して保存するか、「Finder で開く」で外部のエディタで編集できます(同じファイルです)。")}</li>
               <li>{t("保存したら、イメージを再ビルドし、各エージェントのコンテナを作り直してください(エージェントの Sandbox 設定の手順で行います)。専用ボリュームは残ります。")}</li>
               <li>{t("必要なツール(AWS CLI など)はここに入れます。エージェントごとの違いは sandbox.env か、エージェント専用の Dockerfile で与えます。")}</li>
-              <li>{t("ユーザー agent、sh、setsid(util-linux)、/workspace と /home/agent が必要です。")}</li>
+              <li>{t("ユーザー agent、sh、setsid(util-linux)、/knowledge と /home/agent が必要です。")}</li>
               <li>{t("環境変数や認証情報はビルドに渡しません。")}</li>
             </ul>
           </>
