@@ -36,6 +36,7 @@ const DEBUG_NAV = { href: "/debug", label: "Debug", icon: Bug } as const;
 
 const NAV_SHORTCUTS: Partial<Record<ShortcutId, string>> = {
   chat: "/",
+  focusInput: "/",
   knowledge: "/knowledge",
   settings: "/setup",
   help: "/shortcuts",

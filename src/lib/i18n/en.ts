@@ -752,6 +752,8 @@ export const EN: Record<string, string> = {
   "対話画面": "Chat screen",
   "押している間だけ録音": "Record only while held",
   "押している間録音し、離してから約1秒後に録音を止めて文字起こし・送信します(語尾が切れないよう少し録り続けます。その間に押し直すと録音を続けます。ボタンのクリックは従来どおり開始 / 停止の切り替え)。入力欄にフォーカスがあるときは、通常のエージェント入力になります。": "Records while held, and stops recording about 1 second after release, then transcribes and sends (it keeps recording briefly so sentence endings aren't cut off; pressing again in that time continues recording. Clicking the button still toggles start/stop). When an input field has focus, Agent types normally.",
+  "入力欄へ移動": "Focus the input field",
+  "対話画面の入力欄にカーソルを移します。他の画面で押すと対話画面へ移動してから移します。録音や実行中の処理は止めません。": "Moves the cursor to the chat input field. On other screens, it goes to the chat screen first. Recording and running tasks are not stopped.",
   "対話を開く": "Open Chat",
   "対話画面へ移動します。": "Go to the chat screen.",
   "ナレッジを開く": "Open Knowledge",

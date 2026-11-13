@@ -19,6 +19,8 @@ const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION;
 type Props = {
   /** 処理段階(待機中・音声入力中・思考中など)。小さな円形波形と状態の帯に出す。 */
   phase: Phase;
+  /** 増えるたびに入力欄へフォーカスし、カーソルを文末へ置く(0は何もしない)。 */
+  focusRequest: number;
   /** 呼びかけで起動する常時待機。 */
   standby: { on: boolean; available: boolean; onToggle: () => void };
   /** 音声入力。`hint`は押している間だけ録音するキーの名前。 */
@@ -78,6 +80,7 @@ function useClock() {
  */
 export default function ChatComposer({
   phase,
+  focusRequest,
   standby,
   mic,
   onNewConversation,
@@ -101,6 +104,12 @@ export default function ChatComposer({
   const clock = useClock();
   const recording = mic.state === "recording";
   const input = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = input.current;
+    if (!focusRequest || !el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [focusRequest]);
 
   // 「/」で始まり、まだ空白を含まないあいだは、スキルの候補を出す
   const query = skill && !skill.selected && /^\/[^\s]*$/.test(draft) ? draft.slice(1).toLowerCase() : null;
