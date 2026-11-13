@@ -988,10 +988,10 @@ pub(crate) struct ExecEnv {
     pub grants: Vec<sandbox_bridge::Grant>,
 }
 
-/// 渡す環境変数(コンテナ用のAWSの中継・`sandbox.env`)。同じ名前は後のものが優先(`sandbox.env`が最優先)。
+/// 渡す環境変数(エージェントが選んだプロキシ・コンテナ用のAWSの中継・`sandbox.env`)。同じ名前は後のものが優先(`sandbox.env`が最優先)。
 /// コンテナ用のAWS設定が無ければ、AWSの認証情報は渡さない(Bedrock用の設定は使わない)。
 pub(crate) async fn env_for(ctx: &WorkspaceCtx) -> Result<ExecEnv, String> {
-    let mut vars = BTreeMap::new();
+    let mut vars = proxy_vars(super::proxy::container_url_for(ctx));
     let mut grants = Vec::new();
     if let Some((grant, aws_vars)) = sandbox_bridge::aws_env(ctx).await? {
         vars.extend(aws_vars);
@@ -999,6 +999,16 @@ pub(crate) async fn env_for(ctx: &WorkspaceCtx) -> Result<ExecEnv, String> {
     }
     vars.extend(sandbox_env::load(&ctx.dir).map_err(|e| e.to_string())?);
     Ok(ExecEnv { vars, grants })
+}
+
+/// プロキシの環境変数(大文字・小文字の両方)。ホストの中継(`host.docker.internal`)とローカル宛ては通さない。
+fn proxy_vars(url: Option<String>) -> BTreeMap<String, String> {
+    let Some(url) = url else { return BTreeMap::new() };
+    let no_proxy = format!("localhost,127.0.0.1,::1,{}", sandbox_bridge::HOST_FROM_CONTAINER);
+    [("HTTP_PROXY", &url), ("HTTPS_PROXY", &url), ("NO_PROXY", &no_proxy)]
+        .into_iter()
+        .flat_map(|(k, v)| [(k.to_owned(), v.clone()), (k.to_ascii_lowercase(), v.clone())])
+        .collect()
 }
 
 /// 伏せる値。リージョンや、アプリが決めるモデル名・内部の値(`MYASSISTANT_`)のように秘密でない値は除く。
@@ -1301,6 +1311,17 @@ mod tests {
         assert!(is_supported(LEADER_ID) && !runs_in_sandbox(LEADER_ID) && !runs_in_sandbox(PERSONAL_ID) && runs_in_sandbox(ID));
         assert!(!is_supported("") && !is_supported("../x"));
         assert!(!is_supported("abc def"));
+    }
+
+    #[test]
+    fn proxy_is_passed_in_both_cases_and_skips_the_bridge() {
+        assert!(proxy_vars(None).is_empty());
+        let v = proxy_vars(Some("http://p:8080".into()));
+        for k in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
+            assert_eq!(v[k], "http://p:8080", "{k}");
+        }
+        assert_eq!(v["NO_PROXY"], v["no_proxy"]);
+        assert!(v["NO_PROXY"].split(',').any(|h| h == "host.docker.internal"));
     }
 
     #[test]

@@ -34,7 +34,7 @@ use super::{
 use crate::utils::error::AppError;
 
 /// コンテナから見たホストの名前(Docker Desktop が用意する)。
-const HOST_FROM_CONTAINER: &str = "host.docker.internal";
+pub(crate) const HOST_FROM_CONTAINER: &str = "host.docker.internal";
 /// コンテナ内に置く、コンテナ用のAWS設定のフォルダ(`/tmp`はコンテナのtmpfs)。
 pub const AWS_DIR: &str = "/tmp/myassistant-aws";
 /// トークンを渡す環境変数(値は伏せ字の対象)。

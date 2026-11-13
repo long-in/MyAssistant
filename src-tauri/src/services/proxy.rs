@@ -291,6 +291,21 @@ pub fn client_builder_for(ctx: &WorkspaceCtx) -> reqwest::ClientBuilder {
     builder_with(active_for(&choice_of(ctx)))
 }
 
+/// そのエージェントのサンドボックスのコンテナへ渡すプロキシのURL。プロキシを使わないなら`None`。
+/// 認証付きのプロキシは、パスワードをコンテナへ出さないため渡さない(警告をログに残す)。
+pub fn container_url_for(ctx: &WorkspaceCtx) -> Option<String> {
+    container_url(active_for(&choice_of(ctx)))
+}
+
+fn container_url(active: Option<Active>) -> Option<String> {
+    let a = active?;
+    if a.auth.is_some() {
+        log::warn!("proxy with authentication is not passed to the sandbox container");
+        return None;
+    }
+    Some(a.url)
+}
+
 /// 指定したURLを取得する(エージェントに紐づかない通信)。
 pub async fn get(url: &str) -> Result<reqwest::Response, AppError> {
     client_builder().build().map_err(|_| AppError::Network)?.get(url).send().await.map_err(AppError::from_reqwest)
@@ -425,6 +440,18 @@ mod tests {
         let a = add(&g, &s, "A", "http://a:1", "", Some("ignored"));
         set_default(&g, &s, &a).unwrap();
         assert_eq!(registry_from(&g, &s).unwrap().resolve("").unwrap().auth, None);
+    }
+
+    #[test]
+    fn only_proxies_without_auth_are_passed_to_the_container() {
+        let d = tempfile::tempdir().unwrap();
+        let (g, s) = stores(d.path());
+        let a = add(&g, &s, "A", "http://a:1", "u", Some("pw"));
+        let b = add(&g, &s, "B", "http://b:2", "", None);
+        let reg = registry_from(&g, &s).unwrap();
+        assert_eq!(container_url(reg.resolve(&a)), None);
+        assert_eq!(container_url(reg.resolve(&b)).as_deref(), Some("http://b:2"));
+        assert_eq!(container_url(reg.resolve(NONE_CHOICE)), None);
     }
 
     #[test]
