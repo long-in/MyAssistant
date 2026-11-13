@@ -29,7 +29,9 @@
 - 既定が無いとき、「既定を使う」はプロキシなし。
 - `localhost` / `127.0.0.1` / `::1` 宛て(VOICEVOX・ローカルLLM のサーバーへの通信)は常にプロキシを通さない。
 - プロキシなしのときは従来どおり(reqwest は環境変数 `HTTP(S)_PROXY` 等に従う。AWS SDK はプロキシ無し)。
-- コンテナ内の Claude Code とコマンドの通信には、このプロキシの設定を渡さない([sandbox.md](sandbox.md))。ただし Claude Code の Bedrock の呼び出しはホストの中継が転送するので、その転送はエージェントの選択に従う([sandbox-aws.md](sandbox-aws.md))。
+- コンテナ内の Claude Code とコマンドの通信には、エージェントの選択(「既定を使う」なら既定)を環境変数 `HTTP_PROXY` / `HTTPS_PROXY`(小文字も)で渡す。`NO_PROXY` は `localhost,127.0.0.1,::1,host.docker.internal` で、ホストの中継への通信はプロキシを通さない。`sandbox.env` に同じ名前があればそちらが優先([sandbox.md](sandbox.md))。
+  - **認証付きのプロキシ(ユーザー名あり)はコンテナへ渡さない**。パスワードを URL に入れてコンテナへ出すことになるため。このときコンテナの通信はプロキシなしになり、アプリのログに警告を残す。
+- Claude Code の Bedrock の呼び出しはホストの中継が転送するので、その転送もエージェントの選択に従う([sandbox-aws.md](sandbox-aws.md))。
 
 ## 反映のしかた
 
