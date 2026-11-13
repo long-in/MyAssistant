@@ -16,9 +16,13 @@ RUN curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -
     && /tmp/aws/install \
     && rm -rf /tmp/aws /tmp/awscliv2.zip
 
-# Claude Code(版は固定。更新は版を書き換える)。ファイルシステムは読み取り専用なので自動更新は止める
-ARG CLAUDE_CODE_VERSION=2.1.311
-RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+# Claude Code(既定は最新版。版を書けば固定できる)。ファイルシステムは読み取り専用なので自動更新は止める
+# 最新版への更新は、イメージの再ビルドとコンテナの作り直しで行う
+ARG CLAUDE_CODE_VERSION=latest
+# アプリがビルドのたびに違う値を渡し、この層だけキャッシュを使わずに入れ直す
+ARG CLAUDE_CODE_REFRESH=
+RUN echo "refresh=${CLAUDE_CODE_REFRESH}" > /dev/null \
+    && npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     && npm cache clean --force
 ENV DISABLE_AUTOUPDATER=1
 

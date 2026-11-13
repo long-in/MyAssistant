@@ -148,7 +148,7 @@ AWS の認証情報はコンテナへ直接は渡さず、ホストの中継(`se
   - 外部のエディタ: 「ファイルを表示」で Finder に出して編集。画面へ戻ると(編集中でなければ)自動で読み込み直す。
 - イメージ名は Dockerfile の内容のハッシュで決まる。変更すると、イメージとコンテナが「古い」状態になり、Sandbox タブで再ビルドとコンテナの起動(作り直し)をやり直すまでチャットは使えない(専用ボリュームは残る)。古いタグは、コンテナを作り直すときに消す(使用中のものは残る)。
 - ビルドの文脈は Dockerfile のフォルダだけ。環境変数・認証情報はビルドに渡さない。ビルドは全体で1本ずつ。進捗は `sandbox-build-progress` イベント(`scope` は `shared` かエージェント ID)。
-- 標準の内容: `node:26-bookworm-slim`(Claude Code は Node.js 22 以上が必要)に、AWS CLI v2・git・jq・ripgrep・python3 と、Claude Code(`@anthropic-ai/claude-code`、版を固定。現在 2.1.311)を入れたもの。作成済みの Dockerfile はテンプレートの変更で書き換わらないので、Node.js の版を上げるには画面でテンプレートに戻すか `FROM` を書き換えて再ビルドする。Claude Code の版は Dockerfile の `CLAUDE_CODE_VERSION` を書き換えて更新する。読み取り専用のファイルシステムで動くため、自動更新は止める(`DISABLE_AUTOUPDATER=1`)。
+- 標準の内容: `node:26-bookworm-slim`(Claude Code は Node.js 22 以上が必要)に、AWS CLI v2・git・jq・ripgrep・python3 と、Claude Code(`@anthropic-ai/claude-code`、既定は `latest`)を入れたもの。作成済みの Dockerfile はテンプレートの変更で書き換わらないので、Node.js の版を上げるには画面でテンプレートに戻すか `FROM` を書き換えて再ビルドする。アプリはビルドのたびにビルド引数 `CLAUDE_CODE_REFRESH` へ違う値を渡すので、テンプレートでは Claude Code を入れる層だけキャッシュを使わず、再ビルドでその時点の最新版になる(イメージのタグは Dockerfile のハッシュで変わらないため、自動では再ビルドしない。画面から再ビルドしてコンテナを作り直す)。版を固定したいときは `CLAUDE_CODE_VERSION` に版を書く。読み取り専用のファイルシステムで動くため、自動更新は止める(`DISABLE_AUTOUPDATER=1`)。
 - 崩してはいけない前提: 非 root のユーザー `agent`、`/knowledge` `/home/agent`、`sh` と `setsid`(util-linux)、`claude` コマンド。コンテナを作った直後に、`setsid`・`agent`・`claude` を診断し、満たさなければエラーにする。
 
 ## 名前とエージェントの対応
