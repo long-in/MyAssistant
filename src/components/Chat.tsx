@@ -160,6 +160,15 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
   useEffect(() => {
     activeRef.current = active;
   }, [active]);
+  // 入力欄へのフォーカスの依頼。他の画面で押されたときは、対話画面へ戻ってから(非表示が解けてから)移す
+  const [focusRequest, setFocusRequest] = useState(0);
+  const focusPending = useRef(false);
+  useEffect(() => {
+    if (active && focusPending.current) {
+      focusPending.current = false;
+      setFocusRequest((n) => n + 1);
+    }
+  }, [active]);
   // 会話の切り替えは、ユーザーが明示したときだけ。コマンド実行の依頼・承認や画面移動では切り替えない(再起動後は、バックエンドが前回までの文脈をMarkdownから復元する)
   // 現在の会話は、エージェントごとにDBへ保存してあり、アプリを再起動しても続きから再開する(読み込むまでIDは空)
   const session = useRef({ id: "" });
@@ -993,8 +1002,15 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!activeRef.current) return; // 他の画面ではAgentを通常の入力に使う
       const id = matchShortcut(e);
+      if (id === "focusInput") {
+        // 画面の移動はAppShellが行う
+        e.preventDefault();
+        if (activeRef.current) setFocusRequest((n) => n + 1);
+        else focusPending.current = true;
+        return;
+      }
+      if (!activeRef.current) return; // 他の画面ではAgentを通常の入力に使う
       if (id === "mic") {
         e.preventDefault();
         if (!e.repeat) holdRef.current(true); // 押しっぱなしのリピートで開始→即停止しない
@@ -1150,6 +1166,7 @@ export default function Chat({ workspaceId, active }: { workspaceId: string; act
       {/* 下部: 入力欄(操作ボタン・モデル・スキルの指定)と、状態の帯 */}
       <ChatComposer
         phase={phase}
+        focusRequest={focusRequest}
         onNewConversation={() => startNewConversation(true)}
         history={{ currentId: () => session.current.id, onResume: resumeConversation }}
         standby={{ on: standbyOn, available: wake.words.length > 0, onToggle: toggleStandby }}
