@@ -52,11 +52,13 @@ const BUILD_KEY: &str = "shared";
 const AGENT_DOCKERFILE_DIR: &str = "agent-sandbox";
 /// Dockerfileの最大バイト数(画面から保存するとき)。
 const DOCKERFILE_MAX_BYTES: usize = 256 * 1024;
-/// コンテナを作ったときのマウント元(ナレッジとワークスペース)。変わったら作り直す。
+/// コンテナを作ったときのマウント元(ナレッジ)。変わったら作り直す。
 const LABEL_MOUNTS: &str = "myassistant.mounts";
 
 const DOCKERFILE_DIR: &str = "sandbox";
 const DOCKERFILE_NAME: &str = "Dockerfile";
+/// ビルドのたびに違う値を渡すビルド引数。テンプレートは、Claude Code を入れる層だけキャッシュを使わずに入れ直す(既定の版は`latest`)。
+const REFRESH_ARG: &str = "CLAUDE_CODE_REFRESH";
 const DOCKERIGNORE: &str = "# ビルドの文脈に含めないものを書きます。\n.dockerignore\nDockerfile\n";
 /// コンテナ内のナレッジの場所。マウントするのはナレッジだけ(ワークスペースのフォルダ全体は、キーやDBがあるのでマウントしない)。
 pub const KNOWLEDGE_MOUNT: &str = "/knowledge";
@@ -697,7 +699,8 @@ pub async fn build_image(spec: &ImageSpec, force: bool, cancel: &CancelToken, on
         Some(id) => format!("{LABEL_AGENT}={id}"),
         None => format!("{LABEL_SHARED}=1"),
     };
-    cmd.args(["build", "--progress=plain", "-t", &tag, "--label", &label])
+    let refresh = format!("{REFRESH_ARG}={}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis()));
+    cmd.args(["build", "--progress=plain", "-t", &tag, "--label", &label, "--build-arg", &refresh])
         .arg(&spec.context)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1378,11 +1381,13 @@ mod tests {
 
     #[test]
     fn template_meets_the_container_prerequisites() {
-        // Claude Code は Node.js 22 以上が必要。版は固定し、読み取り専用のファイルシステムでは自動更新を止める
-        assert!(TEMPLATE.contains("FROM node:22"));
-        assert!(TEMPLATE.contains("ARG CLAUDE_CODE_VERSION=") && TEMPLATE.contains("@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"));
+        // Claude Code は Node.js 22 以上が必要(標準は 26 系)。既定は最新版で、ビルドのたびに入れ直す。
+        // 読み取り専用のファイルシステムでは自動更新を止める
+        assert!(TEMPLATE.contains("FROM node:26"));
+        assert!(TEMPLATE.contains("ARG CLAUDE_CODE_VERSION=latest") && TEMPLATE.contains("@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"));
+        assert!(TEMPLATE.contains(&format!("ARG {REFRESH_ARG}=")) && TEMPLATE.contains(&format!("${{{REFRESH_ARG}}}")));
         assert!(TEMPLATE.contains("DISABLE_AUTOUPDATER=1"));
-        assert!(TEMPLATE.contains("/workspace /knowledge") && TEMPLATE.contains("USER agent") && TEMPLATE.contains("util-linux"));
+        assert!(TEMPLATE.contains("mkdir -p /knowledge") && !TEMPLATE.contains("/workspace") && TEMPLATE.contains("USER agent") && TEMPLATE.contains("util-linux"));
     }
 
     #[test]
